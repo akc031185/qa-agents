@@ -1,0 +1,180 @@
+{
+  "slug": "the-test-suite-organizer",
+  "plate": 12,
+  "name": "The Test-Suite Organizer",
+  "techName": "ado-suite-manager-agent.ts",
+  "category": "tracker",
+  "oneLiner": "Bulk-organizes an ADO test suite — files test cases into suites, repairs broken TestedBy links, normalizes titles to a naming convention, and reassigns testers.",
+  "lead": "A team keeps hundreds of test cases organized in suites under an ADO Test Plan. This agent maintains that structure at scale: it adds test cases to suites, audits each for a missing or reversed `TestedBy` link to its parent story, normalizes titles to the `TC_US<storyId>_` convention, and drives tester ownership across the work item, the test case, and its test point.",
+  "chore": "By hand, keeping a suite tidy is soul-crushing. Someone opens suite after suite, checks each test case's title against the convention, confirms it's linked to the right story in the right direction, and records its owner — across hundreds of items. Titles drift, links point the wrong way, and reassigning work when someone leaves means editing dozens of items one at a time.",
+  "instead": "The agent does the whole sweep in one pass. It lists suite contents, adds test cases, and — most usefully — audits every case for three defects: a missing `TestedBy-Reverse` link, a reversed (`TestedBy-Forward`) link, and a title that breaks the naming convention. It reports each, and on approval fixes them. It also reads a feature's stories to auto-assign each test case to its author, and bulk-reassigns ownership when it changes.",
+  "whyItMatters": "When every test case is filed, named, and owned correctly, a lead can trust the Test Plan at a glance instead of second-guessing whether anything is where it claims to be.",
+  "howItWorks": [
+    {
+      "step": "For ownership, it derives each story's tester by walking every story's child work items (via `Hierarchy-Forward` relations) and reading the `AssignedTo` of the child Task titled 'QA_Test Creation', building a storyId → tester map.",
+      "fn": "buildStoryTesterMap()",
+      "explain": "Ownership isn't stored on the story directly — it lives on a child **Task**, so this walks the hierarchy to find it. For each story it pulls `Hierarchy-Forward` relations (parent → child), batch-fetches those children with only the four fields it needs, then scans for the one Task whose title contains `qa_test creation` and reads its `System.AssignedTo`. The `break` on first match makes that Task authoritative — later children aren't considered — and `System.AssignedTo` is an **identity object**, not a string, so it's run through `extractDisplayName` rather than used raw. Stories with no children, or none matching, are simply skipped, leaving them absent from the map.",
+      "code": "private async buildStoryTesterMap(featureId: number): Promise<Record<number, string>> {\n  const storyIds = await this.client.getStoryIdsByFeature(featureId);\n  const storyTester: Record<number, string> = {};\n\n  for (const storyId of storyIds.sort((a, b) => a - b)) {\n    const wi = await this.client.getWorkItemWithRelations(storyId);\n    // Hierarchy-Forward = parent -> child; these are the story's direct children.\n    const childIds = this.client.extractRelationIds(wi.relations || [], 'System.LinkTypes.Hierarchy-Forward');\n    if (childIds.length === 0) continue; // no children -> story stays absent from the map\n\n    // Batch-fetch only the fields we need; ADO returns each work item's fields under child.fields.\n    const children = await this.client.getWorkItemsBatch(childIds, [\n      'System.Id', 'System.Title', 'System.WorkItemType', 'System.AssignedTo',\n    ]);\n\n    for (const child of children) {\n      const f = child.fields;\n      const title = (f['System.Title'] || '').toLowerCase();\n      // The authoring owner lives on the 'QA_Test Creation' Task, not on the story itself.\n      if (f['System.WorkItemType'] === 'Task' && title.includes('qa_test creation')) {\n        // System.AssignedTo is an identity OBJECT, not a string - extract the display name.\n        storyTester[storyId] = this.client.extractDisplayName(f['System.AssignedTo']);\n        break; // first matching Task wins; it's authoritative for this story\n      }\n    }\n  }\n  return storyTester;\n}"
+    },
+    {
+      "step": "For the audit, it walks every test case in a suite and flags three defects: no `TestedBy` link to its story, a reversed link, or a title that breaks the naming convention. Story ID is parsed from the title.",
+      "fn": "validateLinksMode()",
+      "explain": "The direction of a `TestedBy` link is the whole game. From a **test case's** side, the correct link to its story is `TestedBy-Reverse` (story is tested-by this case); `TestedBy-Forward` on a test case means someone linked it backwards. So `hasCorrectLink` checks Reverse, `hasWrongLink` checks Forward, and the two combine into distinct verdicts: neither present → `missingLink`, only the backwards one → `wrongLink`. All of this is gated on `storyId` being parseable from the title via `extractStoryIdFromTitle` — a title the parser can't read yields no story ID, so the case is left un-audited rather than falsely flagged. The naming check is independent: `!title.startsWith(correctPrefix)` (where `correctPrefix` is `TC_US<storyId>_`) sets `needsRename`, and any of the three defects pushes an issue.",
+      "code": "for (const tc of suiteTCs) {\n  const tcId = tc.workItem?.id;\n  const title = tc.workItem?.name || '';\n  // Story ID is parsed out of the title text; if it can't be read, the case is left un-audited below.\n  const storyId = this.extractStoryIdFromTitle(title);\n\n  const wi = await this.client.getWorkItemWithRelations(tcId);\n  // From a TEST CASE's side, the correct link to its story is TestedBy-Reverse...\n  const testedByReverse = this.client.extractRelationIds(wi.relations || [], 'Microsoft.VSTS.Common.TestedBy-Reverse');\n  // ...and a TestedBy-Forward on the test case means it was linked backwards.\n  const testedByForward = this.client.extractRelationIds(wi.relations || [], 'Microsoft.VSTS.Common.TestedBy-Forward');\n\n  let missingLink = false, wrongLink = false, needsRename = false;\n  if (storyId) { // only audit cases whose story ID we could parse\n    const hasCorrectLink = testedByReverse.includes(storyId);\n    const hasWrongLink = testedByForward.includes(storyId);\n    if (!hasCorrectLink && !hasWrongLink) missingLink = true; // no link either direction\n    if (hasWrongLink && !hasCorrectLink) wrongLink = true;    // linked, but backwards\n\n    // Naming check is independent of the link check.\n    const correctPrefix = `TC_US${storyId}_`;\n    if (!title.startsWith(correctPrefix)) needsRename = true;\n  }\n  if (missingLink || wrongLink || needsRename) {\n    issues.push({ tcId, title, storyId, missingLink, wrongLink, needsRename });\n  }\n}"
+    },
+    {
+      "step": "It prints every defect first, then — only on approval — repairs the links and normalizes titles to the convention.",
+      "fn": "normalizeTitle()",
+      "explain": "This is a deterministic prefix-repair, ordered most-specific first. The early `startsWith(correctPrefix)` return is the idempotency guard — an already-correct title is returned untouched, which is what makes re-running safe. Then it strips known-wrong prefixes: a `TC_US<wrong-number>_` or `TC_UC<number>_` prefix (the `_?` allows the stray-underscore variant, `[\\s_]` eats either a space or underscore separator) is **replaced** with the correct one, so the wrong story number is discarded rather than kept. A `US<number>_` title is only missing the `TC_` tag, so it's prepended, not replaced. The final fallback assumes no recognizable prefix at all and simply prepends `correctPrefix`, preserving the original descriptive text.",
+      "code": "private normalizeTitle(title: string, storyId: number): string {\n  const correctPrefix = `TC_US${storyId}_`;\n  if (title.startsWith(correctPrefix)) return title; // already correct - idempotency guard, makes re-runs safe\n\n  // TC_US<wrong-number>_ : _? allows a stray underscore, [\\s_] eats space-or-underscore; replace drops the wrong number.\n  if (title.match(/^TC_US_?\\d+[\\s_]/)) {\n    return title.replace(/^TC_US_?\\d+[\\s_]+/, correctPrefix);\n  }\n  // TC_UC... : common typo of TC_US; same replace, discarding the bad prefix.\n  if (title.match(/^TC_UC_?\\d+[\\s_]/)) {\n    return title.replace(/^TC_UC_?\\d+[\\s_]+/, correctPrefix);\n  }\n  // US<number>_ : only the TC_ tag is missing, so prepend rather than replace.\n  if (title.match(/^US\\d+_/)) {\n    return 'TC_' + title;\n  }\n  // No recognizable prefix - prepend the correct one, keeping the original descriptive text.\n  return correctPrefix + title;\n}"
+    },
+    {
+      "step": "For a bulk reassignment (e.g. someone leaves), it updates three targets in order: the 'QA_Test Creation' Task's `AssignedTo`, each linked test case's `AssignedTo`, and the suite's test-point tester.",
+      "fn": "reassignMode()",
+      "explain": "Ownership in ADO lives in **three separate places**, and changing one doesn't touch the others — that's why the reassignment fans out. The Task and each test case are work items, so their `System.AssignedTo` is updated with a JSON-Patch `replace` op (`replace`, not `add`, because the field already holds a value). Test points are *not* work items — they belong to the Test Plan/suite and carry their own `tester` identity — so they go through the separate `updateTestPoints` API keyed by point ID, not work-item ID. The point update filters to only points whose `testCaseReference.id` is in `tcNewTester`, so points for cases outside this reassignment are left alone; miss step 3 and the plan's execution view would still show the old owner even after the work items were patched.",
+      "code": "private async reassignMode(planId: number, suiteId: number, reassignMapStr: string, featureId: number, dryRun: boolean) {\n  // Step 1: update the QA_Test Creation task's AssignedTo.\n  // 'replace' (not 'add') because the field already holds an owner.\n  await this.client.updateWorkItem(qaTaskId, [\n    { op: 'replace', path: '/fields/System.AssignedTo', value: newTester },\n  ]);\n\n  // Step 2: update every linked checklist's AssignedTo (same replace pattern, per TC)\n  // ...\n\n  // Step 3: test points are NOT work items - they live on the plan/suite with their own\n  // tester identity, so they use a separate API keyed by POINT id, not work-item id.\n  const allPoints = await this.client.getTestPointsPaginated(suiteId, planId);\n  const pointUpdates = allPoints\n    // Only touch points whose test case is in this reassignment; leave the rest alone.\n    .filter(pt => tcNewTester[pt.testCaseReference?.id])\n    .map(pt => ({ id: pt.id, tester: { displayName: tcNewTester[pt.testCaseReference.id] } }));\n  await this.client.updateTestPoints(planId, suiteId, pointUpdates);\n}"
+    },
+    {
+      "step": "For filing, it adds test cases to the named suite in batches of 200, sleeping between batches to stay under ADO API rate limits.",
+      "fn": "addTestCases()",
+      "explain": "Two guardrails do the real work here. `Array.from(new Set(ids))` collapses duplicate IDs first, so a test case listed twice isn't added twice — and since adding an already-present case is a no-op in ADO, the whole operation stays idempotent. The `for` loop then slices the IDs into `BATCH_SIZE` (200) chunks and `sleep`s `BATCH_DELAY_MS` **between** batches — the `if (i + BATCH_SIZE < unique.length)` guard skips the pause after the final chunk, so it never sleeps needlessly. That throttle is deliberate: ADO rate-limits bulk suite writes, and firing hundreds of adds back-to-back risks HTTP 429s. The `dryRun` short-circuit returns before any write, making a preview truly read-only.",
+      "code": "private async addTestCases(planId: number, suiteId: number, ids: number[], dryRun: boolean, configId?: number): Promise<void> {\n  // De-dupe first: adding an already-present case is a no-op in ADO, so this keeps the op idempotent.\n  const unique = Array.from(new Set(ids));\n  if (dryRun) return; // preview is truly read-only - bail before any write\n\n  let added = 0;\n  for (let i = 0; i < unique.length; i += BATCH_SIZE) {\n    const batch = unique.slice(i, i + BATCH_SIZE);\n    await this.client.addTestCasesToSuite(planId, suiteId, batch, configId);\n    added += batch.length;\n    // Throttle BETWEEN batches to stay under ADO rate limits (bulk writes can 429);\n    // the guard skips the pause after the last chunk.\n    if (i + BATCH_SIZE < unique.length) await this.sleep(BATCH_DELAY_MS);\n  }\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Audit a suite for link/naming defects",
+      "input": "Validate every test case in the 'Checkout Redesign' suite for bad links and off-convention titles — dry run.",
+      "output": "24 clean. 3 defects: #211 has no TestedBy link, #214's link is reversed, and #217 is titled 'Login test 3' instead of the `TC_US..._` convention. Dry run — nothing written. Approve to fix."
+    },
+    {
+      "caption": "Auto-assign testers from authorship",
+      "input": "For the 'Payments' feature, set each test case's owner to its author.",
+      "output": "Resolved 5 testers across 40 test cases from their 'QA_Test Creation' tasks. Set Alex on 12, Priya on 14, and so on — 40 `AssignedTo` updates, 0 errors."
+    },
+    {
+      "caption": "Bulk-reassign when someone leaves",
+      "input": "Move all of story #305's tests from Sam to Jordan.",
+      "output": "Patched the authoring Task to Jordan, reassigned 9 test cases, and updated their 9 test points. Done."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Resolving test ownership",
+      "whenRuns": "When you assign owners or request a per-tester breakdown.",
+      "input": "A feature ID.",
+      "output": "A storyId → tester map, read off each story's 'QA_Test Creation' Task `AssignedTo`."
+    },
+    {
+      "heading": "Auditing the suite",
+      "whenRuns": "On a validate run, before any write.",
+      "input": "Every test case currently in the suite.",
+      "output": "A defect list: missing links, reversed links, and off-convention titles."
+    },
+    {
+      "heading": "Normalizing titles",
+      "whenRuns": "Only after approval — never on a dry run.",
+      "input": "A test case's current title and its story ID.",
+      "output": "A normalized title such as `TC_US42015_Something`."
+    },
+    {
+      "heading": "Bulk reassignment",
+      "whenRuns": "When ownership changes, e.g. someone leaves.",
+      "input": "A story → new-owner map.",
+      "output": "Three targets patched in order: the authoring Task, each test case's `AssignedTo`, and each test point's tester."
+    },
+    {
+      "heading": "Adding cases to a suite",
+      "whenRuns": "When you add test cases, in batches of 200.",
+      "input": "A list of test case IDs.",
+      "output": "Those test cases appear in the target suite in ADO."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Azure DevOps Test Plans access and a **PAT** scoped to edit work items and test points.",
+      "The Test Plan ID and suite ID you want to organize — both visible in the ADO URL when you open the suite."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the engine that runs the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript run under Node — a one-time per-machine install.",
+        "firstRun": "One-time setup per machine."
+      },
+      {
+        "label": "Clone the agent and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the ADO client and xlsx reader into `node_modules`.",
+        "firstRun": "Cold install — a minute or two.",
+        "rerun": "No-op unless `package.json` changed."
+      },
+      {
+        "label": "Set the target org, project, and PAT (env vars).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token",
+        "why": "Read at startup: which ADO org/project to hit and the PAT that authorizes the writes."
+      },
+      {
+        "label": "Audit first with --dry-run.",
+        "cmd": "npm run ado:suite:validate -- --plan-id 1201 --suite-id 1202 --dry-run",
+        "why": "`--dry-run` prints every test case with a missing link, reversed link, or off-convention title, but writes nothing. Review the list before letting it write.",
+        "firstRun": "Reads every test case in the suite and reports defects."
+      },
+      {
+        "label": "Approve by re-running without --dry-run.",
+        "cmd": "npm run ado:suite:validate -- --plan-id 1201 --suite-id 1202",
+        "why": "Same audit, but now it repairs the `TestedBy` links and normalizes the titles it flagged.",
+        "rerun": "Idempotent — anything already correct is skipped; only remaining defects get fixed."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--plan-id <id> --suite-id <id>",
+        "desc": "Which Test Plan and suite to operate on."
+      },
+      {
+        "name": "--validate-links [--dry-run]",
+        "desc": "Audits (and, without --dry-run, repairs) missing/reversed `TestedBy` links and off-convention titles."
+      },
+      {
+        "name": "--assign-testers / --reassign-map",
+        "desc": "Sets or bulk-reassigns test case ownership to a tester."
+      },
+      {
+        "name": "--input <xlsx>",
+        "desc": "A list of test case IDs to add to the suite."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console audit report",
+        "desc": "Every defect found — missing link, reversed link, or off-convention title — with a before/after for each rename."
+      },
+      {
+        "name": "updated tracker items",
+        "desc": "Once approved: the test case's `TestedBy` link and/or title corrected directly in ADO; no local file is produced."
+      }
+    ],
+    "rerun": "Idempotent — every pass only reports (and, if approved, fixes) remaining defects; anything already correct is skipped, so the output shrinks as the backlog clears.",
+    "integrate": "Run the `--dry-run` audit as a weekly health-check job and forward the report only when it's non-empty — a clean suite yields an empty report, which is itself useful signal."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-minute screen recording: audit a suite of test cases, then approve the fixes.",
+    "script": [
+      "Open a terminal beside the tracker's folder view in a browser.",
+      "Say: 'This agent is the filing clerk for our test checklists. Let's audit one folder.'",
+      "Run `node -v` and `npm install` (or note it's already done); one line each on why.",
+      "Show the `export ADO_...` lines; say this is the only project-specific part.",
+      "Run the `--validate-links --dry-run` command; narrate the issues it lists — missing link, wrong direction, bad name.",
+      "Point at one flagged checklist in the browser tracker to show the problem is real.",
+      "Run the same command without `--dry-run`; watch it print 'linked' / 'renamed' per item.",
+      "Refresh the browser tracker to show the fixed title and link.",
+      "Mention in passing that the same agent also assigns testers and reassigns whole batches.",
+      "Close: 'Same command, safe to run weekly — it only touches what's still wrong.'"
+    ]
+  }
+}

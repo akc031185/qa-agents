@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Working with GitHub — Field Guide to Software QA Agents</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  /* guide-specific bits only — everything else comes from site.css */
+  .fig{margin:18px 0 26px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-1);padding:22px 20px 14px;text-align:center;}
+  .fig--tint{background:var(--tint);}
+  .fig svg{width:100%;max-width:660px;height:auto;display:inline-block;}
+  .fig figcaption{margin-top:8px;color:var(--ink-soft);font-weight:700;font-size:.85rem;}
+  .fig svg text{font-family:var(--font);}
+  .fig svg .hand{stroke-linecap:round;stroke-linejoin:round;fill:none;}
+  .guide-hero{display:grid;grid-template-columns:1.15fr 1fr;gap:28px;align-items:center;padding:44px 0 10px;}
+  .guide-hero h1.display{margin:16px 0 14px;}
+  .guide-hero .fig{margin:0;}
+  .cheat > div{break-inside:avoid;}
+  @media (min-width:641px){.cheat{display:grid;grid-template-columns:1fr 1fr;gap:0 30px;align-items:start;}}
+  @media (max-width:760px){.guide-hero{grid-template-columns:1fr;padding-top:30px;}}
+</style>
+</head>
+<body>
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="index.html">Contents</a>
+    <a href="toolkit.html">Toolkit</a>
+    <a href="guides.html">Guides</a>
+    <a href="deck.html">Slides</a>
+  </nav>
+</div></header>
+
+<main class="wrap wrap--article"><article class="plate">
+
+  <!-- ============ Hero ============ -->
+  <section class="s3">
+    <div class="guide-hero">
+      <div>
+        <span class="eyebrow">A field guide · for the whole team</span>
+        <h1 class="display">Working with GitHub</h1>
+        <p class="lead">Never used Git? Perfect — start here. This guide takes you from zero to cloning the agents onto your machine, making a change without breaking anything, getting that change reviewed and approved, and running the agents yourself.</p>
+      </div>
+      <figure class="fig fig--tint">
+        <svg viewBox="0 0 560 260" role="img" aria-label="A repository drawn as a friendly folder, with a branch of commits growing out of it">
+          <!-- repo folder -->
+          <g transform="rotate(-2 165 150)">
+            <rect x="58" y="66" width="96" height="38" rx="14" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+            <rect x="50" y="88" width="235" height="132" rx="22" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+            <text x="167" y="126" text-anchor="middle" font-size="17" font-weight="800" fill="var(--deep)">qa-agent-toolkit</text>
+            <rect x="78" y="146" width="150" height="9" rx="4.5" fill="var(--ac)" opacity=".45"/>
+            <rect x="78" y="166" width="112" height="9" rx="4.5" fill="var(--ac)" opacity=".3"/>
+            <rect x="78" y="186" width="132" height="9" rx="4.5" fill="var(--ac)" opacity=".38"/>
+          </g>
+          <!-- branch growing out -->
+          <path class="hand" d="M284 152 Q340 150 372 126 Q412 96 468 90 Q500 87 522 90" stroke="var(--deep)" stroke-width="4.5"/>
+          <circle cx="356" cy="137" r="11" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+          <circle cx="440" cy="95" r="11" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+          <circle cx="522" cy="90" r="11" fill="var(--ac)" stroke="var(--deep)" stroke-width="4.5"/>
+          <!-- playful sparkles -->
+          <path class="hand" d="M330 52 v18 M321 61 h18" stroke="#FFB020" stroke-width="4"/>
+          <circle cx="416" cy="182" r="6" fill="#2EC4A0"/>
+          <path class="hand" d="M492 168 v14 M485 175 h14" stroke="#FF6B6B" stroke-width="4"/>
+          <text x="167" y="248" text-anchor="middle" font-size="14" font-weight="700" fill="var(--deep)">the project + its whole history</text>
+          <text x="452" y="132" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--deep)">your changes, growing safely</text>
+        </svg>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ 1 · What GitHub actually is ============ -->
+  <section class="s3">
+    <h2 class="display">What GitHub actually is</h2>
+    <p>A <strong>repository</strong> (repo) is the project <em>plus its complete history</em> — every version of every file, and a note explaining each change. Two names to keep straight: <strong>git</strong> is the version-control tool that runs on your machine and tracks that history; <strong>GitHub</strong> is the website where the team's shared copy lives, along with reviews and approvals.</p>
+    <p>The copy on github.com is called the <strong>remote</strong>. Running <code>git clone</code> gives you your own complete <strong>local</strong> copy. You work on the local one; <code>push</code> sends your commits up to the remote, and <code>pull</code> brings everyone else's down. Neither side is "the real one" losing data — they're two full copies kept in sync.</p>
+    <figure class="fig">
+      <svg viewBox="0 0 660 280" role="img" aria-label="A laptop labelled local clone and a cloud labelled remote on GitHub, with push and pull arrows between them">
+        <defs>
+          <marker id="ah-cloud" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+          </marker>
+        </defs>
+        <!-- laptop -->
+        <g transform="rotate(-2 140 150)">
+          <rect x="62" y="78" width="158" height="104" rx="14" fill="#fff" stroke="var(--deep)" stroke-width="4.5"/>
+          <rect x="76" y="92" width="130" height="76" rx="8" fill="var(--tint)"/>
+          <path class="hand" d="M90 112 h70 M90 130 h96 M90 148 h56" stroke="var(--ac)" stroke-width="6" opacity=".7"/>
+          <path d="M46 186 L236 186 Q244 202 226 202 L56 202 Q38 202 46 186 z" fill="var(--ac)"/>
+        </g>
+        <text x="140" y="236" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">local clone</text>
+        <text x="140" y="256" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">on your machine</text>
+        <!-- cloud -->
+        <path d="M438 158 Q414 158 412 132 Q410 104 440 100 Q446 70 482 72 Q514 72 524 94 Q556 88 566 112 Q578 138 552 152 Q548 158 536 158 z"
+              fill="var(--tint)" stroke="var(--ac)" stroke-width="4.5" stroke-linejoin="round"/>
+        <text x="489" y="132" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">remote</text>
+        <text x="489" y="236" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">github.com</text>
+        <text x="489" y="256" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">the shared copy · reviews · approvals</text>
+        <!-- push arrow (up & over) -->
+        <path class="hand" d="M232 92 Q320 34 416 74" stroke="var(--deep)" stroke-width="4.5" stroke-dasharray="1 9" marker-end="url(#ah-cloud)"/>
+        <text x="322" y="38" text-anchor="middle" font-size="14.5" font-weight="800" fill="var(--deep)">git push — send yours up</text>
+        <!-- pull arrow (down & back) -->
+        <path class="hand" d="M424 168 Q330 218 240 176" stroke="var(--deep)" stroke-width="4.5" stroke-dasharray="1 9" marker-end="url(#ah-cloud)"/>
+        <text x="332" y="212" text-anchor="middle" font-size="14.5" font-weight="800" fill="var(--deep)">git pull — bring theirs down</text>
+      </svg>
+      <figcaption>Two full copies of the repo, kept in sync with push and pull.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 2 · One-time setup ============ -->
+  <section class="s4">
+    <h2 class="display">One-time setup</h2>
+    <p>You do this once per machine. You'll need <strong>Git</strong> and <strong>Node.js 18 or newer</strong> installed — grab them from <a class="doclink" href="https://git-scm.com/downloads" target="_blank" rel="noopener">git-scm.com</a> and <a class="doclink" href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a>, or see <a class="doclink" href="https://docs.github.com/en/get-started/git-basics/set-up-git" target="_blank" rel="noopener">GitHub Docs: Set up Git</a>.</p>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Check the tools are there</div>
+        <pre class="rb__cmd"><code>git --version
+node --version</code></pre>
+        <span class="rb__why"><span>Why</span>Both should print a version number. Node must report v18 or higher.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the repo</div>
+        <pre class="rb__cmd"><code>git clone &lt;repo-url&gt;</code></pre>
+        <span class="rb__why"><span>Why</span>Downloads the entire project and its history into a new folder. The URL comes from the green <em>Code</em> button on the repo's GitHub page.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Step inside it</div>
+        <pre class="rb__cmd"><code>cd qa-agent-toolkit</code></pre>
+        <span class="rb__why"><span>Why</span>Every git and npm command below assumes you're inside the project folder.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install the dependencies</div>
+        <pre class="rb__cmd"><code>npm install</code></pre>
+        <span class="rb__why"><span>Why</span>Fetches the libraries the agents need into a local <code>node_modules</code> folder. Run it again any time <code>package.json</code> changes.</span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============ 3 · Commits ============ -->
+  <section class="s2">
+    <h2 class="display">Commits = labeled snapshots</h2>
+    <p>A <strong>commit</strong> is a snapshot of the whole project at one moment, stamped with a message saying <em>why</em> it changed. History is simply a chain of these snapshots — you can walk back through it, compare any two points, or revert to one when something goes wrong. That's the safety net: nothing committed is ever truly lost.</p>
+    <p>Making one is two moves: <em>stage</em> what you changed, then <em>commit</em> it with a message.</p>
+    <pre class="rb__cmd"><code>git add -A                          # stage every change you made
+git commit -m "Explain the change"  # snapshot it, with the why</code></pre>
+    <figure class="fig">
+      <svg viewBox="0 0 660 190" role="img" aria-label="A commit history drawn as a chain of labelled dots, newest on the right">
+        <defs>
+          <marker id="ah-time" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--ac)"/>
+          </marker>
+        </defs>
+        <path class="hand" d="M42 96 Q180 90 330 96 Q490 102 622 96" stroke="var(--ac)" stroke-width="5" marker-end="url(#ah-time)"/>
+        <circle cx="96" cy="95" r="13" fill="#fff" stroke="var(--deep)" stroke-width="5"/>
+        <circle cx="240" cy="94" r="13" fill="#fff" stroke="var(--deep)" stroke-width="5"/>
+        <circle cx="384" cy="97" r="13" fill="#fff" stroke="var(--deep)" stroke-width="5"/>
+        <circle cx="528" cy="98" r="13" fill="var(--ac)" stroke="var(--deep)" stroke-width="5"/>
+        <text x="96" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">"scaffold the repo"</text>
+        <text x="240" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">"add API tester"</text>
+        <text x="384" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">"fix flaky retry"</text>
+        <text x="528" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">"polish the report"</text>
+        <g transform="rotate(-3 528 44)">
+          <rect x="490" y="30" width="78" height="28" rx="14" fill="var(--ac)"/>
+          <text x="529" y="49" text-anchor="middle" font-size="13" font-weight="800" fill="#FFFDF8">newest</text>
+        </g>
+        <path class="hand" d="M528 60 L528 78" stroke="var(--deep)" stroke-width="4" stroke-dasharray="1 7"/>
+        <text x="620" y="140" text-anchor="middle" font-size="13" font-weight="800" fill="var(--deep)">time →</text>
+        <text x="96" y="162" text-anchor="middle" font-size="12" font-weight="700" fill="var(--deep)">← you can walk back to any of these</text>
+      </svg>
+      <figcaption>Each dot is a full snapshot with a message — history you can rewind.</figcaption>
+    </figure>
+    <div class="rb__note"><strong>Write messages for humans.</strong> "Fix login timeout on slow networks" beats "changes". Six months from now, the message is the only clue to <em>why</em> the code looks the way it does.</div>
+  </section>
+
+  <!-- ============ 4 · Branches ============ -->
+  <section class="s6">
+    <h2 class="display">Branches: change things without touching main</h2>
+    <p><code>main</code> is the source of truth — the version everyone trusts and runs. You never experiment on it directly. Instead you make a <strong>branch</strong>: a parallel line of commits with its own name, where you can work in isolation. When your work is reviewed and approved, it merges back into <code>main</code>. See <a class="doclink" href="https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-branches" target="_blank" rel="noopener">GitHub Docs: About branches</a>.</p>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">Without a branch</div><p>Every half-finished edit lands straight on <code>main</code>. One broken commit and the whole team's copy of the agents stops working — and untangling it is painful.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">With a branch</div><p>Your work lives on its own named line. <code>main</code> stays green the whole time, teammates keep working, and your change only joins after review. Worst case, you delete the branch and lose nothing.</p></div>
+    </div>
+    <pre class="rb__cmd"><code>git switch -c fix-login-timeout        # create the branch and hop onto it
+git add -A                             # ...make your edits, then stage them
+git commit -m "Retry login on slow networks"
+git push -u origin fix-login-timeout   # publish the branch to GitHub</code></pre>
+    <figure class="fig">
+      <svg viewBox="0 0 660 220" role="img" aria-label="A branch diagram: the main line continues while a named branch curves off, gathers three commits, and merges back">
+        <path class="hand" d="M40 156 Q330 150 620 156" stroke="var(--deep)" stroke-width="5"/>
+        <path class="hand" d="M158 154 Q210 150 236 118 Q258 90 300 86 L404 82 Q460 80 486 112 Q506 138 542 152" stroke="var(--ac)" stroke-width="5"/>
+        <circle cx="96" cy="155" r="12" fill="#fff" stroke="var(--deep)" stroke-width="5"/>
+        <circle cx="158" cy="154" r="12" fill="#fff" stroke="var(--deep)" stroke-width="5"/>
+        <circle cx="302" cy="86" r="12" fill="#fff" stroke="var(--ac)" stroke-width="5"/>
+        <circle cx="368" cy="84" r="12" fill="#fff" stroke="var(--ac)" stroke-width="5"/>
+        <circle cx="434" cy="82" r="12" fill="#fff" stroke="var(--ac)" stroke-width="5"/>
+        <circle cx="542" cy="153" r="13" fill="var(--ac)" stroke="var(--deep)" stroke-width="5"/>
+        <text x="70" y="192" font-size="15" font-weight="800" fill="var(--deep)">main</text>
+        <g transform="rotate(-2 368 40)">
+          <rect x="282" y="26" width="172" height="30" rx="15" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+          <text x="368" y="47" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)">fix-login-timeout</text>
+        </g>
+        <text x="558" y="192" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)">merged back in</text>
+        <text x="368" y="130" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink-soft)">your commits, safely off to the side</text>
+      </svg>
+      <figcaption>Main keeps flowing; your branch rejoins it only when it's ready.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 5 · Pull requests ============ -->
+  <section class="s1">
+    <h2 class="display">Pull requests &amp; approvals</h2>
+    <p>Once your branch is pushed, you open a <strong>pull request</strong> (PR) on github.com — literally a request to pull your branch into <code>main</code>. GitHub shows teammates the exact <em>diff</em> (every line added or removed), and they comment, request changes, or approve. When it's approved and the automated checks pass, one click merges it into <code>main</code>.</p>
+    <p>This is the team's review-and-approval gate: <strong>nothing reaches <code>main</code> un-reviewed</strong>. It's also where discussion lives, attached forever to the change it was about. Full walkthrough at <a class="doclink" href="https://docs.github.com/en/pull-requests" target="_blank" rel="noopener">GitHub Docs: Pull requests</a>.</p>
+    <figure class="fig">
+      <svg viewBox="0 0 680 250" role="img" aria-label="Flow from your branch, through a pull request card with two approvals, to being merged into main">
+        <defs>
+          <marker id="ah-pr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+          </marker>
+        </defs>
+        <!-- your branch card -->
+        <g transform="rotate(-2 118 128)">
+          <rect x="32" y="84" width="172" height="90" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+          <text x="118" y="116" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">your branch</text>
+          <path class="hand" d="M62 144 H174" stroke="var(--ac)" stroke-width="4"/>
+          <circle cx="80" cy="144" r="7" fill="#fff" stroke="var(--deep)" stroke-width="3.5"/>
+          <circle cx="118" cy="144" r="7" fill="#fff" stroke="var(--deep)" stroke-width="3.5"/>
+          <circle cx="156" cy="144" r="7" fill="var(--ac)" stroke="var(--deep)" stroke-width="3.5"/>
+        </g>
+        <path class="hand" d="M212 128 L252 127" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-pr)"/>
+        <!-- PR card -->
+        <g transform="rotate(1.5 358 128)">
+          <rect x="264" y="52" width="188" height="152" rx="18" fill="var(--tint)" stroke="var(--deep)" stroke-width="4"/>
+          <text x="358" y="84" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">pull request</text>
+          <g font-size="13" font-weight="700" fill="var(--ink)">
+            <circle cx="292" cy="108" r="9" fill="#2EC4A0"/><path class="hand" d="M287 108 l4 4 l7 -8" stroke="#fff" stroke-width="2.6"/>
+            <text x="308" y="113">review — approved</text>
+            <circle cx="292" cy="138" r="9" fill="#2EC4A0"/><path class="hand" d="M287 138 l4 4 l7 -8" stroke="#fff" stroke-width="2.6"/>
+            <text x="308" y="143">review — approved</text>
+            <circle cx="292" cy="168" r="9" fill="#2EC4A0"/><path class="hand" d="M287 168 l4 4 l7 -8" stroke="#fff" stroke-width="2.6"/>
+            <text x="308" y="173">checks pass</text>
+          </g>
+        </g>
+        <path class="hand" d="M462 128 L502 129" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-pr)"/>
+        <!-- merged into main -->
+        <path class="hand" d="M512 170 Q576 164 648 170" stroke="var(--deep)" stroke-width="5"/>
+        <circle cx="580" cy="167" r="13" fill="var(--ac)" stroke="var(--deep)" stroke-width="5"/>
+        <path class="hand" d="M580 128 L580 148" stroke="var(--ac)" stroke-width="4" stroke-dasharray="1 7"/>
+        <text x="580" y="118" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">merged ✦</text>
+        <text x="580" y="206" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">into main</text>
+      </svg>
+      <figcaption>Branch → reviewed pull request → merged. The gate everything passes through.</figcaption>
+    </figure>
+    <div class="rb__note"><strong>After any merge, sync up.</strong> Run <code>git pull</code> on <code>main</code> to bring the newly merged work — yours or a teammate's — down to your machine before starting the next thing.</div>
+  </section>
+
+  <!-- ============ 6 · Run the agents ============ -->
+  <section class="s8">
+    <h2 class="display">Run the agents from the repo</h2>
+    <p>Cloned and <code>npm install</code>-ed? Then you're three commands from seeing the toolkit work — no accounts, no credentials, no live systems needed for the demos.</p>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Copy the environment template</div>
+        <pre class="rb__cmd"><code>cp .env.example .env</code></pre>
+        <span class="rb__why"><span>Why</span><code>.env</code> holds your settings and secrets, and git ignores it so they never get committed. Fill in <em>only</em> the section you actually need — everything else can stay blank.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Sanity-check your setup</div>
+        <pre class="rb__cmd"><code>npm run doctor</code></pre>
+        <span class="rb__why"><span>Why</span>Prints which capabilities are switched on given what's in your <code>.env</code>. Blank env? That's fine — it just reports the offline-friendly parts as ready.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the reusable demos — zero credentials required</div>
+        <pre class="rb__cmd"><code>npm run demo:ado      # tracker connector, against sample data
+npm run demo:report   # builds a self-contained web report
+npm run demo:api      # API tester, with an evidence log
+npm run demo:db       # data-verification engine</code></pre>
+        <span class="rb__why"><span>Why</span>Each one exercises a toolkit module end-to-end on bundled sample data, so you can watch what it produces before pointing it at anything real.</span>
+      </li>
+    </ol>
+    <div class="rb__note"><strong>Which agents run standalone?</strong> Only the 5 toolkit modules run like this, on sample data with no setup. The other 33 agents need the live systems they were built to talk to — a project tracker, the app's API, the design files — so treat their pages as reference until those connections exist.</div>
+  </section>
+
+  <!-- ============ 7 · The daily loop ============ -->
+  <section class="s5">
+    <h2 class="display">The daily loop</h2>
+    <p>Everything above compresses into one cycle you'll repeat until it's muscle memory. Start every piece of work by pulling, end it with a merged PR, and go around again.</p>
+    <figure class="fig">
+      <svg viewBox="0 0 460 440" role="img" aria-label="The daily loop drawn as a circle of six steps: pull, branch, edit, commit, push, open a PR and merge">
+        <defs>
+          <marker id="ah-loop" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--ac)"/>
+          </marker>
+        </defs>
+        <!-- dashed ring with direction ticks -->
+        <circle cx="230" cy="220" r="138" fill="none" stroke="var(--ac)" stroke-width="4.5" stroke-dasharray="2 12" stroke-linecap="round"/>
+        <path class="hand" d="M298 100 A138 138 0 0 1 340 152" stroke="var(--ac)" stroke-width="4.5" marker-end="url(#ah-loop)"/>
+        <path class="hand" d="M162 340 A138 138 0 0 1 120 288" stroke="var(--ac)" stroke-width="4.5" marker-end="url(#ah-loop)"/>
+        <text x="230" y="226" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">round &amp; round,</text>
+        <text x="230" y="246" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">all week long</text>
+        <!-- six step pills -->
+        <g font-size="14" font-weight="800">
+          <g transform="rotate(-2 230 82)">
+            <rect x="163" y="64" width="134" height="36" rx="18" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+            <text x="230" y="88" text-anchor="middle" fill="var(--deep)">1 · git pull</text>
+          </g>
+          <g transform="rotate(2 366 151)">
+            <rect x="299" y="133" width="134" height="36" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="3"/>
+            <text x="366" y="157" text-anchor="middle" fill="var(--deep)">2 · branch</text>
+          </g>
+          <g transform="rotate(-2 372 290)">
+            <rect x="305" y="272" width="134" height="36" rx="18" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+            <text x="372" y="296" text-anchor="middle" fill="var(--deep)">3 · make edits</text>
+          </g>
+          <g transform="rotate(2 230 358)">
+            <rect x="155" y="340" width="150" height="36" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="3"/>
+            <text x="230" y="364" text-anchor="middle" fill="var(--deep)">4 · add + commit</text>
+          </g>
+          <g transform="rotate(-2 92 290)">
+            <rect x="25" y="272" width="134" height="36" rx="18" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+            <text x="92" y="296" text-anchor="middle" fill="var(--deep)">5 · git push</text>
+          </g>
+          <g transform="rotate(2 90 151)">
+            <rect x="18" y="133" width="144" height="36" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="3"/>
+            <text x="90" y="157" text-anchor="middle" fill="var(--deep)">6 · PR → merge</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Pull → branch → edit → commit → push → PR &amp; merge → pull again.</figcaption>
+    </figure>
+    <pre class="rb__cmd"><code>git pull                          # 1 · start fresh with everyone's latest
+git switch -c my-change           # 2 · branch off main
+                                  # 3 · ...edit files...
+git add -A &amp;&amp; git commit -m "..."  # 4 · snapshot the change
+git push -u origin my-change      # 5 · publish the branch
+                                  # 6 · open a PR on github.com, get it approved, merge</code></pre>
+    <div class="rb__note rb__note--wire"><strong>Feeling lost mid-loop?</strong> <code>git status</code> is always safe to run — it tells you which branch you're on and what's changed but not yet committed. When in doubt, status first.</div>
+  </section>
+
+  <!-- ============ 8 · Cheat-sheet ============ -->
+  <section class="s7">
+    <h2 class="display">Command cheat-sheet</h2>
+    <p>The eight moves that cover 95% of daily work. Bookmark this bit.</p>
+    <dl class="rb__list cheat">
+      <div><dt>git clone &lt;url&gt;</dt><dd>Copy the repo — project plus full history — onto your machine. Once per machine.</dd></div>
+      <div><dt>git status</dt><dd>Where am I, and what have I changed? Always safe; run it constantly.</dd></div>
+      <div><dt>git switch -c &lt;name&gt;</dt><dd>Create a new branch and move onto it in one step.</dd></div>
+      <div><dt>git add -A</dt><dd>Stage all your changes, ready to be committed.</dd></div>
+      <div><dt>git commit -m "why"</dt><dd>Snapshot the staged changes, with a message explaining the why.</dd></div>
+      <div><dt>git push -u origin &lt;name&gt;</dt><dd>Send your branch and its commits up to GitHub.</dd></div>
+      <div><dt>git pull</dt><dd>Bring the latest merged work down from GitHub to your machine.</dd></div>
+      <div><dt>open a PR</dt><dd>Done on github.com: pick your branch, request review, merge when approved.</dd></div>
+    </dl>
+  </section>
+
+</article></main>
+
+<footer class="footer"><div class="wrap">
+  Working with GitHub · part of the <strong>Field Guide to Software QA Agents</strong> · start here, then open any agent.
+</div></footer>
+</body>
+</html>

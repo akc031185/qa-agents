@@ -1,0 +1,180 @@
+{
+  "slug": "the-screen-size-checker",
+  "plate": 18,
+  "name": "The Screen-Size Checker",
+  "techName": "responsive-testing-agent.ts",
+  "category": "screens",
+  "oneLiner": "Captures every screen at nine viewport profiles via Playwright device emulation and reports capture coverage as a pass/fail grid plus a single percentage.",
+  "lead": "Emulates nine viewport profiles — a 1920×1080 desktop plus four phones in portrait and landscape — captures each mapped screen at each, then checks the captures dir for the expected PNG per screen-per-viewport. Output is a grid (screens × viewports) with a mark where a capture exists and a dash where it's missing, plus an overall coverage percentage. A missing cell means the screen failed to render at that viewport.",
+  "chore": "By hand: open the browser device toolbar, pick a profile, reload, navigate to a screen, screenshot, repeat per profile and per screen. Nine profiles × dozens of screens is hundreds of manual captures — tedious, slow, and non-deterministic across testers.",
+  "instead": "One run captures every screen at every viewport and emits a coverage grid — mark where the capture landed, dash where it didn't — with total coverage as a single percentage.",
+  "whyItMatters": "A dash in the grid is an early signal that a screen breaks at that viewport — caught before a user on that exact device hits it.",
+  "howItWorks": [
+    {
+      "step": "Selects the viewport set — the full run is nine profiles (desktop + four phones, portrait and landscape); a quick run drops the landscape profiles.",
+      "fn": "getViewports()",
+      "explain": "Static profile list filtered by one flag. Each entry pins an explicit `width`×`height` **and** a Playwright `project` name — the `project` is what actually applies device emulation, while the width/height are what the grid labels. `includeLandscape` true returns all nine; false filters out `type === 'landscape'`, leaving desktop plus the upright phones — the common-case sweep that skips the slower sideways captures. The `type` tag, not the dimensions, is the filter key, so adding a new portrait phone needs no change here.",
+      "code": "const ALL_VIEWPORTS: ViewportInfo[] = [\n  // Each profile pins an explicit width×height AND the Playwright project name that emulates it\n  { project: 'desktop',       label: 'Desktop Chrome',  width: 1920, height: 1080, type: 'desktop' },\n  { project: 'mobile-chrome', label: 'Pixel 7',         width: 412,  height: 915,  type: 'portrait' },\n  { project: 'mobile-safari', label: 'iPhone 15 Pro Max', width: 430, height: 932, type: 'portrait' },\n  // ...6 more upright/sideways phone profiles\n];\n\nfunction getViewports(includeLandscape: boolean): ViewportInfo[] {\n  if (includeLandscape) return ALL_VIEWPORTS;\n  // Quick run: drop the sideways profiles, keeping desktop + upright phones (the common-case coverage)\n  return ALL_VIEWPORTS.filter(v => v.type !== 'landscape');\n}"
+    },
+    {
+      "step": "Runs one Playwright project per viewport — Chromium for desktop/Android profiles, WebKit for iPhone profiles — capturing every mapped screen at that emulated device.",
+      "fn": "runCaptures()",
+      "explain": "Builds the `playwright test` argv by expanding the selected viewports into one **`--project=` flag each** — the project name is the hook into `responsive.config.ts`, which binds it to a device profile and its engine (**Chromium** for desktop/Android, **WebKit** for iPhone, so iOS rendering matches the real Safari engine). `--grep @design-capture` restricts the run to the tagged capture spec, keeping the rest of the suite out. It runs with `stdio: 'inherit'` so Playwright's progress streams live, under a **600s** ceiling. As with the sibling agents, a **non-zero exit is expected** — some screens legitimately fail to capture — so it is logged `warn`, and the missing PNGs are inferred by the existence check downstream rather than treated as a hard error.",
+      "code": "function runCaptures(input: ResponsiveInput, viewports: ViewportInfo[]): void {\n  const configPath = path.join(browserDir, 'responsive.config.ts');\n  // One --project flag per selected viewport; the config maps each project name to its device + engine\n  const projectArgs = viewports.map(v => `--project=${v.project}`).join(' ');\n  // --grep targets only the tagged capture spec so unrelated tests in the suite don't run\n  const args = ['npx', 'playwright', 'test', `--config=${configPath}`,\n                '--grep', '@design-capture', projectArgs];\n  if (input.headed) args.push('--headed');\n\n  try {\n    // stdio:inherit streams Playwright's live progress to the console; 600s ceiling for the full sweep\n    execSync(args.join(' '), { cwd: browserDir, stdio: 'inherit', timeout: 600000 });\n  } catch (error: any) {\n    // Non-zero exit is expected if some captures fail — handled below\n    log(`Capture completed with exit code ${error.status || 1}`, 'warn');\n  }\n}"
+    },
+    {
+      "step": "For each screen × viewport, checks the captures dir for the expected `<screenId>-<viewport>.png` and tallies existing vs missing.",
+      "fn": "buildReport()",
+      "explain": "Walks the full **screen × viewport matrix** and, for each cell, reconstructs the expected filename via `VIEWPORT_LABEL_MAP[vp.project]` — the map converts the Playwright project name into the same slug the capture spec used to write the PNG, so a mismatch here would silently read every cell as missing. `fs.existsSync` **is** the pass/fail test: no image comparison, just presence, because a screen that crashed at a viewport simply never produces its file. It rolls up `capturedViewports` per screen and the run-wide `totalCaptures` (`screens × viewports`, the denominator) and `capturedCount` (the numerator) that yield the single coverage percentage.",
+      "code": "function buildReport(viewports: ViewportInfo[], screenFilter: string[]): ResponsiveReport {\n  const screens = screenFilter.map(screenId => {\n    const captures = viewports.map(vp => {\n      // VIEWPORT_LABEL_MAP turns the project name into the filename slug the capture spec wrote\n      const filename = `${screenId}-${VIEWPORT_LABEL_MAP[vp.project]}.png`;\n      // Existence on disk IS the pass signal — a missing file means the screen failed to render there\n      const exists = fs.existsSync(path.join(capturesDir, filename));\n      return { screenId, viewport: vp.label, path: filename, exists };\n    });\n    return { id: screenId, captures,\n             // Per-screen coverage: how many of its viewports produced a file\n             capturedViewports: captures.filter(c => c.exists).length,\n             totalViewports: viewports.length };\n  });\n\n  return { timestamp: new Date().toISOString(), viewports, screens,\n           totalScreens: screenFilter.length,\n           // Denominator and numerator for the headline coverage percentage\n           totalCaptures: screens.length * viewports.length,\n           capturedCount: screens.reduce((n, s) => n + s.capturedViewports, 0) };\n}"
+    },
+    {
+      "step": "Renders the coverage grid — screens down the rows, viewports across the header, `Y`/`-` per cell — plus a 'Missing Captures' list naming every incomplete screen and its missing viewports.",
+      "fn": "generateMarkdown()",
+      "explain": "Renders two views of the same data. The grid uses **only the first token** of each viewport label (`label.split(' ')[0]`) as its column header to keep the table narrow, then emits one row per screen with `Y`/`-` cells in the **same order** as the header — the alignment is positional, so the header and cell arrays must iterate the same `viewports`. The second pass filters to screens where `capturedViewports < totalViewports` and lists each one's failed viewports **by name** under `Missing Captures`, turning the grid's dashes into an actionable checklist. When no screen is incomplete, that section is omitted entirely rather than printed empty.",
+      "code": "function generateMarkdown(report: ResponsiveReport): string {\n  const lines: string[] = [];\n  // Header row: first token of each viewport label (e.g. \"Pixel\", \"iPhone\") keeps columns narrow\n  const vpHeaders = report.viewports.map(v => v.label.split(' ')[0]).join(' | ');\n  lines.push(`| Screen | ${vpHeaders} |`);\n\n  for (const screen of report.screens) {\n    // Y where the capture exists, - where it's missing — one cell per viewport, same order as the header\n    const cells = screen.captures.map(c => c.exists ? 'Y' : '-');\n    lines.push(`| ${screen.id} | ${cells.join(' | ')} |`);\n  }\n\n  // Second section names only the incomplete screens so gaps are actionable, not buried in the grid\n  const missing = report.screens.filter(s => s.capturedViewports < s.totalViewports);\n  if (missing.length > 0) {\n    lines.push('## Missing Captures');\n    for (const s of missing) {\n      // List the specific viewports that failed for this screen, by human label\n      const gaps = s.captures.filter(c => !c.exists).map(c => c.viewport);\n      lines.push(`- **${s.id}**: ${gaps.join(', ')}`);\n    }\n  }\n  return lines.join('\\n');\n}"
+    },
+    {
+      "step": "Serializes the report to JSON and Markdown, and with `--word` emits a `.docx` laying out each screen's captures side by side per viewport.",
+      "fn": "writeReports()",
+      "explain": "Derives one timestamp — ISO with `:` and `.` replaced by `-` and sliced to `yyyy-mm-ddThh-mm-ss` so it's **filesystem-safe, lexically sortable, and unique** — and reuses it across all sibling outputs so the `.json`, `.md`, and optional `.docx` from one run share a suffix. JSON is always written pretty-printed at **2-space** indent (diff-friendly); the Markdown is the rendered grid. The `.docx` is the only conditional branch, gated on `generateWord`: it awaits `generateWordDoc`, which **embeds the actual PNGs** rather than linking them, and only then is its path added to the returned map — so callers can tell which artifacts actually exist.",
+      "code": "async function writeReports(report: ResponsiveReport, generateWord: boolean) {\n  // Colons/dots stripped and truncated to yyyy-mm-ddThh-mm-ss — filesystem-safe, sortable, unique per run\n  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);\n\n  const jsonPath = path.join(reportsDir, `responsive-report-${ts}.json`);\n  // 2-space pretty-print so the JSON stays diff-friendly and human-readable\n  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2));\n\n  const mdPath = path.join(reportsDir, `responsive-report-${ts}.md`);\n  fs.writeFileSync(mdPath, generateMarkdown(report));\n\n  const paths = { json: jsonPath, markdown: mdPath };\n  if (generateWord) {\n    const wordPath = path.join(reportsDir, `responsive-report-${ts}.docx`);\n    await generateWordDoc(report, wordPath); // embeds the actual PNGs\n    paths.word = wordPath;\n  }\n  return paths;\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Full sweep across all nine viewports",
+      "input": "25 screens requested at every viewport profile.",
+      "output": "A 25 × 9 grid, an '88% coverage' headline, and a 'Missing Captures' list naming the three screens that failed to render at the smallest phone viewport."
+    },
+    {
+      "caption": "Sign-in flow, portrait only",
+      "input": "Run scoped to the login and welcome screens, landscape profiles excluded.",
+      "output": "A compact grid showing both screens captured at desktop and every portrait phone viewport, coverage 100%."
+    },
+    {
+      "caption": "Screen that fails to render in landscape",
+      "input": "Full run including landscape viewports.",
+      "output": "Grid marks the screen captured in portrait but a dash in landscape, listing that screen+viewport under 'Missing Captures' for follow-up."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Selecting viewport profiles",
+      "whenRuns": "First, before capture.",
+      "input": "The `includeLandscape` flag.",
+      "output": "Either five (desktop + portrait phones) or all nine explicit width×height profiles."
+    },
+    {
+      "heading": "Capturing every screen per viewport",
+      "whenRuns": "After profiles are selected (skipped with `--report-only`).",
+      "input": "The mapped screen list plus the selected profiles.",
+      "output": "Playwright screenshots using two engines to match real devices — Chromium for desktop/Android, WebKit (Safari's engine) for iPhone profiles."
+    },
+    {
+      "heading": "Checking capture existence",
+      "whenRuns": "After capture finishes.",
+      "input": "The expected screen × viewport filenames.",
+      "output": "A captured/missing flag per cell of the matrix."
+    },
+    {
+      "heading": "Building the coverage grid",
+      "whenRuns": "Right after the existence check.",
+      "input": "All per-cell captured/missing flags.",
+      "output": "A `Y`/`-` grid, an overall coverage percentage, and an explicit missing-captures list."
+    },
+    {
+      "heading": "Writing the report",
+      "whenRuns": "Last, once the grid is built.",
+      "input": "The finished grid and its totals.",
+      "output": "A JSON file, a Markdown report, and — with `--word` — a `.docx` with the PNGs embedded."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "The target app running at a reachable URL (dev or QA) — the agent captures it live at each viewport.",
+      "~10 min on first run: `npx playwright install` downloads the Chromium and WebKit engines before any capture.",
+      "The screen list and per-screen navigation already wired into the agent (no per-run setup for this part)."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program executed by Node. One-time install per machine.",
+        "firstRun": "Only needed once per new machine."
+      },
+      {
+        "label": "Install dependencies — once for the agent, once for the Playwright package it drives.",
+        "cmd": "cd path/to/the-agents\nnpm install\n\ncd Playwright\nnpm install\nnpx playwright install   # downloads the actual Chromium + WebKit browser engines",
+        "why": "The agent lives in the project root; the capture layer lives in a sibling `Playwright` dir with its own deps. `npx playwright install` fetches the engines — Chromium for desktop/Android, WebKit for iPhone — not bundled with the npm package.",
+        "firstRun": "Downloads deps plus the browser engines — the slow part (5-10 min).",
+        "rerun": "No-op once installed, unless a dependency or browser version changed."
+      },
+      {
+        "label": "Set the target URL.",
+        "cmd": "export APP_URL=https://your-app-url/home",
+        "why": "`APP_URL` is the live app opened at each viewport. Unset, it falls back to a built-in default that won't be your app."
+      },
+      {
+        "label": "Run it.",
+        "cmd": "npm run responsive:test -- --word",
+        "why": "The full run: captures every mapped screen at nine viewports (desktop + four phones, portrait and landscape) and writes the coverage grid. `--word` additionally emits a `.docx` with the captures embedded.",
+        "firstRun": "Captures every screen at every viewport from scratch.",
+        "rerun": "`--capture-only` refreshes captures only; `--report-only` rebuilds the grid from on-disk captures without re-capturing."
+      },
+      {
+        "label": "Open the generated report.",
+        "cmd": "open outputs/mobile/reports/responsive-report-<timestamp>.md",
+        "why": "The `.md` holds the coverage grid — `Y` per captured screen × viewport cell, `-` per gap — plus the explicit missing-captures list."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "APP_URL (environment variable)",
+        "desc": "URL of the running app to capture."
+      },
+      {
+        "name": "--screens <list>",
+        "desc": "Comma-separated screen ids to scope the run to a subset instead of the full set."
+      },
+      {
+        "name": "--landscape, --capture-only, --report-only, --headed, --word",
+        "desc": "Flags to add landscape viewports, split capture/report phases, run headed (visible browser), or emit a `.docx`."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "responsive-report-<timestamp>.json / .md",
+        "desc": "Machine-readable and rendered coverage grid plus the overall percentage."
+      },
+      {
+        "name": "responsive-report-<timestamp>.docx (optional)",
+        "desc": "`.docx` with the captures embedded; emitted only with `--word`."
+      },
+      {
+        "name": "outputs/mobile/captures/*.png",
+        "desc": "Raw captures, one per screen per viewport — reused by `--report-only` on a later run."
+      }
+    ],
+    "rerun": "`--report-only` skips capture and rebuilds the grid from existing captures — useful to re-derive the numbers without a re-capture. A flagless run always re-captures every screen at every viewport, since coverage shifts with every build.",
+    "integrate": "Run the nine-viewport sweep as a pre-release build gate; a dropping coverage percentage, or a screen gaining a new `-` in the grid, is a regression worth blocking on."
+  },
+  "video": {
+    "url": "",
+    "caption": "2-3 min screen recording: watch the agent capture every screen at nine viewport profiles and build the coverage grid.",
+    "script": [
+      "Open a terminal beside the app so viewers can see it load at different sizes.",
+      "Say: 'This agent photographs every screen at nine different screen sizes and tells you how much of it survived the shrink.'",
+      "Run `node -v` to confirm Node is installed; say one line about what Node is.",
+      "Run `npm install` in the project root and in the Playwright folder (or note it's already done); mention `npx playwright install` downloads the actual browser engines it drives.",
+      "Show the one `export APP_URL=...` line; say 'this is the only place the app's address lives.'",
+      "Run `npm run responsive:test -- --word`; narrate as it steps through desktop, then each phone size, upright and sideways.",
+      "Open the produced `.md` report; point at the tick/dash grid and the overall coverage percentage.",
+      "Scroll to the 'Missing Captures' section and read out one screen that didn't survive a particular size.",
+      "Close: 'A dash in this grid is the early warning — long before a customer on that exact phone complains.'"
+    ]
+  }
+}

@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Tracker Toolkit — Agent 34</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s8">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">34<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip chip--toolkit">The reusable toolkit — works on any project</span></div>
+        <h1>The Tracker Toolkit</h1>
+        <p class="lead">One typed Azure DevOps client every agent shares — reads and writes work items live, or against local fixtures with zero credentials.</p>
+        <p class="kicker">Source file: src/core/ado.ts</p>
+      </div>
+    </div>
+
+    <p>A single <code>AdoClient</code> that reads and writes ADO work items — stories, bugs, test points, test runs — for every agent in the toolkit. It replaces ~85 scripts that each re-implemented the same base64 auth header and hard-coded one org/project/board. Org, project, and PAT now come from config; drop the PAT and the identical client transparently backs onto a <code>fixtures/ado</code> FixtureStore, so the same code path runs in CI with no network and no secrets.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The prior setup had ~85 scripts, each re-implementing the same <code>Basic base64(&#39;:&#39; + PAT)</code> auth and each with the org, project, and board URL baked in. Rotating a PAT or switching boards meant hand-editing dozens of files. And none of them ran without a live board and a valid PAT — no offline demo, no unit-testable path.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One client. Auth is defined once; <code>apiBase</code>, <code>project</code>, and <code>testPlanId</code> come from <code>loadConfig().ado</code>, so nothing is tied to a specific tenant. When no PAT is present the constructor flips <code>offline: true</code> and routes every call through a <code>FixtureStore</code> over <code>fixtures/ado/{id}.json</code> — same methods, same return types, no network. Live and offline are chosen automatically by whether a PAT exists.</p></div>
+    </div>
+    <p>One typed, config-driven client replaces ~85 fragile single-purpose scripts. Point it at any tenant via env vars, or at fixtures for a credential-free demo — the calling code is identical either way, so the same agents run in CI and in production.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">The constructor builds the auth header once from config and, if no PAT is present, switches itself into fixture-backed offline mode instead of failing.</span>
+          <span class="fc-node__fn">AdoClient()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Raw ADO field dictionaries (<code>System.Title</code>, <code>System.AssignedTo</code>, ...) are mapped to one flat, typed <code>WorkItem</code> shape before anything downstream sees them.</span>
+          <span class="fc-node__fn">normalize()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>getWorkItem</code> branches on the store: fixtures resolve <code>{id}.json</code> locally, live hits <code>GET /wit/workitems/{id}?$expand=relations</code> — same normalized return either way.</span>
+          <span class="fc-node__fn">getWorkItem()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>createWorkItem</code> builds the JSON-Patch document once via <code>patchesFor()</code>, then either writes a fixture file or <code>POST</code>s to <code>/wit/workitems/${type}</code>.</span>
+          <span class="fc-node__fn">createWorkItem()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>getTestPoints</code> returns a test suite&#39;s runnable test points — from the live test-plan API, or synthesized one-per-fixture-Test-Case offline — so a run can be posted against them.</span>
+          <span class="fc-node__fn">getTestPoints()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>fileOne</code> turns a <code>TestFailure</code> into a filed, parent-linked bug — with <code>dedupe</code> to reuse an open match and <code>dryRun</code> to preview without writing.</span>
+          <span class="fc-node__fn">fileOne()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"AdoClient()","explain":"Auth is `Basic base64(':' + PAT)` — the PAT goes in the **password** half of HTTP Basic with an empty username, which is why the string is `:${pat}`; this one line replaces the header ~85 scripts each rebuilt. `patWrite` is preferred over `pat` so write-scoped calls get the stronger token when one exists. `this.offline` was already decided by `loadConfig()` as `!pat`, so **no PAT means no live store** — the constructor builds a `FixtureStore` over `fixtures/ado` instead, and `persist ?? false` keeps it read-only by default so a demo never mutates committed fixtures.","code":"constructor(opts: AdoClientOptions = {}) {\n  // Config comes from the caller, else the shared loadConfig() seam.\n  this.cfg = opts.config ?? loadConfig().ado;\n  // offline was already derived by loadConfig as `!pat` — no PAT, no live store.\n  this.offline = this.cfg.offline;\n  // Basic base64(':' + PAT) — the single definition of the auth that was\n  // copy-pasted across the codebase.\n  const pat = this.cfg.patWrite || this.cfg.pat || ''; // prefer the write-scoped PAT.\n  // ADO wants the token in the PASSWORD half of Basic (empty user), hence ':' + PAT.\n  this.authHeader = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;\n\n  if (this.offline) {\n    // Back every call onto local JSON fixtures instead of the network.\n    const dir = opts.fixtureDir || path.resolve(__dirname, '..', '..', 'fixtures', 'ado');\n    // persist defaults to false so a demo never writes back to committed fixtures.\n    this.store = new FixtureStore(dir, opts.persist ?? false);\n  } else {\n    this.store = null; // live mode: real REST calls only, no fixture store.\n  }\n}"},{"fn":"normalize()","explain":"The **single choke-point** where a raw ADO `fields` bag becomes a flat typed `WorkItem`, and both the live REST path and the fixture path call it — so nothing downstream ever touches a `System.Title`-style key or parses a relation URL. Field keys are indirected through the `F.*` constants (`F.tags`, `F.assignedTo`, …), so a schema rename is one edit, not a grep. Note the defensive fallbacks: absent `fields` becomes `{}`, a missing type becomes `'Unknown'`, and `tags` is split on `;` **only when non-empty** so an empty tag string yields `[]` rather than `['']`. Each relation is remapped to carry a `targetId` already pulled from its URL via `targetIdFromUrl`.","code":"function normalize(raw: RawWorkItem): WorkItem {\n  const f = raw.fields || {}; // fixtures/partial payloads may omit fields entirely.\n  const tagsRaw = (f[F.tags] as string) || '';\n  // Relation URLs are opaque; extract the numeric target id from each up front.\n  const relations: WorkItemRelation[] = (raw.relations || []).map(r => ({\n    rel: r.rel,\n    url: r.url,\n    targetId: targetIdFromUrl(r.url),\n  }));\n  return {\n    id: raw.id,\n    type: (f[F.type] as string) || 'Unknown', // never leave type undefined downstream.\n    title: (f[F.title] as string) || '',\n    state: (f[F.state] as string) || '',\n    assignedTo: displayName(f[F.assignedTo]), // {displayName,...} object -> plain string.\n    // Split the ';'-joined ADO tag string, but only when non-empty (avoids ['']).\n    tags: tagsRaw ? tagsRaw.split(';').map(t => t.trim()).filter(Boolean) : [],\n    fields: f, // keep the raw bag too, for callers needing a field we didn't map.\n    relations,\n  };\n}"},{"fn":"getWorkItem()","explain":"One method, one `WorkItem` return type, two sources chosen solely by whether `this.store` is set (offline) or null (live) — the caller genuinely cannot tell them apart. Offline, a fixture miss is a **hard throw** (`[ado:offline] work item {id} not found in fixtures`) rather than a silent null, so a demo referencing a non-existent id fails loudly instead of returning garbage. Live, `$expand=relations` is requested so the normalized item carries its parent/child links, matching what the fixture path already stores. Both branches funnel through the same `normalize()`, guaranteeing an identical shape.","code":"async getWorkItem(id: number): Promise\u003cWorkItem> {\n  if (this.store) {\n    const raw = this.store.get(id);\n    // Offline miss is a hard error, not a silent null — surfaces bad fixture ids.\n    if (!raw) throw new Error(`[ado:offline] work item ${id} not found in fixtures`);\n    return normalize(raw);\n  }\n  // Live: $expand=relations so parent/child links come back with the item.\n  const raw = await this.request\u003cRawWorkItem>('GET', `/wit/workitems/${id}?$expand=relations`);\n  return normalize(raw);\n}"},{"fn":"createWorkItem()","explain":"The JSON-Patch document is built **once** by `patchesFor()` and then either replayed into a synthetic fixture or POSTed to ADO, so the write logic isn't duplicated per branch. Offline, `store.nextId()` mints an id, an empty `RawWorkItem` is stamped with the type and the same patches via `applyPatchesToRaw`, then persisted — the patch list is thus the single source of truth for both paths. Live, note the `$$` in the URL: one `$` is ADO's literal work-item-type prefix (`/wit/workitems/$Bug`) and the second escapes it inside the template string, and the trailing `true` flags this as a `json-patch` write. Either way the result comes back through `normalize()`.","code":"async createWorkItem(type: string, item: NewWorkItem): Promise\u003cWorkItem> {\n  // Build the JSON-Patch doc once; both branches below replay the same patches.\n  const patches = patchesFor(item, this.cfg.apiBase);\n  if (this.store) {\n    const id = this.store.nextId(); // offline: mint the next fixture id.\n    const raw: RawWorkItem = { id, fields: {}, relations: [] };\n    raw.fields[F.type] = type;\n    applyPatchesToRaw(raw, patches); // same patches, applied to an in-memory item.\n    this.store.put(raw);\n    return normalize(raw);\n  }\n  // '$' before the type is ADO's literal syntax (/wit/workitems/$Bug); the '$$'\n  // escapes it in the template string. Trailing `true` = a json-patch write.\n  const raw = await this.request\u003cRawWorkItem>(\n    'POST', `/wit/workitems/$${encodeURIComponent(type)}`, patches, true);\n  return normalize(raw);\n}"},{"fn":"getTestPoints()","explain":"A test *point* is the runnable pairing of a Test Case with a suite — you post outcomes against points, not cases — so this method must produce them either way. Offline there is no plan/suite structure, so it **synthesizes** one point per Test Case fixture with a deterministic `id = 900000 + testCaseId`; the large offset keeps synthetic point ids from colliding with real work-item ids. Live, it queries `/testplan/plans/{planId}/suites/{suiteId}/testpoint` (falling back to `this.cfg.testPlanId` when no `planId` is passed) and maps each result's `testCaseReference?.id` down to `0` if absent. Both yield the same `TestPoint[]` a run can be stamped against.","code":"async getTestPoints(suiteId: number, planId?: number): Promise\u003cTestPoint[]> {\n  if (this.store) {\n    // Synthesize a point per Test Case fixture (pointId = 900000 + tcId).\n    // The 900000 offset keeps synthetic point ids clear of real work-item ids.\n    return this.store\n      .all()\n      .filter(raw => ((raw.fields[F.type] as string) || '').toLowerCase() === 'test case')\n      .map(raw => ({ id: 900000 + raw.id, testCaseId: raw.id, suiteId }));\n  }\n  const pid = planId ?? this.cfg.testPlanId; // fall back to the configured plan.\n  const res = await this.request\u003c{ value?: unknown[] }>(\n    'GET', `/testplan/plans/${pid}/suites/${suiteId}/testpoint`);\n  // testCaseReference may be missing on odd points — default that id to 0.\n  return (res.value || []).map(p => ({ id: p.id, testCaseId: p.testCaseReference?.id ?? 0, suiteId }));\n}"},{"fn":"fileOne()","explain":"The bug-filing path, with two short-circuits before any write. `dedupe` first calls `findOpenBug(title, bugType)` and, on a hit, returns `action: 'reused'` with the existing id — so re-running the same failing suite doesn't spawn duplicate bugs. `dryRun` returns `action: 'would-create'` with a null `bugId`, letting a caller preview exactly what would be filed without touching the board. Only past both does it build the `[Test Failure] {test} ({environment})` title and `reproHtml(failure)` description, then create the bug via `createWorkItem`, wiring `failure.parentId` into a `DEFAULTS.parentRel` relation so the bug hangs under its story — and the three `action` values (`reused`/`would-create`/`created`) keep the outcome auditable.","code":"async fileOne(failure: TestFailure, opts: BugFilerOptions = {}): Promise\u003cFiledBug> {\n  const bugType = opts.bugType ?? DEFAULTS.bugType;\n  // Stable, greppable title; environment is appended only when present.\n  const title = `[Test Failure] ${failure.test}${failure.environment ? ` (${failure.environment})` : ''}`;\n\n  if (opts.dedupe) {\n    // Reuse an already-open matching bug instead of filing a duplicate on re-run.\n    const existing = await this.findOpenBug(title, bugType);\n    if (existing) return { test: failure.test, bugId: existing.id, title, action: 'reused' };\n  }\n  // Preview mode: report what WOULD be filed, write nothing (null bugId).\n  if (opts.dryRun) return { test: failure.test, bugId: null, title, action: 'would-create' };\n\n  const newItem: NewWorkItem = {\n    title,\n    fields: { 'System.Description': reproHtml(failure) }, // repro rendered as HTML.\n    // Hang the bug under its story via a parent relation, when the parent is known.\n    relations: failure.parentId ? [{ rel: DEFAULTS.parentRel, targetId: failure.parentId }] : [],\n  };\n  const bug = await this.client.createWorkItem(bugType, newItem);\n  return { test: failure.test, bugId: bug.id, title, action: 'created' };\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">File a bug from a test failure, offline (no PAT)</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A `TestFailure` for `checkout.spec: TC-014` (timeout), run with `offline: true`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A bug is written to the fixture store — title `[Test Failure] checkout.spec: TC-014`, severity, error text, and a parent relation — proving the full file path works before any PAT is set.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Retarget to another tenant</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>`ADO_ORG` / `ADO_PROJECT` / `ADO_PAT` set to a different org&#39;s board.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The same client reads and writes that board&#39;s live work items — no code change, `offline` flips to `false` the moment a PAT is present.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Post a batch of test outcomes</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A list of test cases with pass/fail results for a plan/suite.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A test run is opened, each point is stamped Passed or Failed, and the run is completed — same calls whether against the live plan or the offline fixture store.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--live">
+      You can run this yourself, end to end — every command below is real.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Node.js (installed in step 1 below) — nothing else.</li><li>No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A <code>.env</code> only matters later, if you point it at something real.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The toolkit is TypeScript on Node. One install per machine; no other runtime required.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/qa-agent-toolkit
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the toolkit&#39;s only dependency (<code>dotenv</code>) into <code>node_modules</code>. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (seconds — the dependency list is tiny).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">(Optional) copy the env template — only to go live later.</div>
+        <pre class="rb__cmd"><code>cp .env.example .env
+# then open .env and fill in ONLY the section you need</code></pre>
+        <div class="rb__why"><span>Why</span> Skippable for the demo — every capability is off by default and the demo runs on fixtures regardless. <code>.env</code> matters only once you point the toolkit at a real board, service, or database.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the capability check.</div>
+        <pre class="rb__cmd"><code>npm run doctor</code></pre>
+        <div class="rb__why"><span>Why</span> Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty <code>.env</code> everything reads <code>(off)</code>, which is expected: the demo needs none of them on.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the tracker demo — query a story, file a bug, post outcomes.</div>
+        <pre class="rb__cmd"><code>npm run demo:ado</code></pre>
+        <div class="rb__why"><span>Why</span> Exercises the real <code>AdoClient</code> end to end against <code>fixtures/ado</code> (<code>offline: true</code>, no PAT): queries a User Story via WIQL, files a bug from a synthetic <code>TestFailure</code>, and derives + posts Test Case outcomes — the same code path a live board takes.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Reads the fixture story, files an in-memory bug (<code>persist: false</code>, so committed fixtures are never modified), and prints the derived Test Case outcomes.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Deterministic — fixtures never change, so a second run prints the identical story, bug fields, and Passed/Failed outcomes.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Read the terminal output.</div>
+        <pre class="rb__cmd"><code># nothing to open — this demo prints straight to the terminal:
+#   1. Query a User Story (WIQL)
+#   2. File a Bug from a test failure
+#   3. Derive Test Case outcomes and post a run
+#   4. Summary</code></pre>
+        <div class="rb__why"><span>Why</span> No file output; the log is the evidence — the story found (#101), the bug filed (#204, in-memory only), and the 3 derived Test Case outcomes (2 Passed, 1 Failed).</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>nothing</dt><dd>Runs on the committed <code>fixtures/ado/*.json</code> — sample story, child tickets, and test cases. No board, PAT, or network.</dd><dt>ADO_ORG / ADO_PROJECT / ADO_PAT (optional)</dt><dd>Set all three in <code>.env</code> to point the same client at a real <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> board; <code>offline</code> flips to <code>false</code> automatically once a PAT is present.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console log</dt><dd>The story found, the bug filed (id, title, severity, links), and each Test Case&#39;s derived outcome (Passed/Failed) with its reason — all printed, nothing written to disk.</dd><dt>in-memory bug #204</dt><dd>Created for the demo only (<code>persist: false</code>); <code>fixtures/ado</code> is never touched, so the demo is safe to rerun indefinitely.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Idempotent: the demo runs with <code>persist: false</code>, so nothing it creates is written back to the fixtures — rerun freely and get the identical story, bug, and outcomes. Point the same client at a live board (set <code>ADO_PAT</code>) and reruns instead reflect the board&#39;s current state.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Import directly: <code>import { AdoClient } from &#39;./src/core/ado&#39;</code>, then <code>new AdoClient({ config: loadConfig().ado })</code> — with a PAT it hits the live board, without one it falls back to fixtures, so the same calling code runs in CI (offline) and production (live). Compose with <code>BugFilerAgent</code> (<code>agents/ado/bug-filer-agent</code>) and <code>TestResultsAgent</code> (<code>agents/ado/test-results-agent</code>) exactly as <code>examples/ado/demo.ts</code> does.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: run the tracker demo through a full query → file → post cycle against fixtures, zero credentials.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Loads config</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>In the constructor, once per client.</dd>
+          <dt>Takes in</dt><dd><code>ADO_ORG</code>, <code>ADO_PROJECT</code>, <code>ADO_PAT</code> (via <code>loadConfig().ado</code>).</dd>
+          <dt>Shows out</dt><dd>One <code>AdoConfig</code>, with <code>offline</code> set true automatically whenever no PAT is present.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Live REST path</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When a PAT is present.</dd>
+          <dt>Takes in</dt><dd>A work-item id, a WIQL query, or a <code>NewWorkItem</code>.</dd>
+          <dt>Shows out</dt><dd>Normalized <code>WorkItem</code>s from the Azure DevOps REST API (api-version 7.0), auth header attached automatically.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Fixture path</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When no PAT is present — no code change.</dd>
+          <dt>Takes in</dt><dd>The identical method calls a live run would make.</dd>
+          <dt>Shows out</dt><dd>The same typed shapes, read from / written to <code>fixtures/ado/{id}.json</code> via <code>FixtureStore</code> — no network or secret.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Failure to bug</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When <code>fileOne</code> is called on a <code>TestFailure</code>.</dd>
+          <dt>Takes in</dt><dd>Test name, error, and optional <code>parentId</code>.</dd>
+          <dt>Shows out</dt><dd>A created bug, a reused open one (<code>dedupe</code>), or a <code>would-create</code> preview (<code>dryRun</code>), parent-linked.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Post a run&#39;s outcomes</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When a batch of results lands on a plan.</dd>
+          <dt>Takes in</dt><dd>Test-case ids with their outcomes.</dd>
+          <dt>Shows out</dt><dd>A completed test run — live on the real plan or in the fixture store — readable back for reporting.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-uat-dashboard-maker.html">← The UAT Dashboard Maker</a>
+      <a href="the-report-builder.html">The Report Builder →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

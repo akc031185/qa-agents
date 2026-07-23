@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Report Builder — Agent 35</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s8">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">35<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip chip--toolkit">The reusable toolkit — works on any project</span></div>
+        <h1>The Report Builder</h1>
+        <p class="lead">Turns any agent&#39;s <code>AgentResult[]</code> into a single self-contained HTML report — inlined CSS, light/dark, no external assets.</p>
+        <p class="kicker">Source file: src/core/html.ts</p>
+      </div>
+    </div>
+
+    <p>One shared renderer that takes the <code>AgentResult[]</code> from any agent — tracker, API, DB — and emits a self-contained HTML report: stat tiles, a results table, colour-coded pass/fail badges, an evidence panel per agent, and an optional run matrix. It replaces ~90 report scripts that each hand-rolled their own layout, colours, and markup. Every page now draws from one CSS token set, so a single edit re-skins them all.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The prior setup had ~90 report scripts, each hand-writing its own page layout, colour hexes, tables, and status labels. They drifted, so reports looked inconsistent, and changing the look meant editing every script.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One kit of typed helpers — <code>statCards</code>, <code>table</code>, <code>badge</code>, <code>evidenceSteps</code>, <code>runMatrix</code> — all reading from a single <code>THEME_CSS</code> token set. Every report is byte-for-byte consistent, re-skinnable from one place, and emitted as a single standalone HTML file: CSS inlined, no external stylesheet, no network — trivial to email, archive, or screen-record.</p></div>
+    </div>
+    <p>One renderer, one token set: consistent reports produced in milliseconds instead of hand-built per project. Feed it any agent&#39;s <code>AgentResult[]</code> and it composes into the same dashboard — self-contained HTML that opens anywhere, offline, unchanged years later.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>buildReportPage</code> takes one <code>ReportInput</code>, rolls the <code>AgentResult[]</code> into headline counts, then lays out a summary, a results table, and one evidence section per agent that carries steps.</span>
+          <span class="fc-node__fn">buildReportPage()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Every page element — stat tiles, tables, status pills, run matrix, request/response evidence panels — comes from the same small set of pure string-returning helpers.</span>
+          <span class="fc-node__fn">statCards()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Every colour is a CSS custom property from <code>THEME_CSS</code> — <code>--pass</code>, <code>--fail</code>, <code>--accent</code> — not a hex literal per report, with a <code>prefers-color-scheme: dark</code> variant baked in.</span>
+          <span class="fc-node__fn">THEME_CSS</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>htmlDocument</code> inlines <code>THEME_CSS</code> into <code>&lt;head&gt;</code>, producing one standalone document — no linked stylesheet to lose, viewport meta for mobile.</span>
+          <span class="fc-node__fn">htmlDocument()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>runReportAgent</code> builds the page, writes it to disk, and returns a normal <code>AgentResult</code> pointing at the file — so a report step composes with every other agent.</span>
+          <span class="fc-node__fn">runReportAgent()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"buildReportPage()","explain":"The report composer: `summarize()` rolls the `AgentResult[]` into `{ total, passed, failed }`, which become three `StatCard`s — the **Failed** tile only turns red (`tone: 'fail'`) when `s.failed` is non-zero, otherwise it stays `neutral` so a clean run shows no alarm colour. The Results table maps each result to a row, deriving its badge from `r.ok` and printing `r.steps?.length || 0` (the `?.` and `|| 0` guard results carrying no steps array). It then appends one **`Evidence — {agent}`** section per result that actually has steps, so passing checks with nothing to show don't clutter the page. Every piece is assembled from the shared `statCards`/`table`/`badge`/`evidenceSteps` helpers — no bespoke markup lives here.","code":"export function buildReportPage(input: ReportInput): ReportPage {\n  const s = summarize(input.results); // -> { total, passed, failed }\n  const cards: StatCard[] = [\n    { label: 'Agents', value: s.total },\n    { label: 'Passed', value: s.passed, tone: 'pass' },\n    // Only tint the Failed tile red when something actually failed.\n    { label: 'Failed', value: s.failed, tone: s.failed ? 'fail' : 'neutral' },\n  ];\n  const sections = [\n    section('Summary', statCards(cards)),\n    section('Results', table(\n      ['Agent', 'Status', 'Summary', 'Steps'],\n      // Badge tone follows r.ok; ?. || 0 guards a result with no steps array.\n      input.results.map(r => [r.agent, badge(r.ok ? 'PASS' : 'FAIL', r.ok ? 'pass' : 'fail'), r.summary, String(r.steps?.length || 0)]),\n    )),\n  ];\n  for (const r of input.results) {\n    // One evidence section per result that HAS steps — skip empty ones.\n    if (r.steps?.length) sections.push(section(`Evidence — ${r.agent}`, evidenceSteps(r.steps)));\n  }\n  return { title: input.title, subtitle: input.subtitle, generatedAt: input.generatedAt, sections };\n}"},{"fn":"statCards()","explain":"A pure string-returning helper — no DOM, no framework — like every piece of this renderer. The column count is **clamped to 1–4** (`Math.min(Math.max(len, 1), 4)`) so one card doesn't stretch full-width and five don't crush into an unreadable row; it feeds a `grid cols-N` class the CSS knows how to lay out. A card's number is tinted only when its `tone` is set and not `'neutral'`, and it pulls the colour from the `--${tone}` CSS token rather than a hardcoded hex. Crucially **both** `it.value` and `it.label` pass through `escapeHtml`, so a value like `\u003c3` can't inject markup into the report.","code":"export function statCards(items: StatCard[]): string {\n  // Clamp columns to 1..4 so the grid never looks starved or overcrowded.\n  const cols = Math.min(Math.max(items.length, 1), 4);\n  const cards = items.map(it => {\n    // Tint the number from a CSS token (--pass/--fail/...), only for a real tone.\n    const numStyle = it.tone && it.tone !== 'neutral' ? ` style=\"color:var(--${it.tone})\"` : '';\n    // escapeHtml on BOTH value and label — untrusted content can't inject markup.\n    return `\u003cdiv class=\"card stat\">\n  \u003cdiv class=\"num\"${numStyle}>${escapeHtml(String(it.value))}\u003c/div>\n  \u003cdiv class=\"lbl\">${escapeHtml(it.label)}\u003c/div>\n\u003c/div>`;\n  }).join('\\n');\n  return `\u003cdiv class=\"grid cols-${cols}\">\\n${cards}\\n\u003c/div>`;\n}"},{"fn":"THEME_CSS","explain":"Every colour in the toolkit is a **CSS custom property** declared once on `:root` (`--accent`, `--pass`, `--fail`, `--warn`, `--info`), never a per-report hex — so changing `--pass` in this one block re-skins every report the kit emits. Helpers like `statCards` reference them as `var(--pass)`, so they never need to know light from dark. The `@media (prefers-color-scheme: dark)` block re-points the **same token names** to brighter values, meaning a single generated file adapts to the viewer's OS theme with no JS and no second stylesheet — which is exactly what lets each report stay self-contained.","code":":root {\n  --accent: #4f46e5;         /* indigo — primary */\n  --pass: #16a34a;           /* green — passing checks */\n  --fail: #dc2626;           /* red — failing checks */\n  --warn: #d97706;\n  --info: #2563eb;\n}\n/* Dark theme re-points the SAME token names — every helper picks it up for free. */\n@media (prefers-color-scheme: dark) {\n  :root {\n    --accent: #818cf8;\n    --pass: #4ade80; --fail: #f87171; --warn: #fbbf24; --info: #60a5fa;\n  }\n}"},{"fn":"htmlDocument()","explain":"Wraps the assembled `bodyHtml` in a complete `\u003c!doctype html>` document with `THEME_CSS` (plus any caller `extraCss`) **inlined** in a single `\u003cstyle>` — there's no `\u003clink>` to an external sheet that could 404 later, so the file renders identically offline, emailed, or opened years from now. The `\u003cmeta viewport>` lets the same document reflow on a phone. Only `title` is `escapeHtml`d, because it lands in `\u003ctitle>`; the CSS and body are trusted, already-built strings. Everything a browser needs is in one file — that self-containment is the whole point of the report builder.","code":"export function htmlDocument(opts: { title: string; bodyHtml: string; extraCss?: string }): string {\n  // Inline THEME_CSS (+ any extraCss) into \u003chead> so the file needs no network.\n  return `\u003c!doctype html>\n\u003chtml lang=\"en\">\n\u003chead>\n\u003cmeta charset=\"utf-8\">\n\u003cmeta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\u003ctitle>${escapeHtml(opts.title)}\u003c/title>\n\u003cstyle>${THEME_CSS}${opts.extraCss || ''}\u003c/style>\n\u003c/head>\n\u003cbody>\n${opts.bodyHtml}\n\u003c/body>\n\u003c/html>`;\n}"},{"fn":"runReportAgent()","explain":"Renders and persists in one call, then returns a **normal `AgentResult`** so a report step composes with every other agent — even feeding into a larger report. `ok` is `s.failed === 0`: the report is considered passing only when none of its input results failed, so its own success mirrors what it summarizes. The absolute path from `saveReport` is carried in both `data.outPath` and an `artifacts` entry tagged `kind: 'html'`, which is how the shared evidence machinery knows to surface the rendered file as a downloadable artifact.","code":"export function runReportAgent(input: ReportInput, outPath: string): AgentResult\u003c{ outPath: string }> {\n  const rp = buildReportPage(input);\n  const abs = saveReport(rp, outPath); // write the page, get its absolute path back.\n  const s = summarize(input.results);\n  return {\n    agent: 'report',\n    ok: s.failed === 0, // the report itself \"passes\" only if no input result failed.\n    summary: `Rendered ${input.results.length} agent result(s) — ${s.passed} passed, ${s.failed} failed`,\n    data: { outPath: abs },\n    // Return a normal AgentResult so a report can feed into a larger report.\n    artifacts: [{ path: abs, kind: 'html' }],\n  };\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Nightly test dashboard</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The combined `AgentResult[]` of several checks — some pass, some fail — plus a pass/fail matrix across three environments.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>One HTML page titled &#39;QA Results Dashboard&#39;: tiles reading &#39;12 checks · 10 passed · 2 failed&#39;, a colour-coded results table, and the matrix — all inlined in a single emailable file.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Re-skin every report from one token</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A one-line change to `--accent` in `THEME_CSS`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Every report the toolkit emits uses the new colour — no report script touched, because they all resolve the same CSS token.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Evidence behind a failure</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A failed check whose `steps` captured its request and response.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>An evidence panel with a red `FAIL` badge showing the exact request, status code, and trimmed response body.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--live">
+      You can run this yourself, end to end — every command below is real.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Node.js (installed in step 1 below) — nothing else.</li><li>No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A <code>.env</code> only matters later, if you point it at something real.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The toolkit is TypeScript on Node. One install per machine; no other runtime required.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/qa-agent-toolkit
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the toolkit&#39;s only dependency (<code>dotenv</code>) into <code>node_modules</code>. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (seconds — the dependency list is tiny).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">(Optional) copy the env template — only to go live later.</div>
+        <pre class="rb__cmd"><code>cp .env.example .env
+# then open .env and fill in ONLY the section you need</code></pre>
+        <div class="rb__why"><span>Why</span> Skippable for the demo — every capability is off by default and the demo runs on inline sample data regardless. <code>.env</code> matters only once you point the toolkit at a real board, service, or database.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the capability check.</div>
+        <pre class="rb__cmd"><code>npm run doctor</code></pre>
+        <div class="rb__why"><span>Why</span> Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty <code>.env</code> everything reads <code>(off)</code>, which is expected: the demo needs none of them on.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the report demo — build a self-contained HTML dashboard.</div>
+        <pre class="rb__cmd"><code>npm run demo:report</code></pre>
+        <div class="rb__why"><span>Why</span> Feeds three synthetic <code>AgentResult</code>s (an API probe, a DB reconciliation, an ADO sync) plus a small pass/fail matrix into <code>runReportAgent()</code>, writing the page to <code>out/report/demo-dashboard.html</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Creates <code>out/report/</code> if missing, then writes <code>demo-dashboard.html</code>.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Overwrites the same file with byte-identical content — the demo pins <code>generatedAt</code> to a fixed string, so reruns are deterministic and diff-clean.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the dashboard.</div>
+        <pre class="rb__cmd"><code>open out/report/demo-dashboard.html</code></pre>
+        <div class="rb__why"><span>Why</span> One self-contained HTML file — no server, no network, no external stylesheet — opens in any browser and renders correctly indefinitely. You&#39;ll see the stat tiles, colour-coded results table, evidence panels, and pass/fail matrix.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>nothing</dt><dd>The demo builds its <code>ReportInput</code> entirely inline (<code>examples/report/demo.ts</code>) — three synthetic <code>AgentResult</code>s and a 4-row pass/fail matrix. No credentials or files.</dd><dt>a real ReportInput (for your own use)</dt><dd>In a real project you pass the <code>AgentResult[]</code> your own tracker/API/DB agents already returned — same shape, same builder.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>out/report/demo-dashboard.html</dt><dd>One self-contained HTML page: stat tiles (&#39;3 Agents · 2 Passed · 1 Failed&#39;), a colour-coded results table, an evidence panel per agent, and the 4×3 pass/fail matrix — all inlined, nothing external to load.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Deterministic and safe to rerun: the file is fully overwritten each run, and because the demo pins <code>generatedAt</code>, the output bytes are identical run to run. Point <code>runReportAgent()</code> at real <code>AgentResult</code>s and every rerun simply reflects your latest test results.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Import directly: <code>import { runReportAgent } from &#39;./agents/report&#39;</code>, hand it a <code>ReportInput</code> (<code>{ title, subtitle, results, matrix, generatedAt }</code>) built from your agents&#39; <code>AgentResult</code>s plus an output path — it returns its own <code>AgentResult</code> pointing at the file, so a report step composes with every other agent. For custom pieces, import the lower-level helpers (<code>statCards</code>, <code>table</code>, <code>badge</code>, <code>evidenceSteps</code>, <code>THEME_CSS</code>) straight from <code>./src/core/html</code>.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: run the report demo and watch a self-contained HTML dashboard render from nothing but inline sample data.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Summarizes the results</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, once every agent in the run has returned.</dd>
+          <dt>Takes in</dt><dd>A normalized <code>AgentResult[]</code> from any domain — tracker, API, database.</dd>
+          <dt>Shows out</dt><dd>Headline counts: agents run, passed, and failing evidence steps.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Assembles sections from shared helpers</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after the counts are rolled up.</dd>
+          <dt>Takes in</dt><dd>The results plus an optional pass/fail matrix.</dd>
+          <dt>Shows out</dt><dd>A summary, a results table, an optional run matrix, and one evidence section per agent — all from the same helper kit.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Resolves every colour from one palette</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>As each helper renders its HTML.</dd>
+          <dt>Takes in</dt><dd>Each result&#39;s tone — pass, fail, warn, info.</dd>
+          <dt>Shows out</dt><dd>Consistent colour-coded badges and cells across the whole report, driven entirely by <code>THEME_CSS</code> tokens.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Inlines into one file</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once all sections are assembled.</dd>
+          <dt>Takes in</dt><dd>The finished body HTML.</dd>
+          <dt>Shows out</dt><dd>A single self-contained document — CSS inlined, no external stylesheet — that adapts to light/dark and phone-width via media queries.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Writes and reports back</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, when the caller passed an output path.</dd>
+          <dt>Takes in</dt><dd>An output path.</dd>
+          <dt>Shows out</dt><dd>The file is written and <code>runReportAgent</code> returns its own <code>AgentResult</code> pointing at it — ready to feed a larger report.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-tracker-toolkit.html">← The Tracker Toolkit</a>
+      <a href="the-api-tester.html">The API Tester →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

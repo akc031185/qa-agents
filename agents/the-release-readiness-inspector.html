@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Release-Readiness Inspector — Agent 03</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s1">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">03<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Finding &amp; reporting problems</span></div>
+        <h1>The Release-Readiness Inspector</h1>
+        <p class="lead">Replays every fixed bug&#39;s repro in a headless-capable Playwright browser, P1-first, and returns a pass-rate go/no-go verdict.</p>
+        <p class="kicker">Source file: bug-release-testing-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Pulls the Closed/Resolved bugs under the features being released, runs a deterministic testability analysis to decide which can be automated, then drives a real Chromium session through each repro against your environment. Returns a release-readiness report — overall pass rate and a separate P1 pass rate — plus a screenshot per bug, most-critical first.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Every release, a tester is supposed to re-open each fixed bug, read the repro, and manually click through to confirm it holds and nothing adjacent regressed. Across dozens of bugs under time pressure it gets rushed, and the urgent ones don&#39;t reliably get checked first.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>An automated re-check in a real browser, priority-ordered (P1 before P2/P3/P4), with a PASS/FAIL and screenshot per bug — plus an explicit SKIP list of what a browser genuinely cannot verify and why.</p></div>
+    </div>
+    <p>A fix that quietly regressed erodes trust fast. This catches those regressions pre-ship, and the P1 pass rate is a hard go/no-go number a pipeline can gate on.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Collects Closed/Resolved bugs under the release features and sorts them P1-first.</span>
+          <span class="fc-node__fn">fetchBugsByFeatures()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Per bug, a deterministic testability gate decides automatable vs skip — and records the skip reason.</span>
+          <span class="fc-node__fn">analyzeTestability()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Compiles the detected mode into a typed <code>ActionStep[]</code> — navigate, newChat, sendMessage, uploadFile, assertions.</span>
+          <span class="fc-node__fn">buildActions()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Dispatches each <code>ActionStep</code> to a real Playwright command against the target environment.</span>
+          <span class="fc-node__fn">executeAction()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Runs a bug&#39;s full action sequence in a reset page and records PASS/FAIL with a screenshot and duration.</span>
+          <span class="fc-node__fn">executeBugTest()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Rolls the per-bug results into a <code>ReleaseReport</code> — overall pass rate plus an isolated P1 pass rate.</span>
+          <span class="fc-node__fn">buildReport()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"fetchBugsByFeatures()","explain":"The two-level walk that assembles the re-check queue: features → their story IDs, then each story → its child work items. Because two release features can legitimately share a story, `Array.from(new Set(storyIds))` **dedups** before the child walk — otherwise a shared story's bugs would be tested (and counted) twice, distorting the pass rate. The inner guard keeps only items that are `WorkItemType === 'Bug'` **and** in `Closed`/`Resolved` — the point is to re-verify *fixed* bugs, so still-open ones are irrelevant. The final `sort` is what makes the gate meaningful under a `--limit`: `a.priority - b.priority` orders ascending (P1 = 1 first), and `.localeCompare` on `severity` only breaks ties **within** the same priority — so when only N bugs can run, the most critical ones are guaranteed to be the ones that do.","code":"private async fetchBugsByFeatures(featureIds: number[]): Promise\u003cClosedBug[]> {\n  const storyIds: number[] = [];\n  for (const featureId of featureIds) {\n    const ids = await this.adoClient.getStoryIdsByFeature(featureId);\n    storyIds.push(...ids);\n  }\n\n  // Dedup: two features can share a story — without this its bugs would test/count twice\n  const uniqueStoryIds = Array.from(new Set(storyIds));\n  const allBugs: ClosedBug[] = [];\n\n  for (const storyId of uniqueStoryIds) {\n    const wi = await this.adoClient.getWorkItemWithRelations(storyId);\n    const childIds = this.extractChildIds(wi.relations || []);\n    const storyTitle = wi.fields?.['System.Title'] || '';\n\n    for (const childId of childIds) {\n      const child = await this.adoClient.getWorkItemWithRelations(childId);\n      const fields = child.fields || {};\n      // Only FIXED bugs — the whole job is re-verifying resolved work, not open tickets\n      if (\n        fields['System.WorkItemType'] === 'Bug' &&\n        (fields['System.State'] === 'Closed' || fields['System.State'] === 'Resolved')\n      ) {\n        allBugs.push(this.mapToBug(child, storyId, storyTitle));\n      }\n    }\n  }\n  return allBugs;\n}\n\n// Elsewhere: sort so P1 bugs always run before P2/P3/P4 (matters under --limit)\n// priority ascending = P1 first; severity.localeCompare only breaks ties WITHIN a priority\nbugs.sort((a, b) => a.priority - b.priority || a.severity.localeCompare(b.severity));"},{"fn":"analyzeTestability()","explain":"The honesty gate — it decides what a browser *can* truthfully verify, and everything it rejects gets a concrete reason rather than a silent pass. All four text sources are concatenated into one `combined` haystack so a disqualifying keyword is caught wherever it appears (title, repro, description, or tags). The three exits are ordered by cost: `findSkipReason` first rules out genuinely browser-impossible checks (microphone, visual-design judgment); then the `>= 20` content gate rejects repro text too thin to build reliable steps from — an `||` so **either** repro or description clearing the bar is enough; only then does `detectMode` attempt to map the bug to a known flow, skipping if it can't. Critically, a SKIP is **not** a FAIL — it returns `automatable: false` with `actions: []`, which keeps it out of the pass-rate denominator downstream. It's pure keyword matching, so no bug text ever leaves the machine.","code":"function analyzeTestability(bug: ClosedBug): TestabilityResult {\n  // One haystack from all 4 sources — a disqualifying keyword is caught wherever it lives\n  const combined = `${bug.title} ${bug.reproStepsText} ${bug.descriptionText} ${bug.tags.join(' ')}`;\n\n  // Exit 1 (cheapest): browser-impossible checks — mic, visual judgment, etc.\n  const skipReason = findSkipReason(combined);\n  if (skipReason) {\n    return { automatable: false, mode: 'skip', skipReason, testDescription: '', actions: [] };\n  }\n\n  // Exit 2: too little text to build reliable steps — either field clearing 20 chars is enough\n  const hasContent = bug.reproStepsText.length >= 20 || bug.descriptionText.length >= 20;\n  if (!hasContent) {\n    return { automatable: false, mode: 'skip', skipReason: 'Repro steps too vague (\u003c 20 chars)', testDescription: '', actions: [] };\n  }\n\n  // Exit 3: can't map the bug to a known testable flow\n  const mode = detectMode(combined);\n  if (mode === 'skip') {\n    return { automatable: false, mode: 'skip', skipReason: 'Cannot map bug to a testable mode', testDescription: '', actions: [] };\n  }\n\n  // Passed all gates -> build the concrete plan (empty actions here would mean a SKIP, not a FAIL)\n  const actions = buildActions(mode, bug);\n  const testDescription = buildTestDescription(mode, bug);\n  return { automatable: true, mode, skipReason: '', testDescription, actions };\n}"},{"fn":"buildActions()","explain":"The compiler from an abstract `mode` to a concrete, replayable `ActionStep[]`. Every plan is bookended the same way — it **always** front-loads `navigate` + `newChat` so each bug starts from a known clean state (a stale session is a classic source of false failures), and **always** ends with a `screenshot` so there's visual evidence whether the run passes or throws. Inside a mode, sub-cases are chosen by keyword: `lower.includes('quiz')` appends the canonical **send → wait → assert** triple, where `assertResponseLength` with `minLength: 50` is the actual verification — it treats an empty or near-empty reply as a failure, catching a silently-broken feature that would otherwise look fine. The steps are plain data objects (`type` + optional `payload` + `description`), not calls — nothing touches the browser here; `executeAction` interprets them later.","code":"function buildActions(mode: TestMode, bug: ClosedBug): ActionStep[] {\n  const lower = `${bug.title} ${bug.reproStepsText}`.toLowerCase(); // keyword routing, case-insensitive\n  const actions: ActionStep[] = [];\n\n  // Always orient first: load the app, start a fresh session — a stale session causes false FAILs\n  actions.push({ type: 'navigate', description: 'Navigate to the app and verify page loads' });\n  actions.push({ type: 'newChat',  description: 'Start a fresh session' });\n\n  if (mode === 'teacher') {\n    actions.push({ type: 'enterTeacherMode', description: 'Enter learning mode' });\n\n    if (lower.includes('quiz')) {\n      // Canonical send -> wait -> assert triple\n      actions.push({ type: 'sendMessage', payload: { message: 'Give me a quiz on project management.' }, description: 'Request a quiz' });\n      actions.push({ type: 'waitForResponse', description: 'Wait for quiz question' });\n      // minLength 50: an empty/near-empty reply = FAIL, catching a silently-broken feature\n      actions.push({ type: 'assertResponseLength', payload: { minLength: 50 }, description: 'Assert quiz question returned' });\n    }\n    // ... other sub-cases (summary, history, chapter) follow the same pattern\n  }\n  // ... 'student' and 'navigation' modes are handled the same way\n\n  actions.push({ type: 'screenshot', description: 'Capture final state' }); // always — evidence for pass OR fail\n  return actions; // plain data objects, not calls — executeAction interprets them later\n}"},{"fn":"executeAction()","explain":"The interpreter that turns each data-only `ActionStep` into real Playwright calls. `sendMessage` resolves the input with `.first()` (defends against a selector that matches more than one node) and `waitFor({ state: 'visible', timeout: 10000 })` before typing — so a slow-rendering input surfaces as a clean 10s timeout, not a confusing `fill`-on-detached error. `waitForResponse` is the interesting one: rather than a fixed sleep, it **polls** the `thinkingText` indicator against a 90s `deadline`, and the moment `thinking` is false it waits one more `1500ms` settle beat and breaks — adapting to however long the app actually takes. The `.catch(() => false)` on `isVisible()` is deliberate: if the indicator element has already been removed from the DOM the check throws, and swallowing that to `false` correctly reads as 'not thinking / done' instead of crashing the whole bug run.","code":"private async executeAction(action: ActionStep): Promise\u003cvoid> {\n  const page = this.page!;\n\n  switch (action.type) {\n    case 'sendMessage': {\n      const message: string = action.payload?.message || 'Hello'; // default so a payload-less step still sends\n      const chatInput = page.locator(SEL.chatInput).first(); // .first() guards against a multi-match selector\n      // Wait for visibility so a slow render becomes a clean timeout, not a fill-on-detached error\n      await chatInput.waitFor({ state: 'visible', timeout: 10000 });\n      await chatInput.fill(message);\n      await page.keyboard.press('Enter');\n      break;\n    }\n\n    case 'waitForResponse': {\n      const deadline = Date.now() + 90000; // hard 90s cap so a hung response can't stall the run\n      while (Date.now() \u003c deadline) {\n        // .catch(()=>false): if the indicator was already removed the check throws — treat as \"done\"\n        const thinking = await page.locator(SEL.thinkingText).isVisible().catch(() => false);\n        if (!thinking) { await page.waitForTimeout(1500); break; } // done -> one settle beat, then proceed\n        await page.waitForTimeout(1000); // still thinking -> poll again in 1s\n      }\n      break;\n    }\n    // ... other cases: assertElementVisible, uploadFile, screenshot, etc.\n  }\n}"},{"fn":"executeBugTest()","explain":"The per-bug harness, and the whole thing is `try/catch`-shaped because **any** thrown action means the fix didn't hold — a failed `assertResponseLength`, a `waitFor` timeout, a missing element all funnel to the same FAIL. It calls `resetPageState(appUrl)` first so each bug is isolated from the last one's residue, then `await`s the actions **in order** (sequential, not parallel — order is the test). Reaching the end without throwing is the only PASS path. Two robustness details in the catch: `takeScreenshot(...).catch(() => undefined)` so that if even the failure screenshot fails, the result still returns rather than throwing out of the handler; and `(err.message || String(err)).slice(0, 250)` normalizes non-Error throws and **caps** the message at 250 chars to keep the report readable. `durationMs` is computed off the same `start` on both branches, so timing is recorded even for failures.","code":"private async executeBugTest(bug: ClosedBug, testability: TestabilityResult, appUrl: string): Promise\u003cBugTestResult> {\n  const start = Date.now();\n  try {\n    await this.resetPageState(appUrl); // isolate this bug from the previous one's residue\n    for (const action of testability.actions) {\n      await this.executeAction(action); // sequential — order IS the test; any throw = the fix regressed\n    }\n    const screenshotPath = await this.takeScreenshot(bug.id, 'pass'); // reaching here without throwing = PASS\n    return {\n      bugId: bug.id, bugTitle: bug.title, priority: bug.priority,\n      mode: testability.mode, status: 'PASS',\n      screenshotPath, durationMs: Date.now() - start, actions: testability.actions,\n    };\n  } catch (err: any) {\n    // .catch(()=>undefined): don't let a failed fail-screenshot throw out of the handler\n    const screenshotPath = await this.takeScreenshot(bug.id, 'fail').catch(() => undefined);\n    return {\n      bugId: bug.id, bugTitle: bug.title, priority: bug.priority,\n      // String(err) normalizes non-Error throws; slice caps the message for a readable report\n      mode: testability.mode, status: 'FAIL', error: (err.message || String(err)).slice(0, 250),\n      screenshotPath, durationMs: Date.now() - start, actions: testability.actions, // timing recorded even on FAIL\n    };\n  }\n}"},{"fn":"buildReport()","explain":"The verdict math, and its one crucial decision is what goes in the **denominator**. `tested` filters out `SKIP` before the rate is computed, so `passRate = passed / tested.length` measures only bugs the browser could actually verify — a mic-only bug that was honestly skipped can't inflate *or* deflate the number. The `tested.length > 0` guard returns `0` on an all-skipped run instead of dividing by zero. The P1 rate is computed the same way but over the `priority === 1 && status !== 'SKIP'` subset, kept **separate** because it's the hard gate a pipeline blocks on — you can ship with a stray P3 failure, but a failed P1 should stop the release regardless of how healthy the overall rate looks. Note `passed + failed` need not equal `tested.length` if any other non-skip status exists, so each count is derived independently rather than inferred.","code":"private buildReport(results: BugTestResult[], bugs: ClosedBug[], input: AgentInput, appUrl: string): ReleaseReport {\n  const tested   = results.filter(r => r.status !== 'SKIP'); // SKIPs are excluded from the denominator\n  const passed   = results.filter(r => r.status === 'PASS').length;\n  const failed   = results.filter(r => r.status === 'FAIL').length;\n  const skipped  = results.filter(r => r.status === 'SKIP').length;\n  // Rate over verifiable bugs only; guard divide-by-zero on an all-skipped run\n  const passRate = tested.length > 0 ? Math.round((passed / tested.length) * 100) : 0;\n\n  // P1 rate computed separately — this is the hard gate; a failed P1 should stop the ship\n  const p1Results = results.filter(r => r.priority === 1 && r.status !== 'SKIP');\n  const p1Passed  = p1Results.filter(r => r.status === 'PASS').length;\n\n  return {\n    generatedAt: new Date().toISOString(), appUrl,\n    summary: {\n      totalBugs: bugs.length, automatable: tested.length, skipped, passed, failed,\n      passRate, p1Bugs: p1Results.length, p1Passed,\n    },\n    results,\n  };\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">P1 upload fix re-verified</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Closed bug `Document upload silently fails on the teaching screen`, priority 1.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Playwright navigates, asserts the Upload button visible, `uploadFile`s a sample, waits for acknowledgement, records PASS with a screenshot and duration. P1, so it runs first.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Browser-impossible check, skipped honestly</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A fixed bug about voice-recording quality through the microphone.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>`findSkipReason` matches the mic keyword → SKIP, reason `Voice recording requires a microphone — cannot automate in a browser`. Excluded from the pass-rate denominator, flagged for manual check.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Regression caught</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A fixed bug where a menu should reappear after a new session.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Agent starts a fresh session, the visibility assertion for the menu throws, records FAIL with the error (truncated) and a fail-state screenshot — drops the pass rate below the gate.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>An <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> org/project and a <strong>PAT</strong> with work-item read scope.</li><li>A reachable running instance of the app under test (a dev/QA URL) and a way past its sign-in (SSO creds, or manual login on first run).</li><li>Playwright&#39;s Chromium binary installed — a real browser is driven per check, so this is mandatory.</li><li>No LLM key — testability decisions are deterministic keyword rules, kept fully local (no bug text leaves the machine).</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript on Node. One-time per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time only, on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install dependencies and the Chromium binary.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+npx playwright install chromium</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the ADO client and report writers; <code>playwright install</code> fetches the actual browser binary the agent drives. Skip it and the run fails immediately.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Dependencies plus a ~300MB browser binary — a few minutes.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless the browser version changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Export the ADO target and (optionally) sign-in (environment variables).</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token
+export APP_SSO_PASSWORD=your-password   # optional — omit to log in by hand on first run</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup to resolve the board and, if the app&#39;s SSO page appears, get past it headlessly without a human at the keyboard.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Dry-run the testability analysis — no browser yet.</div>
+        <pre class="rb__cmd"><code>npm run bug:release:dry -- --feature-ids &quot;4001,4002&quot;</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--dry-run</code> fetches the closed bugs and runs testability analysis only — reports the automatable-vs-skip split before spending time driving Chromium.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the real re-check against your environment.</div>
+        <pre class="rb__cmd"><code>npm run bug:release -- \
+  --feature-ids &quot;4001,4002&quot; \
+  --app-url https://qa.my-app.example.com \
+  --limit 20
+
+# or headless + a Word report in one go:
+npm run bug:release:headless -- --app-url https://qa.my-app.example.com --word</code></pre>
+        <div class="rb__why"><span>Why</span> The actual re-check: drives Chromium, signs in, replays each bug&#39;s action sequence P1-first, capped at <code>--limit</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> May block on a manual SSO login if no password/session was configured.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Faster once a saved session exists — later runs skip the login round-trip.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the release-readiness report.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/bug-release/BugRelease_&lt;timestamp&gt;.md
+open ./outputs/reports/bug-release/screenshots/</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.md</code> surfaces the overall and P1 pass rates; the screenshots folder holds one image per bug to eyeball anything FAIL or SKIP.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--feature-ids &lt;ids&gt;</dt><dd>Comma-separated feature IDs to pull Closed/Resolved bugs from.</dd><dt>--query-url &lt;url&gt;</dt><dd>A saved tracker query URL to source bugs from instead of walking features.</dd><dt>--app-url &lt;url&gt;</dt><dd>Target environment to drive directly (overrides --env).</dd><dt>--env &lt;dev|qa&gt;</dt><dd>Named environment to target, if --app-url isn&#39;t given.</dd><dt>--headless</dt><dd>Run Chromium with no visible window (for CI).</dd><dt>--dry-run</dt><dd>Testability analysis only — skip driving the browser.</dd><dt>--limit &lt;n&gt;</dt><dd>Cap on automatable bugs actually run, P1 first (default 20).</dd><dt>--word</dt><dd>Also serialize a <code>.docx</code> report.</dd><dt>environment variables</dt><dd>Org/project target, the PAT, and (optionally) an SSO password.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>BugRelease_&lt;timestamp&gt;.json</dt><dd>Full structured report — PASS/FAIL/SKIP per bug, overall pass rate, P1 pass rate.</dd><dt>BugRelease_&lt;timestamp&gt;.md</dt><dd>The same report rendered for a go/no-go read.</dd><dt>BugRelease_&lt;timestamp&gt;.docx</dt><dd>Shareable Word version, only with <code>--word</code>.</dd><dt>screenshots/</dt><dd>One final-state screenshot per checked bug, PASS or FAIL.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No result caching — bug data and browser session are always fresh — but a saved sign-in session (once established) skips the manual-login wait on later runs. Re-run right before each release to catch anything that regressed since the last check.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Wire it as a release gate in CI — headless, against QA, after deploy and before promote-to-prod. Fail the pipeline when the pass rate (or specifically the P1 pass rate) drops below threshold, and archive the screenshots folder as release evidence.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: fixed bugs re-checked live in a real Playwright browser before release.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Fetch closed bugs, P1-first</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, for the release features.</dd>
+          <dt>Takes in</dt><dd>Feature IDs, or a saved tracker query URL.</dd>
+          <dt>Shows out</dt><dd>Closed/Resolved bugs sorted by priority ascending — P1 runs before anything else.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Deterministic testability gate</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Per bug, before execution.</dd>
+          <dt>Takes in</dt><dd>The bug&#39;s description, repro steps, and tags.</dd>
+          <dt>Shows out</dt><dd>An automatable action plan, or a SKIP with a concrete reason (microphone, visual comparison, permission state, too-vague repro).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Compile steps to ActionStep[]</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Per automatable bug.</dd>
+          <dt>Takes in</dt><dd>The detected mode + parsed repro.</dd>
+          <dt>Shows out</dt><dd>A typed sequence: navigate, newChat, sendMessage, uploadFile, assertions, screenshot.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Drive Chromium via Playwright</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per automatable bug.</dd>
+          <dt>Takes in</dt><dd>The action sequence + target environment.</dd>
+          <dt>Shows out</dt><dd>A real Playwright session — locate/fill/press/wait against live selectors, capturing the app&#39;s actual responses.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Compute the go/no-go verdict</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, after all bugs run.</dd>
+          <dt>Takes in</dt><dd>Every PASS / FAIL / SKIP result.</dd>
+          <dt>Shows out</dt><dd>Overall pass rate plus an isolated P1 pass rate — the ship / no-ship gate metric.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-bug-analyst.html">← The Bug Analyst</a>
+      <a href="the-bug-to-test-writer.html">The Bug-to-Test Writer →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

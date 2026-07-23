@@ -1,0 +1,177 @@
+{
+  "slug": "the-api-tester",
+  "plate": 36,
+  "name": "The API Tester",
+  "techName": "src/core/api.ts",
+  "category": "toolkit",
+  "oneLiner": "One typed REST client that probes a live service, retries transient failures, and captures request/response evidence on every call.",
+  "lead": "A single `ApiClient` any agent uses to call a live HTTP service and capture proof of exactly what was sent and returned. It attaches auth headers from config, retries transient failures with backoff instead of throwing, and normalizes every response into an `EvidenceStep` the report builder renders. It replaces ~96 check scripts that each re-implemented the same fetch, auth, retry, and evidence plumbing.",
+  "chore": "The prior setup had ~96 check scripts, each re-implementing the same request plumbing: how to call, how to attach the bearer/subscription header, what to do on a network hiccup, and how to record the result. Repetitive, subtly error-prone, and a single transient failure could crash a whole run.",
+  "instead": "One client built from an `ApiConfig`. It attaches `Authorization: Bearer` and `Ocp-Apim-Subscription-Key` for you, retries on transient failure with linear backoff (default 4 attempts) instead of throwing, and stamps every call into an `EvidenceStep` carrying the exact request and response. Assertion helpers — `expectStatus`, `expectJsonPath` — turn a response into a typed pass/fail. Nothing is tied to a specific service.",
+  "whyItMatters": "When a service misbehaves, the captured `EvidenceStep` shows the exact request, status, and response body side by side — a provable finding, not a vague 'it's broken'. And a flaky network degrades to a clean `code: 0` result instead of crashing the suite.",
+  "howItWorks": [
+    {
+      "step": "The constructor builds itself from an `ApiConfig`, assembling the `Authorization` and subscription headers every later call reuses — nothing hard-coded to one service.",
+      "fn": "ApiClient()",
+      "explain": "Everything the client needs to authenticate is baked in **once** from the `ApiConfig`, so no downstream call re-attaches headers. The `baseUrl` is stripped of trailing slashes so joining a path never produces a double `//`. Both auth schemes are optional and additive: a `bearerToken` adds `Authorization: Bearer …` and a `subscriptionKey` adds the APIM `Ocp-Apim-Subscription-Key` header — set neither and the client just talks to an open endpoint. Retry, backoff, and timeout come from `opts` with defaults **4 attempts, 1500 ms linear, 120 s**, so resilience is tunable without touching request code.",
+      "code": "constructor(api: ApiConfig, opts: ApiClientOptions = {}) {\n  // Strip trailing slashes so a path join never produces a double '//'.\n  this.baseUrl = (api.baseUrl || '').replace(/\\/+$/, '');\n  this.headers = { 'Content-Type': 'application/json' };\n  // Bearer + APIM subscription headers are both optional and additive.\n  if (api.bearerToken) this.headers['Authorization'] = `Bearer ${api.bearerToken}`;\n  if (api.subscriptionKey) this.headers['Ocp-Apim-Subscription-Key'] = api.subscriptionKey;\n  this.retries = opts.retries ?? 4; // defaults: 4 attempts, 1500ms linear backoff, 120s.\n  this.backoffMs = opts.backoffMs ?? 1500;\n  this.timeoutMs = opts.timeoutMs ?? 120000;\n}"
+    },
+    {
+      "step": "`request` issues the call and, on transient failure, waits `backoffMs * (attempt + 1)` and retries — up to the configured count — then returns a `code: 0` result instead of throwing.",
+      "fn": "request()",
+      "explain": "The resilience core: it loops up to `retries` attempts, and `Math.max(1, retries)` guarantees at least one try even if a caller passes 0. A **successful fetch — even a 4xx/5xx — returns immediately** as a typed `ApiResponse` carrying `code`, the raw text body, and an echo of the request; an HTTP error status is data to assert on, not an exception. Only a *thrown* fetch (network/DNS/timeout) triggers a retry, sleeping `backoffMs * (attempt + 1)` for **linear** growing backoff, and only while another attempt remains. If every attempt throws, it returns a sentinel `code: 0` / `raw: 'fetch failed…'` result instead of throwing — so one dead endpoint degrades to a clean failing step rather than crashing the run.",
+      "code": "async request<T = unknown>(method: HttpMethod, path: string, body?: unknown, opts: RequestOptions = {}): Promise<ApiResponse<T>> {\n  const url = this.resolve(path);\n  const retries = opts.retries ?? this.retries;\n  // Math.max(1, retries) guarantees at least one attempt even if retries is 0.\n  for (let attempt = 0; attempt < Math.max(1, retries); attempt++) {\n    try {\n      const res = await this.doFetch(url, { method, headers: this.headers, body: /* ... */ undefined });\n      const raw = await res.text();\n      // Any HTTP status (incl. 4xx/5xx) is a SUCCESS here — return it to assert on.\n      return { code: res.status, raw, request: { method, url, body } /* ... */ } as ApiResponse<T>;\n    } catch (err) {\n      // Only a THROWN fetch retries; linear backoff, and only if attempts remain.\n      if (attempt < retries - 1) await sleep(this.backoffMs * (attempt + 1));\n    }\n  }\n  // Every attempt threw: return a sentinel code:0 result, never an uncaught throw.\n  return { code: 0, raw: `fetch failed: ...`, request: { method, url, body } } as ApiResponse<T>;\n}"
+    },
+    {
+      "step": "`step` packages one `ApiResponse` into an `EvidenceStep` — method + URL, trimmed body, status, trimmed response — ready to render as a coloured panel.",
+      "fn": "step()",
+      "explain": "Normalizes any `ApiResponse` into the shared `EvidenceStep` the report builder renders, and `kind: 'api'` tags it so the renderer colours it as an API panel. The request body is stringified only when present (an object is `JSON.stringify`d, a string passes through, null/undefined become `''`), and both request and response bodies are `trim`med to **800 chars** so a huge payload can't bloat the report. `respOverride` is the hook assertions use: `expectStatus`/`expectJsonPath` pass a synthesized `→ actual (expected …)` string into `resp` instead of the raw body, so the evidence shows the comparison rather than just the payload. `verdict` defaults to `'info'`, so a bare `step()` records without judging pass or fail.",
+      "code": "export function step(resp: ApiResponse, does: string, verdict: Verdict = 'info', respOverride?: unknown): EvidenceStep {\n  const q = resp.request;\n  // Stringify the request body only when present: object->JSON, string as-is, null->''.\n  const bodyStr = q.body == null ? '' : typeof q.body === 'string' ? q.body : JSON.stringify(q.body);\n  return {\n    kind: 'api', // tags the panel so the report builder colours it as API evidence.\n    does: does || '',\n    req: `${q.method} ${q.url}`.trim(),\n    body: trim(bodyStr, 800), // cap at 800 chars so a huge payload can't bloat the report.\n    code: resp.code,\n    // respOverride lets an assertion show its comparison string instead of the raw body.\n    resp: trim(respOverride !== undefined ? respOverride : resp.raw, 800),\n    verdict,\n  };\n}"
+    },
+    {
+      "step": "`expectStatus` asserts the HTTP status against one or a set of expected codes and records the verdict with the actual value, so a mismatch is provable at a glance.",
+      "fn": "expectStatus()",
+      "explain": "A thin assertion over `step()`: it accepts either a single expected code or an array (normalized to a list via `Array.isArray`), and passes when `list.includes(resp.code)`. The verdict it hands `step()` is `'pass'`/`'fail'`, which is what turns the evidence panel green or red. Its real value is the `respOverride` string `→ {actual} (expected {list})`, writing **real-vs-expected side by side** into the evidence so a mismatch like `→ 500 (expected 201)` is provable at a glance rather than a vague failure. Its sibling `expectJsonPath` applies the identical pattern to a value pulled from a JSON path.",
+      "code": "export function expectStatus(resp: ApiResponse, expected: number | number[], does?: string): EvidenceStep {\n  // Accept one code or many; normalize to a list so includes() works either way.\n  const list = Array.isArray(expected) ? expected : [expected];\n  const ok = list.includes(resp.code); // pass if the actual status is any expected one.\n  const label = does || `Expect status ${list.join(' or ')}`;\n  // respOverride writes real-vs-expected into the panel (e.g. -> 500 (expected 201)).\n  return step(resp, label, ok ? 'pass' : 'fail', `→ ${resp.code} (expected ${list.join('|')})`);\n}"
+    },
+    {
+      "step": "`probe` groups a set of checks under one name; any error the probe body throws is caught and logged as a failing step rather than crashing the run.",
+      "fn": "probe()",
+      "explain": "A **safety harness** around a group of related checks: it builds a `ProbeContext` whose `add`/`step`/`expectStatus` collectors all push into one local `steps` array, hands it to the probe body, and — critically — wraps the body in `try/catch` so an unexpected throw becomes a **failing `kind: 'note'` step** (`probe \"{name}\" threw`) instead of aborting the run. After the body it counts steps with `verdict === 'fail'` and returns a single `AgentResult` where `ok` is `failures === 0`, tagged `api-probe:{name}`, with every collected `EvidenceStep` attached. So one probe equals one composable result, and a bug in one probe can't take down the others.",
+      "code": "export async function probe(name: string, client: ApiClient, fn: (ctx: ProbeContext) => Promise<void> | void): Promise<AgentResult<{ probe: string }>> {\n  const steps: EvidenceStep[] = [];\n  // Collectors all funnel into the one local steps[]; the body just calls them.\n  const ctx: ProbeContext = { client, add: s => steps.push(s), step: (...a) => steps.push(step(...a)), expectStatus: (...a) => steps.push(expectStatus(...a)) } as ProbeContext;\n  try {\n    await fn(ctx);\n  } catch (err) { // an unexpected throw becomes a failing step, not a crashed run.\n    steps.push({ kind: 'note', does: `probe \"${name}\" threw`, resp: String(err), verdict: 'fail' });\n  }\n  // ok iff nothing failed; the whole probe rolls up into one composable AgentResult.\n  const failures = steps.filter(s => s.verdict === 'fail').length;\n  return { agent: `api-probe:${name}`, ok: failures === 0, summary: `${name}: ${steps.length} step(s), ${failures} failing`, data: { probe: name }, steps };\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Probe a public no-auth service",
+      "input": "A probe that `GET`s todo #1 from a public sandbox and asserts `expectStatus(200)` and `id === 1`.",
+      "output": "A passing `AgentResult`: '1 probe, 3 steps, 0 failing', each step carrying the exact request and response — proof the client works with none of your own infrastructure."
+    },
+    {
+      "caption": "Catch a broken endpoint",
+      "input": "`expectStatus(201)` on a create call that actually returns 500.",
+      "output": "A red `FAIL` step reading '→ 500 (expected 201)' with the full request and error body attached — provable at a glance."
+    },
+    {
+      "caption": "Survive a flaky network",
+      "input": "A call made while the connection is briefly dropping.",
+      "output": "The client retries with backoff and either succeeds or records a clean `code: 0` 'fetch failed' step — the run continues instead of crashing the suite."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Builds from an ApiConfig",
+      "whenRuns": "First, in the constructor.",
+      "input": "A `baseUrl` and optional `bearerToken` / `subscriptionKey`.",
+      "output": "A ready client with auth headers pre-attached — nothing hardcoded to one service."
+    },
+    {
+      "heading": "Calls with retries",
+      "whenRuns": "Every `request` an agent issues.",
+      "input": "A method (GET/POST/...), a path, and optional body.",
+      "output": "A normalized `ApiResponse` — status, raw text, timing — where even total failure returns `code: 0` instead of throwing."
+    },
+    {
+      "heading": "Stamps an evidence step",
+      "whenRuns": "As soon as a response (or failure) returns.",
+      "input": "The `ApiResponse` plus a description of the call's intent.",
+      "output": "An `EvidenceStep` with the exact request, status, and trimmed response — ready for the report builder."
+    },
+    {
+      "heading": "Asserts pass/fail",
+      "whenRuns": "On each `expectStatus` / `expectJsonPath` check.",
+      "input": "The expected status or JSON-path value.",
+      "output": "A pass or fail step with real-vs-expected spelled out in the `resp` field."
+    },
+    {
+      "heading": "Rolls a probe into one result",
+      "whenRuns": "Once per named scenario.",
+      "input": "A probe body that issues calls and records checks.",
+      "output": "One `AgentResult` — `ok` plus every `EvidenceStep` — with any thrown error caught into a failing step."
+    }
+  ],
+  "status": "toolkit",
+  "runbook": {
+    "runnable": true,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Node.js (installed in step 1 below) — nothing else.",
+      "No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A `.env` only matters later, if you point it at something real."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The toolkit is TypeScript on Node. One install per machine; no other runtime required.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/qa-agent-toolkit\nnpm install",
+        "why": "`npm install` pulls the toolkit's only dependency (`dotenv`) into `node_modules`. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.",
+        "firstRun": "Downloads everything (seconds — the dependency list is tiny).",
+        "rerun": "No-op unless the dependency list changed."
+      },
+      {
+        "label": "(Optional) copy the env template — only to go live later.",
+        "cmd": "cp .env.example .env\n# then open .env and fill in ONLY the section you need",
+        "why": "Skippable for the demo — every capability is off by default and the demo targets a public sandbox regardless. `.env` matters only once you point the toolkit at a real board, service, or database."
+      },
+      {
+        "label": "Run the capability check.",
+        "cmd": "npm run doctor",
+        "why": "Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty `.env` everything reads `(off)`, which is expected: the demo sets its own target in-code."
+      },
+      {
+        "label": "Run the API demo — probe a public, no-auth test service.",
+        "cmd": "npm run demo:api",
+        "why": "Points the real `ApiClient` at a public credential-free API (jsonplaceholder.typicode.com) and runs two probes — a GET and a POST — each with several `expectStatus` / `expectJsonPath` checks. Real client, retries and evidence capture included; only the target is a public sandbox.",
+        "firstRun": "Makes two real HTTP calls and prints an `EvidenceStep` per check.",
+        "rerun": "The GET is idempotent (same todo, same answer). The POST hits jsonplaceholder's sandbox, which never actually persists — so reruns are equally safe and the same checks pass."
+      },
+      {
+        "label": "Read the evidence.",
+        "cmd": "# printed straight to the terminal — no file written:\n#   ✓ [pass] Todo endpoint returns 200\n#   ✓ [pass] Response carries the requested id\n#   ...\n#   Evidence summary: 8 steps, 6 pass, 0 fail, overall PASS.",
+        "why": "Each check prints the exact request sent, the status, and the response — that receipt is the point: a mismatch shows real-vs-expected side by side instead of a vague 'it failed'."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "nothing",
+        "desc": "The demo constructs its own `ApiConfig` in-code pointing at a public API (jsonplaceholder.typicode.com) — no `.env`, token, or subscription key. If the network is unreachable it degrades gracefully and says so rather than crashing."
+      },
+      {
+        "name": "API_BASE_URL / API_BEARER_TOKEN / API_SUBSCRIPTION_KEY (optional)",
+        "desc": "Set these in `.env` to point the same `ApiClient` + probe helpers at your own live service instead."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console evidence log",
+        "desc": "One block per probe step: what it did, the exact request (method + URL), the status, and a trimmed response body, followed by a pass/fail verdict per check."
+      },
+      {
+        "name": "summary line",
+        "desc": "'Evidence summary: 8 steps, 6 pass, 0 fail, overall PASS.' — or a graceful 'network unavailable — client wiring verified' if the machine has no internet."
+      }
+    ],
+    "rerun": "Safe to rerun freely: the GET is a read against a fixed public record, and the POST hits a sandbox that never stores what you send — jsonplaceholder just echoes back a fake id. Point the same client at a real API and reruns reflect that service's current state.",
+    "integrate": "Import directly: `import { ApiClient } from './src/core/api'`, construct it with your own `ApiConfig` (`baseUrl`, `bearerToken`, `subscriptionKey`), and write probes with `runApiProbes()` (`./agents/api`) using `ctx.step()` / `ctx.expectStatus()` / `ctx.expectJsonPath()` exactly as `examples/api/demo.ts` does — every probe returns a normal `AgentResult` with evidence steps, ready to feed straight into the report builder."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: run the API demo live against a public test service and watch request/response evidence print in real time.",
+    "script": [
+      "Open a terminal in the qa-agent-toolkit folder.",
+      "Say: 'This is the toolkit's API tester, making a real network call — but to a public sandbox, not any of your infrastructure.'",
+      "Run `node -v` and `npm install` briefly.",
+      "Run `npm run doctor`; point out API reads `(off)` since no API_BASE_URL is set in .env — and say that's fine, the demo sets its own target in-code.",
+      "Run `npm run demo:api`; narrate as the GET /todos/1 result streams in with its 200 status.",
+      "Point out the three checks passing under it: status 200, id = 1, non-empty title.",
+      "Point out the POST /posts block: 201 Created, a server-assigned numeric id, the echoed title.",
+      "Read the closing line: 'Evidence summary: 8 steps, 6 pass, 0 fail, overall PASS.'",
+      "Say: 'Every one of those lines is the exact request and response — that's the receipt when something breaks.'",
+      "Close: 'Set API_BASE_URL, API_BEARER_TOKEN in .env and the same probes run against your own live service.'"
+    ]
+  }
+}

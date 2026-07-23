@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Phone Tester — Agent 19</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s4">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">19<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Checking the screens look right</span></div>
+        <h1>The Phone Tester</h1>
+        <p class="lead">Runs the existing Playwright suite against emulated iOS/Android device profiles and, per failure, emits numbered manual-repro steps plus a device-simulator link.</p>
+        <p class="kicker">Source file: mobile-testing-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Executes the app&#39;s Playwright tests against the <code>mobile-chrome</code> (Android) and <code>mobile-safari</code> (iOS) projects, ingests a step-level results file to pin the exact step that broke, then rewrites each failure as numbered manual-repro instructions — open simulator, navigate to the app URL, log in, walk the steps, expected vs. actual — with a ready-made simulator link for the device.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Real-device testing is fiddly: source the devices, log in, tap the same steps, and on a break, hand-write what you did so a dev can repeat it. Doing that on both iOS and Android, per test, with clear repro notes each time, burns hours.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>A pass/fail scoreboard per device profile and, per failure, a numbered repro recipe — device, browser, taps, expected, actual — with a simulator link to reproduce it live.</p></div>
+    </div>
+    <p>An unreproducible failure gets argued about and ignored; a failure with numbered steps and a device link gets fixed.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Builds and runs the <code>playwright test</code> invocation against the selected device project(s) — <code>mobile-chrome</code> for Android, <code>mobile-safari</code> for iOS, both by default — optionally scoped to one test file, capturing stdout.</span>
+          <span class="fc-node__fn">runMobileTests()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Reads back the step-level results — every step&#39;s name, duration, and passed/failed/skipped status — from the JSON a separate reporter wrote during the run.</span>
+          <span class="fc-node__fn">parseResults()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Maps each tested device to its deep link on the chosen simulator provider, falling back to the provider&#39;s base URL if no device-specific link exists.</span>
+          <span class="fc-node__fn">buildSimulatorLinks()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Writes the report — a pass/fail table per device and, per failure, numbered manual-repro steps: open the simulator, navigate to the app URL, log in, walk the non-skipped steps, ending in an expected-vs-actual pair.</span>
+          <span class="fc-node__fn">generateMarkdown()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Correlates failures across device profiles and emits a rule-based recommendation per pattern — one-platform-only, both-platforms, or timeouts.</span>
+          <span class="fc-node__fn">generateRecommendations()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"runMobileTests()","explain":"Assembles the `playwright test` argv incrementally. The device filter maps `android` → `--project=mobile-chrome` (Pixel on Chromium) and `ios` → `--project=mobile-safari` (iPhone on **WebKit**, so failures reflect the real Safari engine, not Chromium pretending); `all` pushes **no** `--project` flag at all, which is what makes Playwright run every project in the config. An optional `testFile` narrows the run to one spec for chasing a single failure, and `--headed` surfaces the emulated browser. It runs through `execSync` **capturing** stdout — not `stdio: inherit` — because the returned output is parsed afterward, complementing the step-level JSON the reporter writes.","code":"const args: string[] = [\n  'npx', 'playwright', 'test',\n  `--config=${configPath}`,\n];\n\n// Device filter\nif (input.device === 'android') {\n  // mobile-chrome = the Pixel profile, rendered on Chromium\n  args.push('--project=mobile-chrome');\n} else if (input.device === 'ios') {\n  // mobile-safari = the iPhone profile on WebKit, so iOS behaviour matches the real Safari engine\n  args.push('--project=mobile-safari');\n}\n// 'all' runs both projects (default) — omitting --project lets every project in the config run\n\nif (input.testFile) {\n  // Narrow to a single spec while chasing one failure instead of running the whole suite\n  args.push(input.testFile);\n}\n\nif (input.headed) {\n  args.push('--headed');\n}\n\nconst cmd = args.join(' ');\n// Capture stdout (not inherit) so the run output is available to parse after Playwright exits\nstdout = execSync(cmd, execOpts);"},{"fn":"parseResults()","explain":"Prefers `step-results-latest.json` — a stable pointer the mobile-step-reporter overwrites every run — and only if it's absent falls back to enumerating `step-results-*.json`, sorting by filename and **reversing** to pick the newest (the timestamped names sort lexically, so reverse = most recent). The reporter writes these **during** the run, not after, which is deliberate: Playwright's own exit doesn't carry step-level detail, so the failing step would be lost otherwise. If neither the latest file nor any timestamped file exists, it throws with a message pointing straight at the likely cause — the reporter wasn't wired in — rather than returning an empty summary that would mask the failure.","code":"private parseResults(): MobileRunSummary {\n  // The reporter overwrites step-results-latest.json each run — the canonical, most-recent result\n  const latestPath = path.join(this.outputsDir, 'step-results-latest.json');\n\n  if (!fs.existsSync(latestPath)) {\n    // Fallback: no \"latest\" pointer, so pick the newest timestamped file by reverse-sorting the names\n    const files = fs.readdirSync(this.outputsDir)\n      .filter(f => f.startsWith('step-results-') && f.endsWith('.json'))\n      .sort()\n      .reverse();\n\n    if (files.length === 0) {\n      // Nothing at all means the reporter never ran — the results simply don't exist to parse\n      throw new Error('No step results found. Did the mobile-step-reporter run?');\n    }\n    const content = fs.readFileSync(path.join(this.outputsDir, files[0]), 'utf-8');\n    return JSON.parse(content);\n  }\n\n  const content = fs.readFileSync(latestPath, 'utf-8');\n  return JSON.parse(content);\n}"},{"fn":"buildSimulatorLinks()","explain":"Resolves a launch URL for each device the run actually exercised — iterating `summary.devices`, not a static list, so only tested devices get links. For each it prefers the provider's **device-specific deep link** from `config.baseUrls[device]`, and the `||` fallback to `https://\u003cprovider>.com` handles the case where the provider config has no entry for that device: the reviewer still gets a working link, just to the provider's home rather than straight to the emulator. The returned `device → url` map is what the report writer stitches into each failure's repro steps.","code":"private buildSimulatorLinks(\n  provider: SimulatorProvider,\n  summary: MobileRunSummary\n): Record\u003cstring, string> {\n  // Look up the chosen provider's config (deep-link templates keyed by device)\n  const config = SIMULATOR_PROVIDERS[provider];\n  const links: Record\u003cstring, string> = {};\n\n  for (const device of summary.devices) {\n    // Device-specific deep link if the provider has one; else fall back to the provider's home page\n    links[device] = config.baseUrls[device] || `https://${provider}.com`;\n  }\n\n  return links;\n}"},{"fn":"generateMarkdown()","explain":"Turns one failure into a copy-pasteable manual recipe. `browserName` branches on `platform === 'ios'` to say **Safari** vs **Chrome** — matching the engine the emulated device actually runs, so the tester reproduces on the same rendering path that failed. Steps 1-3 are fixed setup (open simulator, navigate to the app URL, log in) and `manualStepNum` starts at **4** so the recorded test steps continue that numbering seamlessly; **skipped** steps are `continue`d past because they never ran and would mislead a human. If a `failedStep` was pinned, the recipe closes with it as **Expected** and its `error.message` (or a generic `'Step failed'` fallback) as **Actual**, giving a dev the precise assertion that broke.","code":"lines.push('#### Manual Verification');\nconst simLink = simulatorLinks[test.device];\n// Human-friendly device name, falling back to the raw device id if unmapped\nconst deviceName = DEVICE_LABELS[test.device] || test.device;\n// iOS repro must say Safari (WebKit); Android says Chrome — the browser the emulated device actually uses\nconst browserName = test.platform === 'ios' ? 'Safari' : 'Chrome';\n\nlines.push(`**Open Online Simulator:** [${deviceName} on ${this.capitalize(input.simulator)}](${simLink})`);\nlines.push('**Steps to reproduce:**');\nlines.push(`1. Open the simulator link above (${deviceName})`);\nlines.push(`2. In ${browserName}, navigate to: \\`${appUrl}\\``);\nlines.push('3. Log in with test credentials');\n\n// Steps 1-3 are fixed setup; the recorded test steps continue the numbering from 4\nlet manualStepNum = 4;\nfor (const step of test.steps) {\n  // Skipped steps never executed, so they'd only confuse a manual tester — drop them\n  if (step.status === 'skipped') continue;\n  lines.push(`${manualStepNum}. ${step.name}`);\n  manualStepNum++;\n}\n\nif (test.failedStep) {\n  // Close the recipe with the exact broken step as Expected and its captured error as Actual\n  lines.push(`${manualStepNum}. **Expected:** Step \"${test.failedStep.name}\" completes successfully`);\n  lines.push(`${manualStepNum + 1}. **Actual:** ${test.failedStep.error?.message || 'Step failed'}`);\n}"},{"fn":"generateRecommendations()","explain":"Rule-based triage — no LLM — that reads the failure **distribution** across platforms. A clean run short-circuits immediately with the all-passed line. Otherwise it partitions `failedTests` by platform and emits a recommendation only when failures are **exclusively** one-sided: Android-only points at Chrome/Chromium rendering or the Pixel viewport, iOS-only at Safari/WebKit or the iPhone viewport — the asymmetry is the diagnostic, since a both-platforms failure is deliberately left for the caller to read as a likely app-level bug rather than a platform quirk. A separate, **non-exclusive** pass flags any `timedOut` tests as a possible slow-mobile-response cluster, so a run can surface both a platform note and a timeout note at once.","code":"private generateRecommendations(summary: MobileRunSummary): string[] {\n  const recs: string[] = [];\n  if (summary.failed === 0) {\n    // Nothing failed — short-circuit before any pattern matching\n    recs.push('All mobile tests passed. The application is functioning correctly on both Android and iOS device profiles.');\n    return recs;\n  }\n\n  // Partition failures by platform to tell a platform quirk from an app-level bug\n  const androidFails = summary.failedTests.filter(t => t.platform === 'android');\n  const iosFails = summary.failedTests.filter(t => t.platform === 'ios');\n\n  if (androidFails.length > 0 && iosFails.length === 0) {\n    // Fails on Android but not iOS → suspect Chrome/Chromium rendering or the Pixel viewport\n    recs.push('Failures are Android-only. Investigate Chrome-specific rendering or viewport issues on the Pixel 5 profile.');\n  } else if (iosFails.length > 0 && androidFails.length === 0) {\n    // Mirror case → suspect Safari/WebKit behaviour or the iPhone viewport\n    recs.push('Failures are iOS-only. Investigate Safari/WebKit-specific behavior or viewport issues on the iPhone 13 profile.');\n  }\n\n  // Orthogonal check: a timeout cluster points at slow mobile responses, regardless of platform\n  const timeoutTests = summary.failedTests.filter(t => t.status === 'timedOut');\n  if (timeoutTests.length > 0) {\n    recs.push(`${timeoutTests.length} test(s) timed out. Mobile connections may be slower — consider optimizing response handling for mobile viewports.`);\n  }\n\n  return recs;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Menu button opens on Android, fails on iOS</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Suite run on both profiles; the &#39;open menu&#39; step fails on `mobile-safari`, passes on `mobile-chrome`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Report flags an iOS-only failure, the exact failed step, an iPhone simulator deep link, numbered repro steps, and a Safari/WebKit-specific recommendation.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Feature breaks on both profiles</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The &#39;submit form&#39; step fails on both `mobile-chrome` and `mobile-safari`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Marked failing on both devices; recommendation treats it as an app-level bug rather than a platform quirk and prioritizes the fix.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Clean run</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Full suite passes on both profiles.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>100% pass scoreboard and the single all-passed recommendation confirming both Android and iOS profiles are green.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>The target app running at a reachable URL (dev or QA).</li><li>An existing Playwright test suite — this agent runs those tests against mobile device profiles, it doesn&#39;t author new ones.</li><li>~10 min on first run: <code>npx playwright install</code> downloads the Chromium and WebKit engines before anything runs.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed by Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed once per new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install dependencies — once for the agent, once for the Playwright package it drives.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+cd Playwright
+npm install
+npx playwright install   # downloads the actual Chromium + WebKit browser engines</code></pre>
+        <div class="rb__why"><span>Why</span> The agent lives in the project root; the test-execution layer lives in a sibling <code>Playwright</code> dir with its own deps. <code>npx playwright install</code> fetches the engines the tests run in — Chromium for the Android profile, WebKit for iOS — not bundled with the npm package.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads deps plus the browser engines — the slow part (5-10 min).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless a dependency or browser version changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target URL.</div>
+        <pre class="rb__cmd"><code>export APP_URL=https://your-app-url/home</code></pre>
+        <div class="rb__why"><span>Why</span> <code>APP_URL</code> is the live app the tests open on each device profile. Unset, they fall back to a built-in default that won&#39;t be your app.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run it.</div>
+        <pre class="rb__cmd"><code>npm run mobile:test -- --word</code></pre>
+        <div class="rb__why"><span>Why</span> The full run: executes the existing suite against the Android (<code>mobile-chrome</code>) and iOS (<code>mobile-safari</code>) profiles with step-level recording, then writes the scoreboard. <code>--word</code> additionally emits a <code>.docx</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Runs every test against both device profiles from scratch.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> <code>--device android</code> or <code>--device ios</code> scopes to one profile; <code>--test-file &lt;path&gt;</code> re-runs a single test while chasing one failure.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the generated report.</div>
+        <pre class="rb__cmd"><code>open outputs/mobile/reports/mobile-report-&lt;timestamp&gt;.md</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.md</code> holds the per-device pass/fail scoreboard and, under each failure, numbered manual-repro steps plus a device simulator deep link.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>APP_URL (environment variable)</dt><dd>URL of the running app the tests open.</dd><dt>--device android | ios | all</dt><dd>Device profile(s) to run against; defaults to both.</dd><dt>--test-file &lt;path&gt;, --simulator &lt;provider&gt;, --headed, --include-passed, --word</dt><dd>Flags to scope to one test file, pick the simulator provider to link to, run headed, include passing tests in the report, or emit a <code>.docx</code>.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>mobile-report-&lt;timestamp&gt;.json / .md</dt><dd>Machine-readable and rendered pass/fail scoreboard, with numbered manual-repro steps under every failure.</dd><dt>mobile-report-&lt;timestamp&gt;.docx (optional)</dt><dd><code>.docx</code> of the same report; emitted only with <code>--word</code>.</dd><dt>step-results-latest.json</dt><dd>The step-level record written during the run — the source the agent parses to pin exactly which step broke.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> <code>--device android</code> or <code>--device ios</code> scopes the run to the profile you&#39;re chasing a fix on — far faster than a both-profiles run. Every run is a fresh execution; no fingerprinting here, since app behavior (not documents) is what&#39;s being exercised.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Add the <code>--device all</code> run to CI on every pull request; treat a check that fails on one profile but passes on the other as a platform-specific bug, not a flake.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>3-min screen recording: watch the agent run the suite against two device profiles and turn one failure into numbered repro steps.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Running the suite on both device profiles</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, on agent start.</dd>
+          <dt>Takes in</dt><dd>A device filter (android / ios / all) and an optional single test-file path.</dd>
+          <dt>Shows out</dt><dd>A live Playwright run against the <code>mobile-chrome</code> and/or <code>mobile-safari</code> projects.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Ingesting step-level results</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Immediately after the run exits.</dd>
+          <dt>Takes in</dt><dd>The <code>step-results-*.json</code> written by the step-level reporter during the run.</dd>
+          <dt>Shows out</dt><dd>A per-test breakdown: each step&#39;s name, duration, pass/fail/skipped status, and the first failing step.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Resolving simulator deep links</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once results are parsed.</dd>
+          <dt>Takes in</dt><dd>The device profiles actually exercised.</dd>
+          <dt>Shows out</dt><dd>A per-device deep link on the configured provider (BrowserStack, LambdaTest, or Appetize).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Writing the reports</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After results and links are assembled.</dd>
+          <dt>Takes in</dt><dd>The pass/fail scoreboard, the failure list, and the simulator links.</dd>
+          <dt>Shows out</dt><dd>A JSON file, a Markdown report, and — with <code>--word</code> — a <code>.docx</code>, each with numbered manual-repro steps under every failure.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Rule-based recommendations</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, once failures are catalogued.</dd>
+          <dt>Takes in</dt><dd>The full failed-test list across both profiles.</dd>
+          <dt>Shows out</dt><dd>Pattern-matched advice — iOS-only, both-platforms (likely app bug), or timeout cluster.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-screen-size-checker.html">← The Screen-Size Checker</a>
+      <a href="the-model-judge.html">The Model Judge →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

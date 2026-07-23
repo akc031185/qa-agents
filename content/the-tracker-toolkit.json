@@ -1,0 +1,184 @@
+{
+  "slug": "the-tracker-toolkit",
+  "plate": 34,
+  "name": "The Tracker Toolkit",
+  "techName": "src/core/ado.ts",
+  "category": "toolkit",
+  "oneLiner": "One typed Azure DevOps client every agent shares — reads and writes work items live, or against local fixtures with zero credentials.",
+  "lead": "A single `AdoClient` that reads and writes ADO work items — stories, bugs, test points, test runs — for every agent in the toolkit. It replaces ~85 scripts that each re-implemented the same base64 auth header and hard-coded one org/project/board. Org, project, and PAT now come from config; drop the PAT and the identical client transparently backs onto a `fixtures/ado` FixtureStore, so the same code path runs in CI with no network and no secrets.",
+  "chore": "The prior setup had ~85 scripts, each re-implementing the same `Basic base64(':' + PAT)` auth and each with the org, project, and board URL baked in. Rotating a PAT or switching boards meant hand-editing dozens of files. And none of them ran without a live board and a valid PAT — no offline demo, no unit-testable path.",
+  "instead": "One client. Auth is defined once; `apiBase`, `project`, and `testPlanId` come from `loadConfig().ado`, so nothing is tied to a specific tenant. When no PAT is present the constructor flips `offline: true` and routes every call through a `FixtureStore` over `fixtures/ado/{id}.json` — same methods, same return types, no network. Live and offline are chosen automatically by whether a PAT exists.",
+  "whyItMatters": "One typed, config-driven client replaces ~85 fragile single-purpose scripts. Point it at any tenant via env vars, or at fixtures for a credential-free demo — the calling code is identical either way, so the same agents run in CI and in production.",
+  "howItWorks": [
+    {
+      "step": "The constructor builds the auth header once from config and, if no PAT is present, switches itself into fixture-backed offline mode instead of failing.",
+      "fn": "AdoClient()",
+      "explain": "Auth is `Basic base64(':' + PAT)` — the PAT goes in the **password** half of HTTP Basic with an empty username, which is why the string is `:${pat}`; this one line replaces the header ~85 scripts each rebuilt. `patWrite` is preferred over `pat` so write-scoped calls get the stronger token when one exists. `this.offline` was already decided by `loadConfig()` as `!pat`, so **no PAT means no live store** — the constructor builds a `FixtureStore` over `fixtures/ado` instead, and `persist ?? false` keeps it read-only by default so a demo never mutates committed fixtures.",
+      "code": "constructor(opts: AdoClientOptions = {}) {\n  // Config comes from the caller, else the shared loadConfig() seam.\n  this.cfg = opts.config ?? loadConfig().ado;\n  // offline was already derived by loadConfig as `!pat` — no PAT, no live store.\n  this.offline = this.cfg.offline;\n  // Basic base64(':' + PAT) — the single definition of the auth that was\n  // copy-pasted across the codebase.\n  const pat = this.cfg.patWrite || this.cfg.pat || ''; // prefer the write-scoped PAT.\n  // ADO wants the token in the PASSWORD half of Basic (empty user), hence ':' + PAT.\n  this.authHeader = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;\n\n  if (this.offline) {\n    // Back every call onto local JSON fixtures instead of the network.\n    const dir = opts.fixtureDir || path.resolve(__dirname, '..', '..', 'fixtures', 'ado');\n    // persist defaults to false so a demo never writes back to committed fixtures.\n    this.store = new FixtureStore(dir, opts.persist ?? false);\n  } else {\n    this.store = null; // live mode: real REST calls only, no fixture store.\n  }\n}"
+    },
+    {
+      "step": "Raw ADO field dictionaries (`System.Title`, `System.AssignedTo`, ...) are mapped to one flat, typed `WorkItem` shape before anything downstream sees them.",
+      "fn": "normalize()",
+      "explain": "The **single choke-point** where a raw ADO `fields` bag becomes a flat typed `WorkItem`, and both the live REST path and the fixture path call it — so nothing downstream ever touches a `System.Title`-style key or parses a relation URL. Field keys are indirected through the `F.*` constants (`F.tags`, `F.assignedTo`, …), so a schema rename is one edit, not a grep. Note the defensive fallbacks: absent `fields` becomes `{}`, a missing type becomes `'Unknown'`, and `tags` is split on `;` **only when non-empty** so an empty tag string yields `[]` rather than `['']`. Each relation is remapped to carry a `targetId` already pulled from its URL via `targetIdFromUrl`.",
+      "code": "function normalize(raw: RawWorkItem): WorkItem {\n  const f = raw.fields || {}; // fixtures/partial payloads may omit fields entirely.\n  const tagsRaw = (f[F.tags] as string) || '';\n  // Relation URLs are opaque; extract the numeric target id from each up front.\n  const relations: WorkItemRelation[] = (raw.relations || []).map(r => ({\n    rel: r.rel,\n    url: r.url,\n    targetId: targetIdFromUrl(r.url),\n  }));\n  return {\n    id: raw.id,\n    type: (f[F.type] as string) || 'Unknown', // never leave type undefined downstream.\n    title: (f[F.title] as string) || '',\n    state: (f[F.state] as string) || '',\n    assignedTo: displayName(f[F.assignedTo]), // {displayName,...} object -> plain string.\n    // Split the ';'-joined ADO tag string, but only when non-empty (avoids ['']).\n    tags: tagsRaw ? tagsRaw.split(';').map(t => t.trim()).filter(Boolean) : [],\n    fields: f, // keep the raw bag too, for callers needing a field we didn't map.\n    relations,\n  };\n}"
+    },
+    {
+      "step": "`getWorkItem` branches on the store: fixtures resolve `{id}.json` locally, live hits `GET /wit/workitems/{id}?$expand=relations` — same normalized return either way.",
+      "fn": "getWorkItem()",
+      "explain": "One method, one `WorkItem` return type, two sources chosen solely by whether `this.store` is set (offline) or null (live) — the caller genuinely cannot tell them apart. Offline, a fixture miss is a **hard throw** (`[ado:offline] work item {id} not found in fixtures`) rather than a silent null, so a demo referencing a non-existent id fails loudly instead of returning garbage. Live, `$expand=relations` is requested so the normalized item carries its parent/child links, matching what the fixture path already stores. Both branches funnel through the same `normalize()`, guaranteeing an identical shape.",
+      "code": "async getWorkItem(id: number): Promise<WorkItem> {\n  if (this.store) {\n    const raw = this.store.get(id);\n    // Offline miss is a hard error, not a silent null — surfaces bad fixture ids.\n    if (!raw) throw new Error(`[ado:offline] work item ${id} not found in fixtures`);\n    return normalize(raw);\n  }\n  // Live: $expand=relations so parent/child links come back with the item.\n  const raw = await this.request<RawWorkItem>('GET', `/wit/workitems/${id}?$expand=relations`);\n  return normalize(raw);\n}"
+    },
+    {
+      "step": "`createWorkItem` builds the JSON-Patch document once via `patchesFor()`, then either writes a fixture file or `POST`s to `/wit/workitems/${type}`.",
+      "fn": "createWorkItem()",
+      "explain": "The JSON-Patch document is built **once** by `patchesFor()` and then either replayed into a synthetic fixture or POSTed to ADO, so the write logic isn't duplicated per branch. Offline, `store.nextId()` mints an id, an empty `RawWorkItem` is stamped with the type and the same patches via `applyPatchesToRaw`, then persisted — the patch list is thus the single source of truth for both paths. Live, note the `$$` in the URL: one `$` is ADO's literal work-item-type prefix (`/wit/workitems/$Bug`) and the second escapes it inside the template string, and the trailing `true` flags this as a `json-patch` write. Either way the result comes back through `normalize()`.",
+      "code": "async createWorkItem(type: string, item: NewWorkItem): Promise<WorkItem> {\n  // Build the JSON-Patch doc once; both branches below replay the same patches.\n  const patches = patchesFor(item, this.cfg.apiBase);\n  if (this.store) {\n    const id = this.store.nextId(); // offline: mint the next fixture id.\n    const raw: RawWorkItem = { id, fields: {}, relations: [] };\n    raw.fields[F.type] = type;\n    applyPatchesToRaw(raw, patches); // same patches, applied to an in-memory item.\n    this.store.put(raw);\n    return normalize(raw);\n  }\n  // '$' before the type is ADO's literal syntax (/wit/workitems/$Bug); the '$$'\n  // escapes it in the template string. Trailing `true` = a json-patch write.\n  const raw = await this.request<RawWorkItem>(\n    'POST', `/wit/workitems/$${encodeURIComponent(type)}`, patches, true);\n  return normalize(raw);\n}"
+    },
+    {
+      "step": "`getTestPoints` returns a test suite's runnable test points — from the live test-plan API, or synthesized one-per-fixture-Test-Case offline — so a run can be posted against them.",
+      "fn": "getTestPoints()",
+      "explain": "A test *point* is the runnable pairing of a Test Case with a suite — you post outcomes against points, not cases — so this method must produce them either way. Offline there is no plan/suite structure, so it **synthesizes** one point per Test Case fixture with a deterministic `id = 900000 + testCaseId`; the large offset keeps synthetic point ids from colliding with real work-item ids. Live, it queries `/testplan/plans/{planId}/suites/{suiteId}/testpoint` (falling back to `this.cfg.testPlanId` when no `planId` is passed) and maps each result's `testCaseReference?.id` down to `0` if absent. Both yield the same `TestPoint[]` a run can be stamped against.",
+      "code": "async getTestPoints(suiteId: number, planId?: number): Promise<TestPoint[]> {\n  if (this.store) {\n    // Synthesize a point per Test Case fixture (pointId = 900000 + tcId).\n    // The 900000 offset keeps synthetic point ids clear of real work-item ids.\n    return this.store\n      .all()\n      .filter(raw => ((raw.fields[F.type] as string) || '').toLowerCase() === 'test case')\n      .map(raw => ({ id: 900000 + raw.id, testCaseId: raw.id, suiteId }));\n  }\n  const pid = planId ?? this.cfg.testPlanId; // fall back to the configured plan.\n  const res = await this.request<{ value?: unknown[] }>(\n    'GET', `/testplan/plans/${pid}/suites/${suiteId}/testpoint`);\n  // testCaseReference may be missing on odd points — default that id to 0.\n  return (res.value || []).map(p => ({ id: p.id, testCaseId: p.testCaseReference?.id ?? 0, suiteId }));\n}"
+    },
+    {
+      "step": "`fileOne` turns a `TestFailure` into a filed, parent-linked bug — with `dedupe` to reuse an open match and `dryRun` to preview without writing.",
+      "fn": "fileOne()",
+      "explain": "The bug-filing path, with two short-circuits before any write. `dedupe` first calls `findOpenBug(title, bugType)` and, on a hit, returns `action: 'reused'` with the existing id — so re-running the same failing suite doesn't spawn duplicate bugs. `dryRun` returns `action: 'would-create'` with a null `bugId`, letting a caller preview exactly what would be filed without touching the board. Only past both does it build the `[Test Failure] {test} ({environment})` title and `reproHtml(failure)` description, then create the bug via `createWorkItem`, wiring `failure.parentId` into a `DEFAULTS.parentRel` relation so the bug hangs under its story — and the three `action` values (`reused`/`would-create`/`created`) keep the outcome auditable.",
+      "code": "async fileOne(failure: TestFailure, opts: BugFilerOptions = {}): Promise<FiledBug> {\n  const bugType = opts.bugType ?? DEFAULTS.bugType;\n  // Stable, greppable title; environment is appended only when present.\n  const title = `[Test Failure] ${failure.test}${failure.environment ? ` (${failure.environment})` : ''}`;\n\n  if (opts.dedupe) {\n    // Reuse an already-open matching bug instead of filing a duplicate on re-run.\n    const existing = await this.findOpenBug(title, bugType);\n    if (existing) return { test: failure.test, bugId: existing.id, title, action: 'reused' };\n  }\n  // Preview mode: report what WOULD be filed, write nothing (null bugId).\n  if (opts.dryRun) return { test: failure.test, bugId: null, title, action: 'would-create' };\n\n  const newItem: NewWorkItem = {\n    title,\n    fields: { 'System.Description': reproHtml(failure) }, // repro rendered as HTML.\n    // Hang the bug under its story via a parent relation, when the parent is known.\n    relations: failure.parentId ? [{ rel: DEFAULTS.parentRel, targetId: failure.parentId }] : [],\n  };\n  const bug = await this.client.createWorkItem(bugType, newItem);\n  return { test: failure.test, bugId: bug.id, title, action: 'created' };\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "File a bug from a test failure, offline (no PAT)",
+      "input": "A `TestFailure` for `checkout.spec: TC-014` (timeout), run with `offline: true`.",
+      "output": "A bug is written to the fixture store — title `[Test Failure] checkout.spec: TC-014`, severity, error text, and a parent relation — proving the full file path works before any PAT is set."
+    },
+    {
+      "caption": "Retarget to another tenant",
+      "input": "`ADO_ORG` / `ADO_PROJECT` / `ADO_PAT` set to a different org's board.",
+      "output": "The same client reads and writes that board's live work items — no code change, `offline` flips to `false` the moment a PAT is present."
+    },
+    {
+      "caption": "Post a batch of test outcomes",
+      "input": "A list of test cases with pass/fail results for a plan/suite.",
+      "output": "A test run is opened, each point is stamped Passed or Failed, and the run is completed — same calls whether against the live plan or the offline fixture store."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Loads config",
+      "whenRuns": "In the constructor, once per client.",
+      "input": "`ADO_ORG`, `ADO_PROJECT`, `ADO_PAT` (via `loadConfig().ado`).",
+      "output": "One `AdoConfig`, with `offline` set true automatically whenever no PAT is present."
+    },
+    {
+      "heading": "Live REST path",
+      "whenRuns": "When a PAT is present.",
+      "input": "A work-item id, a WIQL query, or a `NewWorkItem`.",
+      "output": "Normalized `WorkItem`s from the Azure DevOps REST API (api-version 7.0), auth header attached automatically."
+    },
+    {
+      "heading": "Fixture path",
+      "whenRuns": "When no PAT is present — no code change.",
+      "input": "The identical method calls a live run would make.",
+      "output": "The same typed shapes, read from / written to `fixtures/ado/{id}.json` via `FixtureStore` — no network or secret."
+    },
+    {
+      "heading": "Failure to bug",
+      "whenRuns": "When `fileOne` is called on a `TestFailure`.",
+      "input": "Test name, error, and optional `parentId`.",
+      "output": "A created bug, a reused open one (`dedupe`), or a `would-create` preview (`dryRun`), parent-linked."
+    },
+    {
+      "heading": "Post a run's outcomes",
+      "whenRuns": "When a batch of results lands on a plan.",
+      "input": "Test-case ids with their outcomes.",
+      "output": "A completed test run — live on the real plan or in the fixture store — readable back for reporting."
+    }
+  ],
+  "status": "toolkit",
+  "runbook": {
+    "runnable": true,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Node.js (installed in step 1 below) — nothing else.",
+      "No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A `.env` only matters later, if you point it at something real."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The toolkit is TypeScript on Node. One install per machine; no other runtime required.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/qa-agent-toolkit\nnpm install",
+        "why": "`npm install` pulls the toolkit's only dependency (`dotenv`) into `node_modules`. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.",
+        "firstRun": "Downloads everything (seconds — the dependency list is tiny).",
+        "rerun": "No-op unless the dependency list changed."
+      },
+      {
+        "label": "(Optional) copy the env template — only to go live later.",
+        "cmd": "cp .env.example .env\n# then open .env and fill in ONLY the section you need",
+        "why": "Skippable for the demo — every capability is off by default and the demo runs on fixtures regardless. `.env` matters only once you point the toolkit at a real board, service, or database."
+      },
+      {
+        "label": "Run the capability check.",
+        "cmd": "npm run doctor",
+        "why": "Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty `.env` everything reads `(off)`, which is expected: the demo needs none of them on."
+      },
+      {
+        "label": "Run the tracker demo — query a story, file a bug, post outcomes.",
+        "cmd": "npm run demo:ado",
+        "why": "Exercises the real `AdoClient` end to end against `fixtures/ado` (`offline: true`, no PAT): queries a User Story via WIQL, files a bug from a synthetic `TestFailure`, and derives + posts Test Case outcomes — the same code path a live board takes.",
+        "firstRun": "Reads the fixture story, files an in-memory bug (`persist: false`, so committed fixtures are never modified), and prints the derived Test Case outcomes.",
+        "rerun": "Deterministic — fixtures never change, so a second run prints the identical story, bug fields, and Passed/Failed outcomes."
+      },
+      {
+        "label": "Read the terminal output.",
+        "cmd": "# nothing to open — this demo prints straight to the terminal:\n#   1. Query a User Story (WIQL)\n#   2. File a Bug from a test failure\n#   3. Derive Test Case outcomes and post a run\n#   4. Summary",
+        "why": "No file output; the log is the evidence — the story found (#101), the bug filed (#204, in-memory only), and the 3 derived Test Case outcomes (2 Passed, 1 Failed)."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "nothing",
+        "desc": "Runs on the committed `fixtures/ado/*.json` — sample story, child tickets, and test cases. No board, PAT, or network."
+      },
+      {
+        "name": "ADO_ORG / ADO_PROJECT / ADO_PAT (optional)",
+        "desc": "Set all three in `.env` to point the same client at a real Azure DevOps board; `offline` flips to `false` automatically once a PAT is present."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console log",
+        "desc": "The story found, the bug filed (id, title, severity, links), and each Test Case's derived outcome (Passed/Failed) with its reason — all printed, nothing written to disk."
+      },
+      {
+        "name": "in-memory bug #204",
+        "desc": "Created for the demo only (`persist: false`); `fixtures/ado` is never touched, so the demo is safe to rerun indefinitely."
+      }
+    ],
+    "rerun": "Idempotent: the demo runs with `persist: false`, so nothing it creates is written back to the fixtures — rerun freely and get the identical story, bug, and outcomes. Point the same client at a live board (set `ADO_PAT`) and reruns instead reflect the board's current state.",
+    "integrate": "Import directly: `import { AdoClient } from './src/core/ado'`, then `new AdoClient({ config: loadConfig().ado })` — with a PAT it hits the live board, without one it falls back to fixtures, so the same calling code runs in CI (offline) and production (live). Compose with `BugFilerAgent` (`agents/ado/bug-filer-agent`) and `TestResultsAgent` (`agents/ado/test-results-agent`) exactly as `examples/ado/demo.ts` does."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: run the tracker demo through a full query → file → post cycle against fixtures, zero credentials.",
+    "script": [
+      "Open a terminal in the qa-agent-toolkit folder.",
+      "Say: 'This is the toolkit's board connector. Watch it run a full query-file-post cycle with zero credentials.'",
+      "Run `node -v` and `npm install`; say one line about the dependency list being tiny — no Azure SDK, no login library.",
+      "Run `npm run doctor`; point out ADO reads `(off)` — no ADO_ORG/PAT set — and say that's fine, it's not needed yet.",
+      "Run `npm run demo:ado`; narrate as the log prints: 'mode: OFFLINE (fixtures)'.",
+      "Point at the first block: story #101, 'As a user, I can reset my password...', 5 relations.",
+      "Point at the second block: Bug #204 filed with severity '1 - Critical', linked to the parent + test case.",
+      "Point at the third block: 3 Test Case outcomes — TC #201 Passed, TC #202 Failed (open bug #103), TC #203 Passed.",
+      "Read the closing line out loud: 'Zero Azure calls, zero secrets — same code path runs live with a PAT.'",
+      "Re-run the same command; show the output is byte-for-byte identical — the fixtures never changed.",
+      "Close: 'Fill in ADO_ORG, ADO_PROJECT and ADO_PAT in .env, and this exact command talks to your real board instead.'"
+    ]
+  }
+}

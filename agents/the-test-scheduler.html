@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Test Scheduler — Agent 07</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s2">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">07<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Deciding what to test</span></div>
+        <h1>The Test Scheduler</h1>
+        <p class="lead">Load-balances a feature&#39;s test cases across the team by weighted priority and emits a phased schedule as Word and Excel deliverables.</p>
+        <p class="kicker">Source file: test-execution-planner-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Automates test-execution planning: pulls live test-case counts from ADO, distributes stories across the team so no one is overloaded, lays a phased timeline on business days, assesses risk, and renders stakeholder-ready Word and Excel documents. Removes the half-day of manual spreadsheet math a lead does every sprint.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Before every sprint a lead builds the plan by hand: count each story&#39;s test cases, estimate capacity, assign urgent stories to the right people, sketch a timeline, enumerate risks, and format it into something management will read. It takes half a day, the weighting math is error-prone, and one tester silently ends up overloaded.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Give it the feature ID, the team roster, and the sprint dates. It reads the real test-case counts, balances load by weighted priority (P1 counts 1.5x, P4 only 0.3x), builds a phased timeline with milestones on business days, runs rule-based risk checks, and writes the Test Plan and Execution Schedule as Word and Excel — no hand-formatting.</p></div>
+    </div>
+    <p>A weighted, business-day-accurate schedule is the difference between a sprint that lands on time and one where the busiest tester becomes a silent bottleneck.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Reads the feature and its stories from ADO and counts the test cases linked to each.</span>
+          <span class="fc-node__fn">gatherFeatureData()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Distributes stories across the team by weighted load — high-priority stories weigh more so no one is overloaded.</span>
+          <span class="fc-node__fn">balanceWorkload()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Splits the sprint into three phases — TC creation, execution, bug triage/retest — over business days only.</span>
+          <span class="fc-node__fn">generateTimeline()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Derives milestones — kickoff, 50% checkpoint, sign-off — each with a date and owner.</span>
+          <span class="fc-node__fn">generateMilestones()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Runs rule-based risk checks — TCs-per-person over threshold, too-short sprint, uneven load — each with a mitigation.</span>
+          <span class="fc-node__fn">generateRiskAssessment()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Serializes the plan to JSON, Markdown, Excel, and — with <code>--word</code> — two formatted Word documents.</span>
+          <span class="fc-node__fn">execute()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"gatherFeatureData()","explain":"Builds the `{ feature, stories }` snapshot the whole plan is computed from — counts are read live, never cached. Every title falls back to a synthetic `Feature #id` / `Story #id` so a blank ADO field never surfaces as `undefined` downstream. The `storyIds.sort((a, b) => a - b)` is a **numeric** sort on purpose — JavaScript's default sort is lexicographic, which would order `10` before `2` — giving deterministic story order. `priority` defaults to `2` (mid-range) when unset so an unprioritised story pulls neither the heaviest nor lightest weight later, and `testCaseCount` is simply the number of `TestedBy-Forward` relations — that integer, not the test content, is the load unit the balancer divides across the team.","code":"private async gatherFeatureData(featureId) {\n  const featureWi = await this.client.getWorkItemWithRelations(featureId);\n  const feature = {\n    id: featureId,\n    title: featureWi.fields['System.Title'] || `Feature #${featureId}`, // synthetic title if the field is blank, so downstream output never shows undefined\n    description: featureWi.fields['System.Description'] || '',\n  };\n\n  const storyIds = await this.client.getStoryIdsByFeature(featureId);\n  const stories = [];\n\n  for (const storyId of storyIds.sort((a, b) => a - b)) { // numeric sort for stable ID order (JS default sort is lexicographic — '10' \u003c '2')\n    const wi = await this.client.getWorkItemWithRelations(storyId);\n    const f = wi.fields || {};\n    // count only the forward TestedBy links = the test cases THIS story owns\n    const tcIds = this.client.extractRelationIds(\n      wi.relations || [], 'Microsoft.VSTS.Common.TestedBy-Forward'\n    );\n    stories.push({\n      id: storyId,\n      title: f['System.Title'] || `Story #${storyId}`,\n      priority: f['Microsoft.VSTS.Common.Priority'] || 2, // default P2 when unset — a middling weight, so an unprioritised story isn't top or bottom\n      testCaseCount: tcIds.length, // the load unit the balancer distributes — just the count of TestedBy links, not the tests\n    });\n  }\n  return { feature, stories };\n}"},{"fn":"balanceWorkload()","explain":"A greedy load balancer that packs the biggest items first. It sorts by `a.priority - b.priority` (lower number = more urgent, so P1 leads) and tie-breaks on `b.testCaseCount - a.testCaseCount` (heaviest story first) — assigning large items first is what keeps a greedy fill from stranding a big story on an already-full member at the end. For each story it picks the `target` with the **lowest `weightedLoad`** via `reduce`, not the lowest raw count, so a member holding one heavy P1 isn't handed more work than someone with several trivial P4s. `weight` comes from `PRIORITY_WEIGHTS[story.priority] ?? 1.0` — the `?? 1.0` guards an unrecognised priority from producing `NaN` and poisoning every later comparison. `weightedLoad` accumulates `count * weight` to steer assignment while `totalTCs` keeps the honest raw count for the schedule.","code":"private balanceWorkload(stories, teamNames) {\n  const members = teamNames.map(name => ({\n    name, stories: [], totalTCs: 0, weightedLoad: 0,\n    p1Count: 0, p2Count: 0, p3Count: 0, dailyTarget: 0,\n  }));\n\n  // Greedy bin-packing works best largest-first: sort by priority (P1 first), then TC count descending\n  const sorted = [...stories].sort((a, b) =>\n    a.priority !== b.priority ? a.priority - b.priority : b.testCaseCount - a.testCaseCount // lower priority number = more urgent; tie-break on the heaviest story first\n  );\n\n  for (const story of sorted) {\n    // assign this story to whoever currently has the lightest WEIGHTED load (not raw TC count)\n    const target = members.reduce(\n      (min, m) => (m.weightedLoad \u003c min.weightedLoad ? m : min), members[0]\n    );\n    const weight = PRIORITY_WEIGHTS[story.priority] ?? 1.0; // e.g. P1=1.5, P4=0.3; ?? 1.0 guards an unknown priority so it never NaNs the load\n    target.stories.push(story);\n    target.totalTCs += story.testCaseCount;\n    target.weightedLoad += story.testCaseCount * weight; // weighted load drives the next pick; totalTCs stays the raw count for reporting\n  }\n  return members;\n}"},{"fn":"generateTimeline()","explain":"Phase sizing is fixed-priority, not proportional: execution and triage are each **capped at 4 business days** (`Math.min(4, ...)`) and creation absorbs whatever is left, because a longer sprint benefits from more prep time, not a longer execution window. The `totalDays - 2` when sizing execution reserves a minimum sliver for the other two phases, and `Math.max(1, ...)` on `creationDays` guarantees at least one creation day even when a short sprint would otherwise compute zero or negative. Dates are then laid down sequentially with `addBusinessDays`, always stepping `+1` between phases so the next phase opens on the following working day rather than doubling up on the prior phase's end date — and every hop skips weekends because it counts business days, not calendar days.","code":"private generateTimeline(startStr, endStr) {\n  const totalDays = this.getBusinessDays(startStr, endStr); // weekends excluded — planning is in working days, not calendar days\n\n  const executionDays = Math.min(4, totalDays - 2); // execution capped at 4 days; the -2 reserves at least a day each for creation & triage\n  const triageDays = Math.min(4, totalDays - executionDays - 1); // triage also capped at 4, from whatever remains after execution\n  const creationDays = Math.max(1, totalDays - executionDays - triageDays); // creation soaks up the remainder; Math.max(1, ...) guarantees a day even on a tiny sprint\n\n  const creationEnd = this.addBusinessDays(startStr, creationDays - 1);\n  const executionStart = this.addBusinessDays(creationEnd, 1); // +1 business day so the next phase starts the following working day, not on creationEnd itself\n  const executionEnd = this.addBusinessDays(executionStart, executionDays - 1);\n  const triageStart = this.addBusinessDays(executionEnd, 1);\n\n  return {\n    phases: [\n      { name: 'TC Creation/Modification', startDate: startStr, endDate: creationEnd, businessDays: creationDays },\n      { name: 'Test Execution', startDate: executionStart, endDate: executionEnd, businessDays: executionDays },\n      { name: 'Bug Triage + Retest', startDate: triageStart, endDate: endStr, businessDays: triageDays },\n    ],\n    totalBusinessDays: totalDays,\n  };\n}"},{"fn":"generateMilestones()","explain":"Milestones are derived, not stored — each one reads straight off a phase boundary in `timeline.phases`, so they can never drift out of sync with the schedule. Kickoff and completion of creation map to `phases[0]`'s start/end, execution start/complete to `phases[1]`, and sign-off to `phases[2]`'s end. The only computed date is the `50% Checkpoint`: `addBusinessDays(phases[1].startDate, Math.floor(phases[1].businessDays / 2))` lands it on the midpoint working day of the execution phase, `Math.floor` biasing it slightly early on odd-length phases. Every milestone is stamped `owner: leadName` and `status: 'Pending'` so the emitted plan is a ready-to-track checklist rather than just dates.","code":"private generateMilestones(timeline, leadName) {\n  const phases = timeline.phases;\n  // Six checkpoints derived purely from phase boundaries — each phase's start/end, plus a mid-execution review\n  return [\n    { name: 'TC Creation Kickoff', date: phases[0].startDate, owner: leadName, status: 'Pending',\n      description: 'Begin test case creation for all user stories' },\n    { name: 'TC Creation Complete', date: phases[0].endDate, owner: leadName, status: 'Pending',\n      description: 'All test cases written, reviewed, and uploaded' },\n    { name: 'Execution Start', date: phases[1].startDate, owner: leadName, status: 'Pending',\n      description: 'Begin test execution across all assigned stories' },\n    { name: '50% Checkpoint',\n      date: this.addBusinessDays(phases[1].startDate, Math.floor(phases[1].businessDays / 2)), // 50% checkpoint = execution start + half its business days (floored), i.e. the midpoint working day\n      owner: leadName, status: 'Pending', description: 'Mid-sprint execution progress review' },\n    { name: 'Execution Complete', date: phases[1].endDate, owner: leadName, status: 'Pending',\n      description: 'All test cases executed, results logged' },\n    { name: 'Sprint Sign-off', date: phases[2].endDate, owner: leadName, status: 'Pending',\n      description: 'Bug triage complete, retest done, sprint sign-off' },\n  ];\n}"},{"fn":"generateRiskAssessment()","explain":"Threshold rules, not model inference — each tripped rule appends a typed risk with a fixed `id`, `category`, `severity`, and a concrete `mitigation`, so the same plan always flags the same risks. `tcsPerPerson` averages total test cases over head-count, guarded by `team.length > 0 ? ... : 0` so an empty roster yields `0` rather than a `NaN` that would silently bypass the `> 50` overload check (R-1). The schedule rule (R-2) fires under 10 business days but grades its own severity — `totalBusinessDays \u003c 7 ? 'High' : 'Medium'` — so a genuinely crushed timeline is escalated while a merely tight one is a warning. Both descriptions interpolate the actual numbers (`Math.round(tcsPerPerson)`, the day count) so the risk reads as specific evidence, not a generic label.","code":"private generateRiskAssessment(team, timeline, stories) {\n  const risks = [];\n  const totalTCs = team.reduce((s, m) => s + m.totalTCs, 0);\n  const tcsPerPerson = team.length > 0 ? totalTCs / team.length : 0; // guard divide-by-zero on an empty roster, which would otherwise be NaN and skip the check\n\n  // Rule R-1: sustained load over ~50 TCs/person signals overload regardless of who it lands on\n  if (tcsPerPerson > 50) {\n    risks.push({\n      id: 'R-1', category: 'Resource', severity: 'High',\n      description: `High TC load: ${Math.round(tcsPerPerson)} TCs per person on average`,\n      mitigation: 'Consider adding team members or reducing scope. Prioritize P1 stories first.',\n    });\n  }\n\n  // Rule R-2: fewer than 10 business days is a schedule risk; how severe depends on how short\n  if (timeline.totalBusinessDays \u003c 10) {\n    risks.push({\n      id: 'R-2', category: 'Schedule',\n      severity: timeline.totalBusinessDays \u003c 7 ? 'High' : 'Medium', // graduated: under 7 days is High, 7-9 days Medium\n      description: `Short sprint: only ${timeline.totalBusinessDays} business days`,\n      mitigation: 'Prioritize P1/P2 stories. Defer P3 stories if needed.',\n    });\n  }\n  return risks;\n}"},{"fn":"execute()","explain":"One computed `planData` fans out to every format so consumers pick their own — nothing is recomputed per file. JSON goes through `planToJson` and is pretty-printed at 2-space for machine hand-off; Markdown and the per-member xlsx are always written. Every filename embeds `${input.featureId}` and a `${ts}` timestamp, so re-running never clobbers a prior plan — each run is a distinct dated artifact (this agent has no fingerprinting, by design). The two Word documents are gated behind `if (input.generateWord)` because docx rendering is the most expensive step and only matters when a stakeholder-facing deliverable is actually requested.","code":"// JSON — the machine-readable plan; the ${ts} timestamp in every name means runs never overwrite each other\nconst jsonPath = path.join(this.outputDir, `ExecutionPlan_${input.featureId}_${ts}.json`);\nfs.writeFileSync(jsonPath, JSON.stringify(this.planToJson(planData), null, 2));\n\n// Markdown\nconst mdPath = path.join(this.outputDir, `ExecutionPlan_${input.featureId}_${ts}.md`);\nfs.writeFileSync(mdPath, this.generateMarkdown(planData));\n\n// Excel\nconst xlPath = path.join(this.outputDir, `ExecutionSchedule_${input.featureId}_${ts}.xlsx`);\nthis.generateExecutionScheduleExcel(planData, xlPath);\n\n// Word docs are opt-in (--word) because they're the slowest to render and only needed for stakeholders\nif (input.generateWord) { // two separate docs: a Test Plan and a day-by-day Test Execution Plan\n  await this.generateTestPlanWord(planData, testPlanPath);\n  await this.generateTestExecutionPlanWord(planData, execPlanPath);\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A two-week sprint for a four-person team</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A feature with 12 stories totalling 90 test cases, a team of 4, sprint dates 1–14.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A balanced slice per tester (~22 TCs each), a timeline with a 4-day execution window, a 50% checkpoint milestone, and a risk flag: &#39;Moderate load — 22 TCs per person; monitor from Day 3.&#39; Delivered as Word and Excel.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A sprint that&#39;s too tight</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A feature with 60 test cases, a team of 2, only 6 business days.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A high-severity schedule risk (R-2): &#39;Short sprint — only 6 business days. Prioritize P1/P2 stories; defer P3,&#39; alongside the balanced per-person schedule.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Read access to <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> and a <strong>personal access token</strong> (<code>ADO_PAT</code>).</li><li>The feature&#39;s stories must already have test cases linked (the Test-Plan Author produces these) — counts are pulled live.</li><li>The team roster and the sprint&#39;s start/end dates.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed under Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the code and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> resolves the agent&#39;s dependencies — the ADO REST client and the docx/xlsx writers — into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency set changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the environment variables.</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: the ADO org/project to query and the PAT that authorizes it. No LLM key needed — this agent is deterministic scheduling math, no model calls.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Dry-run first — print the numbers without writing files.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/test-execution-planner-agent.ts \
+  --feature-id 5001 \
+  --team &quot;Alex P|Jordan K|Sam R|Taylor M&quot; \
+  --sprint Sprint-12 \
+  --start-date 2026-08-03 --end-date 2026-08-14 \
+  --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--team</code> is a pipe-separated roster; <code>--dry-run</code> prints story count, total test cases, and team size to stdout without writing files — a sanity check before the real run.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Prints a one-screen summary only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run for real; add <code>--word</code> for the formatted documents.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/test-execution-planner-agent.ts \
+  --feature-id 5001 \
+  --team &quot;Alex P|Jordan K|Sam R|Taylor M&quot; \
+  --sprint Sprint-12 \
+  --start-date 2026-08-03 --end-date 2026-08-14 \
+  --word</code></pre>
+        <div class="rb__why"><span>Why</span> Drop <code>--dry-run</code>, add <code>--word</code>. Writes the balanced schedule, timeline, risks, and milestones to disk, plus a Test Plan and a Test Execution Plan docx.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Computes the full schedule and writes every file.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No fingerprinting — recomputes fresh. Re-run whenever the team, dates, or story list change.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the results.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/test-plans/</code></pre>
+        <div class="rb__why"><span>Why</span> JSON, Markdown, an xlsx workbook (one sheet per member), and — with <code>--word</code> — the two docx files, all in one folder.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--feature-id &lt;id&gt;</dt><dd>The feature to schedule — its stories and linked test-case counts are pulled live from ADO.</dd><dt>--team &quot;Name1|Name2|...&quot;</dt><dd>Pipe-separated roster to balance the load across.</dd><dt>--sprint &lt;name&gt; --start-date &lt;date&gt; --end-date &lt;date&gt;</dt><dd>The sprint label and its calendar start/end dates, used to size the phased timeline in business days.</dd><dt>--word / --dry-run</dt><dd>--word also emits the Word documents; --dry-run prints the summary and writes nothing.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>ExecutionPlan_&lt;id&gt;_&lt;timestamp&gt;.json / .md</dt><dd>The full computed plan — weighted workload, timeline, milestones, risks — machine- and human-readable.</dd><dt>ExecutionSchedule_&lt;id&gt;_&lt;timestamp&gt;.xlsx</dt><dd>An xlsx workbook with a sheet per team member plus a combined assignments view.</dd><dt>TestPlan_&lt;id&gt;_&lt;timestamp&gt;.docx / TestExecutionPlan_&lt;id&gt;_&lt;timestamp&gt;.docx</dt><dd>Two Word documents (only with --word) — a stakeholder-ready Test Plan and a day-by-day Test Execution Plan.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No fingerprinting — every run recomputes the schedule from the feature&#39;s current story and test-case counts. Re-run whenever the roster, sprint dates, or story list change; each run gets a fresh timestamp so nothing is overwritten.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Consumes the test-case counts the <strong>Test-Plan Author</strong> produced. Run at sprint planning and again on any mid-sprint scope shift — the risk flags (overload, short sprint, uneven distribution) are worth re-checking each time.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: pass a feature ID and a roster, and watch the weighted schedule and Word documents land.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Reads the feature and counts test cases</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, on the feature ID you pass.</dd>
+          <dt>Takes in</dt><dd>A feature ID.</dd>
+          <dt>Shows out</dt><dd>Every story under the feature, its priority, and its linked test-case count, via the ADO REST API.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Balances the workload</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, right after the stories are counted.</dd>
+          <dt>Takes in</dt><dd>The story list and the team roster.</dd>
+          <dt>Shows out</dt><dd>Each member&#39;s assigned stories, weighted so P1 work counts 1.5x standard and P4 only 0.3x.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Builds the sprint timeline</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, from the sprint&#39;s start and end dates.</dd>
+          <dt>Takes in</dt><dd>The sprint start and end dates.</dd>
+          <dt>Shows out</dt><dd>Three phases — TC creation, execution, bug triage — each sized in business days.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Assesses risk</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After workload and timeline are both set.</dd>
+          <dt>Takes in</dt><dd>Per-person load, sprint length, and story distribution.</dd>
+          <dt>Shows out</dt><dd>A typed list of risks — overload, too-short sprint, uneven distribution — each with a mitigation.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Produces the deliverables</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>End of every run unless <code>--dry-run</code>.</dd>
+          <dt>Takes in</dt><dd>The computed plan, schedule, milestones, and risks.</dd>
+          <dt>Shows out</dt><dd>JSON and Markdown, an xlsx workbook with one sheet per member, and — with <code>--word</code> — a Test Plan and a Test Execution Plan docx.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-test-plan-author.html">← The Test-Plan Author</a>
+      <a href="the-spec-reverse-engineer.html">The Spec Reverse-Engineer →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

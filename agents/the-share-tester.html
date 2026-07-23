@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Share Tester — Agent 27</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s6">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">27<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Investigating the app&#39;s data &amp; behavior</span></div>
+        <h1>The Share Tester</h1>
+        <p class="lead">Exercises the create-answer-share flow end to end via API: creates a conversation, sends a prompt, then shares it with the exact recipients you name — repeatably, in batch.</p>
+        <p class="kicker">Source file: conversation-share-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Drives the app&#39;s ask-then-share path through its HTTP API. For each prompt it POSTs a new conversation, sends the prompt, reads the assistant&#39;s answer, then shares that conversation with the recipients you list — read-only or edit. Runs a whole prompt batch in one invocation.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Testing sharing by hand means: open the app, start a conversation, type a prompt, wait for the answer, open the share panel, search each recipient by name, pick the right person out of the directory, set their permission, confirm — then repeat for every prompt and every recipient. Slow, and easy to share with the wrong &#39;John&#39; or skip a step.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Give it a prompt list and a name list once. It creates and shares every conversation, resolves each recipient against the directory (exact match, fuzzy fallback), records who it shared with and whether the call succeeded, and returns a clean summary with every conversation ID.</p></div>
+    </div>
+    <p>Sharing puts one person&#39;s work in someone else&#39;s hands — quietly sharing with the wrong person, or failing to share at all, is exactly the bug you want caught before real users hit it.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Resolves each recipient name against the directory, requiring an exact display-name match with a contains fallback, so it shares with the right account.</span>
+          <span class="fc-node__fn">searchUser()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Every call — create conversation, send prompt, share — goes through one HTTPS helper that carries the bearer token and parses the JSON response.</span>
+          <span class="fc-node__fn">apiRequest()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Per prompt: POSTs a new conversation, sends the prompt, reads the full answer, then POSTs a share request carrying every resolved recipient at the chosen role.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Records each share as success or failure, then prints a summary and writes everything — including conversation IDs — to a JSON report.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"searchUser()","explain":"Because a mis-share is exactly the bug this agent exists to catch, resolution is **exact-match-first**: the full candidate list is scanned for a display-name that equals the typed name before the fuzzy pass ever runs, so the right account always wins over a near-namesake. The directory *query* is intentionally broader than the *match* — it sends only the token before the first comma (`split(',')[0]`) with `top: 50`, so a 'Last, First' input still pulls candidates from a last-name-indexed directory, then the strict equality re-filters them. The second loop's case-insensitive **contains** match is a deliberate fallback, not the primary path. Every field access is chained (`displayName || userName || name`, `mail || userEmail || email`) to absorb directory-payload variation, and it returns `null` on no match so the caller can drop that recipient rather than share with a wrong guess.","code":"async function searchUser(baseUrl: string, token: string, name: string): Promise\u003cUserInfo | null> {\n  // Query on last name only (before the first comma) so a 'Last, First' input\n  // still returns candidates; top:50 widens the pool for the strict re-filter below.\n  const searchTerm = name.split(',')[0].trim();\n  const result = await apiRequest(baseUrl, token, 'POST', '/api/v1/entrausers/search', {\n    term: searchTerm,\n    top: 50,\n  });\n  // Normalize the payload shape: bare array, or a .value/.users wrapper.\n  const users = Array.isArray(result) ? result : (result.value || result.users || []);\n\n  // PASS 1 — exact display-name equality, so the right account beats a near-namesake.\n  for (const u of users) {\n    const displayName = u.displayName || u.userName || u.name || '';   // field varies by directory\n    if (displayName === name) {\n      return { userId: u.id || u.userId || '', userName: displayName, userEmail: u.mail || u.userEmail || u.email || '' };\n    }\n  }\n  // PASS 2 — only if no exact hit: case-insensitive contains, as a fallback.\n  for (const u of users) {\n    const displayName = u.displayName || u.userName || u.name || '';\n    if (displayName.toLowerCase().includes(name.toLowerCase())) {\n      return { userId: u.id || u.userId || '', userName: displayName, userEmail: u.mail || u.userEmail || u.email || '' };\n    }\n  }\n  return null;   // no match -> null, so the caller drops the recipient instead of guessing\n}"},{"fn":"apiRequest()","explain":"One hand-rolled `https.request` helper backs **every** call (create, ask, share), Promise-wrapped so the async agent can `await` it. The stream is accumulated chunk-by-chunk (`res.on('data')` → `res.on('end')`) because Node's raw HTTP delivers the body in pieces — you can't read it in one shot. Success is defined strictly as a **2xx** status, and the `try/catch` around `JSON.parse` **tolerates a non-JSON 2xx body** by resolving the raw string instead of throwing, so an endpoint that returns plain text on success doesn't fail the run. Any non-2xx **rejects** with the status code plus a 200-char slice of the body — enough to diagnose a 401 or 400 without dumping a full error page into the log. `Content-Length` is computed with `Buffer.byteLength` (byte count, not string length) so multibyte prompt text sends a correct header.","code":"function apiRequest(baseUrl: string, token: string, method: string, apiPath: string, body?: any): Promise\u003cany> {\n  return new Promise((resolve, reject) => {\n    const u = new URL(baseUrl + apiPath);\n    const data = body ? JSON.stringify(body) : '';\n    const req = https.request({\n      hostname: u.hostname,\n      path: u.pathname,\n      method,\n      headers: {\n        'Authorization': `Bearer ${token}`,   // bearer token on every call\n        'Content-Type': 'application/json',\n        // byteLength (not string .length) so multibyte prompt text sends a correct header\n        'Content-Length': Buffer.byteLength(data),\n      },\n    }, res => {\n      let d = '';\n      res.on('data', (c) => d += c);        // raw HTTP arrives in chunks — accumulate\n      res.on('end', () => {                 // ...then process the whole body\n        if (res.statusCode && res.statusCode >= 200 && res.statusCode \u003c 300) {\n          // Tolerate a non-JSON 2xx body: resolve the raw string instead of throwing.\n          try { resolve(JSON.parse(d)); } catch { resolve(d); }\n        } else {\n          // Non-2xx rejects with status + a 200-char slice — enough to diagnose, not a full error page.\n          reject(new Error(`API ${res.statusCode}: ${d.slice(0, 200)}`));\n        }\n      });\n    });\n    if (data) req.write(data);   // only write a body when there is one\n    req.end();\n  });\n}"},{"fn":"main()","explain":"This is the **strictly-ordered create → ask → share** chain, and each `await` is a real dependency, not just style: the share URL is built from `conversationId`, which only exists after the create call returns, so the steps physically cannot run out of order. The conversation name is stamped with `Date.now()` to keep every run's conversations **uniquely named** — a deliberate non-idempotency that suits repeated regression sweeps. `answer.match(/\\S+/g) || []` counts words defensively so an empty answer records `0` rather than throwing on a null match. The share payload is assembled from the **already-resolved** recipients (id + email + role), so the risky name→account step happened earlier and this call only transmits verified accounts — every recipient carries the same run-level `args.role`.","code":"// Create conversation — Date.now() in the name keeps each run's conversations\n// uniquely identifiable (intentionally non-idempotent, good for regression sweeps).\nconst conv = await apiRequest(baseUrl, token, 'POST', '/api/v1/conversations', { name: `Share-${Date.now()}` });\nconst conversationId = conv.id;   // downstream URLs depend on this — enforces create-before-share ordering\n\n// Send the prompt into that conversation and wait for the assistant's answer.\nconst msg = await apiRequest(baseUrl, token, 'POST', `/api/v1/conversations/${conversationId}`, {\n  question: prompt,\n  limit: 5,\n  service: args.model,\n});\nconst answer = msg.answer || '';\nconst wordCount = (answer.match(/\\S+/g) || []).length;   // || [] -> empty answer counts as 0, never throws\n\n// Share with EVERY already-resolved recipient — name->account happened earlier,\n// so this only transmits verified accounts, each at the same run-level role.\nconst sharePayload = {\n  users: resolvedUsers.map(u => ({ userId: u.userId, userName: u.userName, userEmail: u.userEmail, role: args.role })),\n};\nawait apiRequest(baseUrl, token, 'POST', `/api/v1/conversations/${conversationId}/shares`, sharePayload);"},{"fn":"main()","explain":"One report per run, and the filename is engineered to be **collision-free and filesystem-safe**: `toISOString()` is stripped of `:` and `.` (illegal or awkward in filenames on some OSes) and sliced to second precision, then tagged with `env` — so parallel runs against different environments never overwrite each other. `mkdirSync(..., { recursive: true })` builds the whole `outputs/reports/...` tree idempotently on a fresh checkout. The numeric role is **decoded back to human-readable** `'read-only'`/`'edit'` in the record so a reader doesn't have to remember that 0 means read-only, while the raw per-conversation `results` (ids, answers, share success flags) are written verbatim for the paper trail.","code":"const outDir = path.resolve(__dirname, '..', 'outputs', 'reports', 'conversation-shares');\nfs.mkdirSync(outDir, { recursive: true });   // build the whole report tree idempotently\n// Strip ':' and '.' (illegal/awkward in filenames) and keep second precision;\n// tagging with env means parallel runs never clobber each other's report.\nconst ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);\nconst outPath = path.join(outDir, `ConvShare_${args.env}_${ts}.json`);\nfs.writeFileSync(outPath, JSON.stringify({\n  env: args.env,\n  model: args.model,\n  role: args.role === 0 ? 'read-only' : 'edit',   // decode numeric role back to human-readable\n  timestamp: new Date().toISOString(),\n  results,   // raw per-conversation record: ids, answers, share success flags\n}, null, 2));"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">One prompt, one recipient, read-only</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Prompt &#39;Summarize our aviation portfolio&#39; and one recipient, &#39;Okafor, Ada&#39;.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A conversation is created and answered, Ada Okafor is resolved in the directory, the conversation is shared read-only, and the run reports &#39;1 created, 1 shared&#39; with the conversation ID.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A prompt file, edit rights</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A text file of ten prompts, two recipients, role `edit`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Ten conversations created and answered in turn, each shared with both recipients as editors; the summary shows how many succeeded and lists every conversation ID next to its prompt.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A recipient that resolves to nobody</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A prompt plus a misspelled name matching no directory entry.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>That name is reported &#39;not found&#39;, and if no valid recipients remain the run aborts rather than creating an un-shareable conversation.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>A reachable instance of the app&#39;s API for the target environment, plus a bearer token for it.</li><li>Directory search must be reachable through that same API, since every recipient is resolved by exact name.</li><li>(Optional) a plain text file of prompts, one per line, to run a batch instead of a single prompt.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime the agent runs on.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. Install once per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed on a fresh machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent code and install its dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the agent&#39;s dependencies — the API client and the env-config loader — into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target environment (environment variables).</div>
+        <pre class="rb__cmd"><code>export APP_API_URL_DEV=https://dev.your-app.example.com
+export APP_API_TOKEN_DEV=your-bearer-token
+export APP_MODEL=gpt5   # optional, this is the default</code></pre>
+        <div class="rb__why"><span>Why</span> The URL and token select the environment&#39;s API and authorize it. Swap them and the identical run targets a different environment.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run a prompt and a recipient.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/conversation-share-agent.ts \
+  --env dev \
+  --prompt &quot;Summarize our aviation portfolio&quot; \
+  --share-with &quot;Okafor, Ada&quot; \
+  --role read-only
+
+# batch mode, reading prompts from a file:
+npx ts-node agents/conversation-share-agent.ts \
+  --env dev --input prompts.txt --share-with &quot;Okafor, Ada&quot;</code></pre>
+        <div class="rb__why"><span>Why</span> Per prompt it creates a conversation, sends the prompt, reads the full answer, then shares with every resolved recipient at the chosen role.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Resolves every recipient against the directory first, then runs the create-answer-share sequence for every prompt.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Identical sequence again — new conversations are created and shared each time, nothing is skipped or deduplicated.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the report.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/conversation-shares/ConvShare_dev_&lt;timestamp&gt;.json</code></pre>
+        <div class="rb__why"><span>Why</span> Lists every conversation created, its full answer, and each recipient&#39;s share outcome — the permanent record of the run.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--prompt &quot;...&quot; (repeatable) or --input &lt;file&gt;</dt><dd>One or more prompts to send, typed directly or read one-per-line from a text file.</dd><dt>--share-with &quot;Last, First&quot; (repeatable)</dt><dd>The exact display name of each recipient to share with.</dd><dt>--role read-only|edit</dt><dd>The permission level to share at (defaults to read-only).</dd><dt>--env, environment variables</dt><dd>Which environment to target, plus the URL and token that authorize it.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console log</dt><dd>Per prompt: the conversation created, the answer&#39;s word count, and each share&#39;s success or failure.</dd><dt>ConvShare_&lt;env&gt;_&lt;timestamp&gt;.json</dt><dd>Every conversation ID, its full answer, and each recipient&#39;s share outcome, timestamped for the record.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Not idempotent — each run creates new conversations and re-fires share requests; running the same command twice doubles the conversations. That makes it well suited to a repeated regression sweep, not a one-time share you only want to happen once.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Drop it into a nightly regression job with a fixed prompt list and a couple of test-account names — it becomes a standing check that the create-answer-share chain still works end to end, and the saved conversation IDs give you a paper trail to open by hand if something looks off.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-minute screen recording: one prompt and one name in, a shared conversation out.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Resolves every recipient first</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Before any conversation is created.</dd>
+          <dt>Takes in</dt><dd>The list of names you typed.</dd>
+          <dt>Shows out</dt><dd>Each name matched to a real directory entry — exact match first, contains fallback — or reported &#39;not found&#39;.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Creates a fresh conversation</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per prompt.</dd>
+          <dt>Takes in</dt><dd>A generated placeholder name.</dd>
+          <dt>Shows out</dt><dd>A new conversation ID from the app&#39;s API, ready to receive the prompt.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Sends the prompt and reads the answer</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after the conversation is created.</dd>
+          <dt>Takes in</dt><dd>Your prompt text.</dd>
+          <dt>Shows out</dt><dd>The assistant&#39;s full answer, with its word count logged.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Shares with the resolved recipients</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After the answer returns.</dd>
+          <dt>Takes in</dt><dd>The resolved recipients and the chosen role — read-only (0) or edit (1).</dd>
+          <dt>Shows out</dt><dd>A share request per recipient; each recorded as succeeded or failed.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Writes the report</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every prompt in the batch is done.</dd>
+          <dt>Takes in</dt><dd>Every conversation, its answer, and its share outcomes.</dd>
+          <dt>Shows out</dt><dd>One timestamped JSON file listing every conversation ID and each share&#39;s success flag.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-app-interviewer.html">← The App Interviewer</a>
+      <a href="the-feature-trace-checker.html">The Feature-Trace Checker →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field Guide to Software QA Agents</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="index.html">Contents</a>
+    <a href="toolkit.html">Toolkit</a>
+    <a href="guides.html">Guides</a>
+    <a href="deck.html">Slides</a>
+  </nav>
+</div></header>
+<section class="hero">
+  <div class="hero__blobs" aria-hidden="true">
+    <svg style="top:-60px;right:-120px;width:460px" viewBox="0 0 460 460"><path fill="#FFE9C7" d="M230 20c95 0 210 60 210 175S345 420 230 420 20 330 20 215 135 20 230 20Z" opacity=".8"/></svg>
+    <svg style="bottom:-90px;left:-140px;width:380px" viewBox="0 0 380 380"><path fill="#DDF6EF" d="M190 10c80 10 180 70 170 180S270 375 175 365 5 280 15 175 110 0 190 10Z" opacity=".8"/></svg>
+    <svg style="top:120px;left:52%;width:120px" viewBox="0 0 120 120"><circle cx="60" cy="60" r="58" fill="#E9ECFF" opacity=".9"/></svg>
+  </div>
+  <div class="wrap">
+  <div class="eyebrow hero__eyebrow">A QA automation catalog</div>
+  <h1 class="display">38 single-purpose agents for the repetitive parts of QA.</h1>
+  <p class="lead">Automate the QA work you still do by hand — bug triage, test-case generation, cross-browser runs, data verification against the source of record, LLM-output grading. 38 agents, one task each, every one with a typed input/output contract. Built on the ADO REST API, Playwright, and SQL; an LLM in the loop only where judgment is unavoidable. Each entry gives you the contract, the internals, and how to drop it into CI.</p>
+  <div class="hero__crew" aria-hidden="true">
+    <svg viewBox="0 0 560 84">
+      <rect x="6" y="18" width="52" height="52" rx="16" fill="#FF6B6B"/><circle cx="24" cy="40" r="3.4" fill="#3B3532"/><circle cx="40" cy="40" r="3.4" fill="#3B3532"/><path d="M24 52c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#3B3532" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="103" cy="44" r="27" fill="#FFB020"/><circle cx="95" cy="40" r="3.4" fill="#3B3532"/><circle cx="111" cy="40" r="3.4" fill="#3B3532"/><path d="M95 51c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#3B3532" stroke-width="3" stroke-linecap="round"/>
+      <path d="M146 70V46c0-15 12-27 27-27s27 12 27 27v24Z" fill="#6C7BFF"/><circle cx="165" cy="44" r="3.4" fill="#FFF8EE"/><circle cx="181" cy="44" r="3.4" fill="#FFF8EE"/><path d="M165 55c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#FFF8EE" stroke-width="3" stroke-linecap="round"/>
+      <rect x="216" y="18" width="52" height="52" rx="26" fill="#2EC4A0"/><circle cx="234" cy="40" r="3.4" fill="#3B3532"/><circle cx="250" cy="40" r="3.4" fill="#3B3532"/><path d="M234 52c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#3B3532" stroke-width="3" stroke-linecap="round"/>
+      <rect x="286" y="18" width="52" height="52" rx="16" fill="#FF7BAC"/><circle cx="304" cy="40" r="3.4" fill="#3B3532"/><circle cx="320" cy="40" r="3.4" fill="#3B3532"/><path d="M304 52c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#3B3532" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="383" cy="44" r="27" fill="#3FB4E8"/><circle cx="375" cy="40" r="3.4" fill="#3B3532"/><circle cx="391" cy="40" r="3.4" fill="#3B3532"/><path d="M375 51c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#3B3532" stroke-width="3" stroke-linecap="round"/>
+      <path d="M426 70V46c0-15 12-27 27-27s27 12 27 27v24Z" fill="#FF8A3D"/><circle cx="445" cy="44" r="3.4" fill="#3B3532"/><circle cx="461" cy="44" r="3.4" fill="#3B3532"/><path d="M445 55c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#3B3532" stroke-width="3" stroke-linecap="round"/>
+      <rect x="496" y="18" width="52" height="52" rx="26" fill="#9B6BF2"/><circle cx="514" cy="40" r="3.4" fill="#FFF8EE"/><circle cx="530" cy="40" r="3.4" fill="#FFF8EE"/><path d="M514 52c2.8 3 5.6 4.5 8 4.5s5.2-1.5 8-4.5" fill="none" stroke="#FFF8EE" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="hero__meta">
+    <div class="stat stat--a"><div class="num">38</div><div class="lbl">Single-purpose agents</div></div>
+    <div class="stat stat--b"><div class="num">8</div><div class="lbl">Stages of the QA workflow</div></div>
+    <div class="stat stat--c"><div class="num">5</div><div class="lbl">Drop-in reusable modules</div></div>
+  </div>
+  </div>
+</section>
+
+<section class="primer"><div class="wrap"><div class="primer__grid">
+  <div>
+    <div class="eyebrow">What "agent" means here</div>
+    <h2 class="display">Scoped automation, not a chat assistant.</h2>
+    <p>Each agent is a single-purpose CLI: typed inputs, typed outputs, one QA task. Most are deterministic automation over the ADO REST API, Playwright, or SQL. A few wrap an LLM (Gemini/Claude) only where judgment is unavoidable — parsing a transcript, grading an answer, drafting a repro from a bug. No agent framework, no chat loop, no shared state: it runs, writes its artifact, and exits 0 / non-zero — from a shell or a CI step.</p>
+  </div>
+  <div class="primer__figure">"One job, one contract — composable, scriptable, and boring by design."</div>
+</div></div></section>
+
+
+    <section class="section s1" id="find">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 01</span><h2 class="display">Finding &amp; reporting problems</h2></div>
+        <p class="section__desc">Triage and document defects: turn failed test runs into filed, linked bug tickets, re-verify fixes in a live browser before release, and generate the repro test straight from a bug report.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 01</div>
+        <div class="rcard__name">The Bug Filer</div>
+        <div class="rcard__one">Files a typed, deduplicated ADO Bug work item per test failure — title, repro steps, severity, screenshot, parent link — in one pass.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-finding/blob/main/the-bug-filer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-bug-filer.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 02</div>
+        <div class="rcard__name">The Bug Analyst</div>
+        <div class="rcard__one">Rolls every bug under a feature into a computed status report — fix rate, time-to-fix, hotspots, per-assignee load — with zero manual tallying.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-finding/blob/main/the-bug-analyst.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-bug-analyst.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 03</div>
+        <div class="rcard__name">The Release-Readiness Inspector</div>
+        <div class="rcard__one">Replays every fixed bug&#39;s repro in a headless-capable Playwright browser, P1-first, and returns a pass-rate go/no-go verdict.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-finding/blob/main/the-release-readiness-inspector.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-release-readiness-inspector.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 04</div>
+        <div class="rcard__name">The Bug-to-Test Writer</div>
+        <div class="rcard__one">Turns a bug ticket — text plus screenshots — into a numbered, expected-result test case via a multimodal LLM, tracker-ready.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-finding/blob/main/the-bug-to-test-writer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-bug-to-test-writer.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s2" id="plan">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 02</span><h2 class="display">Deciding what to test</h2></div>
+        <p class="section__desc">Turn requirements into a test plan: aggregate feature context, generate and review test cases, sharpen vague acceptance criteria against the designs, and schedule execution across the team.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 05</div>
+        <div class="rcard__name">The Test Scout</div>
+        <div class="rcard__one">Collapses a feature&#39;s scattered artifacts — ADO work items, design docs, meeting transcripts — into one structured, testable briefing.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-planning/blob/main/the-test-scout.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-test-scout.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 06</div>
+        <div class="rcard__name">The Test-Plan Author</div>
+        <div class="rcard__one">Drafts executable test cases from ADO user stories and, for stories too thin to test, emits a gap report naming the missing fields and their owners.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-planning/blob/main/the-test-plan-author.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-test-plan-author.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 07</div>
+        <div class="rcard__name">The Test Scheduler</div>
+        <div class="rcard__one">Load-balances a feature&#39;s test cases across the team by weighted priority and emits a phased schedule as Word and Excel deliverables.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-planning/blob/main/the-test-scheduler.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-test-scheduler.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 08</div>
+        <div class="rcard__name">The Spec Reverse-Engineer</div>
+        <div class="rcard__one">Reconstructs a feature&#39;s spec — description, acceptance criteria, scope — from its test cases alone, grounded only in what the tests evidence.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-planning/blob/main/the-spec-reverse-engineer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-spec-reverse-engineer.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 09</div>
+        <div class="rcard__name">The Test-Case Reviewer</div>
+        <div class="rcard__one">Splits a test-results spreadsheet into a passed-verified acceptance-criteria doc and a review sheet of everything needing a human ruling.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-planning/blob/main/the-test-case-reviewer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-test-case-reviewer.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 10</div>
+        <div class="rcard__name">The Requirements Sharpener</div>
+        <div class="rcard__one">Rewrites a vague requirement into precise, testable Given/When/Then criteria grounded in the actual design screenshots — additively, never overwriting the original.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-planning/blob/main/the-requirements-sharpener.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-requirements-sharpener.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s3" id="tracker">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 03</span><h2 class="display">Keeping the project tracker up to date</h2></div>
+        <p class="section__desc">Keep Azure DevOps in sync via the REST API — create, link, and update work items and test cases, import from spreadsheets, post results, and push rollups — with no manual board-keeping.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 11</div>
+        <div class="rcard__name">The Build Watcher</div>
+        <div class="rcard__one">Triggers an ADO pipeline run and polls it to completion, returning a pass/fail verdict — no tab-refreshing to catch the result.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-tracker/blob/main/the-build-watcher.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-build-watcher.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 12</div>
+        <div class="rcard__name">The Test-Suite Organizer</div>
+        <div class="rcard__one">Bulk-organizes an ADO test suite — files test cases into suites, repairs broken TestedBy links, normalizes titles to a naming convention, and reassigns testers.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-tracker/blob/main/the-test-suite-organizer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-test-suite-organizer.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 13</div>
+        <div class="rcard__name">The Results Poster</div>
+        <div class="rcard__one">Derives each test case&#39;s Passed/Failed outcome from the story&#39;s ADO state — QA task closure and bug links — then posts the results to a test run.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-tracker/blob/main/the-results-poster.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-results-poster.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 14</div>
+        <div class="rcard__name">The Test-Case Importer</div>
+        <div class="rcard__one">Bulk-creates ADO test cases from an xlsx of steps — grouping rows, encoding steps, linking to the parent story — and files them into a suite.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-tracker/blob/main/the-test-case-importer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-test-case-importer.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 15</div>
+        <div class="rcard__name">The Task Creator</div>
+        <div class="rcard__one">Batch-creates ADO Task work items from an in-file plan — each fully populated and parented under its user story via a Hierarchy link.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-tracker/blob/main/the-task-creator.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-task-creator.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 16</div>
+        <div class="rcard__name">The Tracker Sync</div>
+        <div class="rcard__one">Refreshes the master QA status workbook from live ADO data — hours, bug counts, statuses — via Microsoft Graph download/upload, no manual data entry.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-tracker/blob/main/the-tracker-sync.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-tracker-sync.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s4" id="screens">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 04</span><h2 class="display">Checking the screens look right</h2></div>
+        <p class="section__desc">Verify the UI across viewports: drive the app on emulated devices with Playwright, diff live screens against the design source, and capture repro steps when a breakpoint fails.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 17</div>
+        <div class="rcard__name">The Design Matcher</div>
+        <div class="rcard__one">Diffs Figma reference exports against live-app screenshots captured across desktop and phone viewports, and flags every screen that&#39;s missing, partial, or unreachable on mobile.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-screens/blob/main/the-design-matcher.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-design-matcher.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 18</div>
+        <div class="rcard__name">The Screen-Size Checker</div>
+        <div class="rcard__one">Captures every screen at nine viewport profiles via Playwright device emulation and reports capture coverage as a pass/fail grid plus a single percentage.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-screens/blob/main/the-screen-size-checker.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-screen-size-checker.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 19</div>
+        <div class="rcard__name">The Phone Tester</div>
+        <div class="rcard__one">Runs the existing Playwright suite against emulated iOS/Android device profiles and, per failure, emits numbered manual-repro steps plus a device-simulator link.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-screens/blob/main/the-phone-tester.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-phone-tester.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s5" id="grade">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 05</span><h2 class="display">Grading the AI assistant&#39;s answers</h2></div>
+        <p class="section__desc">Evaluate LLM output: score answers against a rubric, benchmark competing models on the same prompts, and check the assistant obeys its own system prompt — LLM-as-judge, with evidence.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 20</div>
+        <div class="rcard__name">The Model Judge</div>
+        <div class="rcard__one">Benchmarks multiple LLMs on one shared prompt set, scores each answer with an LLM-as-judge rubric, and ranks them to name a winner.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-llm-eval/blob/main/the-model-judge.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-model-judge.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 21</div>
+        <div class="rcard__name">The Answer Grader</div>
+        <div class="rcard__one">Turns a spreadsheet of test prompts into a golden dataset, runs each against the live assistant, and grades every answer PASS / WARNING / FAIL.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-llm-eval/blob/main/the-answer-grader.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-answer-grader.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 22</div>
+        <div class="rcard__name">The Rulebook Extractor</div>
+        <div class="rcard__one">Parses the assistant&#39;s system prompt into a list of enforceable clauses and auto-generates a pass/fail probe for each one.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-llm-eval/blob/main/the-rulebook-extractor.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-rulebook-extractor.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 23</div>
+        <div class="rcard__name">The Rule Tester</div>
+        <div class="rcard__one">Fires each generated probe at the live assistant and reports, with evidence, whether it actually enforces its own system-prompt contract.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-llm-eval/blob/main/the-rule-tester.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-rule-tester.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 24</div>
+        <div class="rcard__name">The Prompt Tuner</div>
+        <div class="rcard__one">A/B-tests draft system prompts over a shared prompt set and scores which one makes responses shorter, more on-point, and less pushy.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-llm-eval/blob/main/the-prompt-tuner.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-prompt-tuner.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s6" id="probe">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 06</span><h2 class="display">Investigating the app&#39;s data &amp; behavior</h2></div>
+        <p class="section__desc">Inspect data and behavior directly: translate questions to SQL, drive the app&#39;s API, trace agent-mode steps, and verify citations and latency claims against ground truth.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 25</div>
+        <div class="rcard__name">The Data Questioner</div>
+        <div class="rcard__one">Converts a plain-English question into a correct, read-only SQL query against the app&#39;s schema — tables, joins, and date logic already resolved.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-data-questioner.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-data-questioner.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 26</div>
+        <div class="rcard__name">The App Interviewer</div>
+        <div class="rcard__one">Turns one plain-English request into the correct sequence of API calls, chains their outputs, and executes them against the live app.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-app-interviewer.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-app-interviewer.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 27</div>
+        <div class="rcard__name">The Share Tester</div>
+        <div class="rcard__one">Exercises the create-answer-share flow end to end via API: creates a conversation, sends a prompt, then shares it with the exact recipients you name — repeatably, in batch.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-share-tester.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-share-tester.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 28</div>
+        <div class="rcard__name">The Feature-Trace Checker</div>
+        <div class="rcard__one">Drives the app in a real browser, enables the function-call trace toggle, sends a prompt, and asserts the answer, its trace, and the saved conversation all appear.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-feature-trace-checker.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-feature-trace-checker.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 29</div>
+        <div class="rcard__name">The Source-Link Inspector</div>
+        <div class="rcard__one">Verifies the assistant&#39;s cited sources actually resolve, by clicking each reference open and confirming a real blob: URL appears.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-source-link-inspector.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-source-link-inspector.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 30</div>
+        <div class="rcard__name">The Wait-Time Verifier</div>
+        <div class="rcard__one">Measures the assistant&#39;s real answer latency and checks it against the &#39;estimated wait&#39; range the app displays.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-wait-time-verifier.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-wait-time-verifier.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 31</div>
+        <div class="rcard__name">The Teaching-Screen Recorder</div>
+        <div class="rcard__one">Drives the app&#39;s teaching mode, scrapes the classification labels the assistant renders on-screen — and only on-screen — and asserts them against expectations, PII guardrail included.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-data/blob/main/the-teaching-screen-recorder.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-teaching-screen-recorder.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s7" id="report">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 07</span><h2 class="display">Turning results into reports people read</h2></div>
+        <p class="section__desc">Turn raw results into shareable artifacts: aggregate scattered quality scores and UAT feedback into self-contained HTML dashboards and stakeholder-ready reports.</p>
+        <div class="roster">
+      <div class="rcard ">
+        <div class="rcard__no">Agent 32</div>
+        <div class="rcard__name">The Scorecard Publisher</div>
+        <div class="rcard__one">Merges two disjoint eval pipelines — guardrail/contract probes and answer-quality grading — into one scorecard with a single Pass/Warning/Fail verdict and prioritized fixes.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-reporting/blob/main/the-scorecard-publisher.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-scorecard-publisher.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard ">
+        <div class="rcard__no">Agent 33</div>
+        <div class="rcard__name">The UAT Dashboard Maker</div>
+        <div class="rcard__one">Parses the returned UAT spreadsheet — even a wide-format sheet several testers filled side by side — and emits a one-slide dashboard, an HTML page, and raw JSON with the go/no-go call computed.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-reporting/blob/main/the-uat-dashboard-maker.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-uat-dashboard-maker.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+    <section class="section s8" id="toolkit">
+      <div class="wrap">
+        <div class="section__head"><span class="section__no">Section 08</span><h2 class="display">The reusable toolkit — works on any project</h2></div>
+        <p class="section__desc">Four jobs recurred on every project, so they&#39;re extracted into typed, dependency-checked modules that drop into any repo — ADO client, HTML report builder, API tester, DB verifier — with or without Azure.</p>
+        <div class="roster">
+      <div class="rcard rcard--toolkit">
+        <div class="rcard__no">Agent 34</div>
+        <div class="rcard__name">The Tracker Toolkit</div>
+        <div class="rcard__one">One typed Azure DevOps client every agent shares — reads and writes work items live, or against local fixtures with zero credentials.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-toolkit/blob/main/src/core/ado.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-tracker-toolkit.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard rcard--toolkit">
+        <div class="rcard__no">Agent 35</div>
+        <div class="rcard__name">The Report Builder</div>
+        <div class="rcard__one">Turns any agent&#39;s <code>AgentResult[]</code> into a single self-contained HTML report — inlined CSS, light/dark, no external assets.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-toolkit/blob/main/src/core/html.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-report-builder.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard rcard--toolkit">
+        <div class="rcard__no">Agent 36</div>
+        <div class="rcard__name">The API Tester</div>
+        <div class="rcard__one">One typed REST client that probes a live service, retries transient failures, and captures request/response evidence on every call.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-toolkit/blob/main/src/core/api.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-api-tester.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard rcard--toolkit">
+        <div class="rcard__no">Agent 37</div>
+        <div class="rcard__name">The Database Verifier</div>
+        <div class="rcard__one">One reconciliation engine that checks a displayed value against the record behind it — seven compare modes, pure and offline, no DB required.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-toolkit/blob/main/src/core/db.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-database-verifier.html">Details &rarr;</a>
+        </div>
+      </div>
+
+      <div class="rcard rcard--toolkit">
+        <div class="rcard__no">Agent 38</div>
+        <div class="rcard__name">The Shared Spine</div>
+        <div class="rcard__one">The config seam every agent shares: reads env vars once, computes a capability map, and degrades each agent to offline instead of crashing.</div>
+        <div class="rcard__actions">
+          <a class="rcard__code" href="https://github.com/akc031185/qa-agents-toolkit/blob/main/src/core/config.ts" target="_blank" rel="noopener" title="View the source on GitHub">&#8249;&#47;&#8250; View code</a>
+          <a class="rcard__tag" href="agents/the-shared-spine.html">Details &rarr;</a>
+        </div>
+      </div></div>
+      </div>
+    </section>
+
+<footer class="footer"><div class="wrap">Field Guide to Software QA Agents · a QA automation catalog · what each agent does, how it works, and how to run it.</div></footer>
+</body></html>

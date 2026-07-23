@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Model Judge — Agent 20</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s5">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">20<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Grading the AI assistant&#39;s answers</span></div>
+        <h1>The Model Judge</h1>
+        <p class="lead">Benchmarks multiple LLMs on one shared prompt set, scores each answer with an LLM-as-judge rubric, and ranks them to name a winner.</p>
+        <p class="kicker">Source file: model-comparison-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Any assistant can be backed by several candidate models, and they don&#39;t score equally. This agent runs one fixed prompt set through each model, scores every response on a shared rubric, and lays the results side by side so the model choice rests on evidence, not preference.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Benchmarking models by hand means opening each one, pasting the same prompt, copying the answer into a spreadsheet, and repeating that across dozens of prompts and five or six models — then eyeballing accuracy, clarity, and hallucination with no consistent scale. It takes days, and one tired reviewer is not a reproducible scoreboard.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Every model answers every prompt automatically, each response is scored on the same rubric, and you get a ranked scoreboard with a named winner, a pass rate, and a recommendation — in one run.</p></div>
+    </div>
+    <p>The backing model decides whether the assistant ships accurate answers or confident hallucinations, so the choice needs a benchmark, not a hunch.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Resolves the model set to benchmark: named in-house models from <code>APP_MODELS</code>, a default pair when none are named, plus enabled <code>EXTERNAL_MODELS</code> (Gemini, Claude) when <code>--include-external</code> is set. Throws below two.</span>
+          <span class="fc-node__fn">resolveModels()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Sends the identical prompt to each model and captures the response text plus latency, before any scoring runs.</span>
+          <span class="fc-node__fn">evaluatePromptWithModel()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Scores each response with an LLM-as-judge (<code>gpt4omini</code>) on six rubric dimensions, 1-10 each, returned as strict JSON.</span>
+          <span class="fc-node__fn">evaluateRubricDimensions()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">After the full matrix runs, aggregates per model: mean aggregate score, PASS count, pass rate, and mean latency.</span>
+          <span class="fc-node__fn">buildModelSummaries()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Ranks models by mean aggregate, names a winner, and writes a recommendation calibrated by the top-to-bottom score gap (&lt; 0.05 is a tie, decide on latency and cost).</span>
+          <span class="fc-node__fn">buildRecommendation()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"resolveModels()","explain":"Resolution is **precedence-ordered**: an explicitly requested id is looked up in `APP_MODELS` first and only falls through to `EXTERNAL_MODELS` if it isn't an in-house model — and an external match is dropped unless `external.enabled`, so a disabled provider never enters the run. With no `input.models` it defaults to the `gpt4o`/`gpt4omini` pair; `--include-external` then appends every external that is enabled, not `onDemand`, and not already present (the dedupe guard stops a requested id being added twice). The real guard is **`models.length \u003c 2`**: a comparison needs at least two contestants, so a typo'd single id or an all-disabled external set fails fast instead of producing a meaningless one-model ranking.","code":"private resolveModels(input: ComparisonInput): ModelDef[] {\n  let models: ModelDef[] = [];\n\n  if (input.models && input.models.length > 0) {\n    for (const modelId of input.models) {\n      // In-house registry is checked FIRST — a requested id is only treated as external if it isn't an app model.\n      const inHouse = APP_MODELS.find(m => m.id === modelId);\n      if (inHouse) { models.push(inHouse); continue; }\n      // Fall-through: accept an external id only if that provider is enabled; a disabled one is silently skipped.\n      const external = EXTERNAL_MODELS.find(m => m.id === modelId);\n      if (external && external.enabled) { models.push(external); continue; }\n    }\n  } else {\n    // Default: the two standard in-house brains\n    models = APP_MODELS.filter(m => ['gpt4o', 'gpt4omini'].includes(m.id));\n  }\n\n  if (input.includeExternal) {\n    for (const ext of EXTERNAL_MODELS) {\n      // Append benchmarks: enabled, not on-demand (pay-per-call), and not already present (dedupe guard).\n      if (ext.enabled && !ext.onDemand && !models.find(m => m.id === ext.id)) {\n        models.push(ext);\n      }\n    }\n  }\n  // Real guard: a comparison needs at least 2 contestants, so a typo'd id or all-disabled set fails fast.\n  if (models.length \u003c 2) {\n    throw new Error('Need at least 2 models for comparison.');\n  }\n  return models;\n}"},{"fn":"evaluatePromptWithModel()","explain":"Provider-routed dispatch: `provider === 'app'` goes through the in-house chat client with a generous `timeout: 180000` (3 min) — a cold model shouldn't false-fail on latency alone, since a premature timeout would register as a failed answer rather than a slow one. The key design choice is that **latency is captured as a first-class result** (`responseTimeMs`) right beside the answer text and before any scoring runs, so a model that scores well but answers slowly stays visible in the ranking. The `gemini` and `claude` branches hit their own direct-API helpers that return the same `{answer, timeMs}` shape, keeping downstream scoring provider-agnostic; only these three providers ever arrive here because `resolveModels` already filtered the set.","code":"private async evaluatePromptWithModel(\n  promptId: string, prompt: string, model: ModelDef\n): Promise\u003cPromptModelResult> {\n  let response: string;\n  let responseTimeMs: number;\n\n  if (model.provider === 'app') {\n    // In-house client — 180s timeout: a cold model shouldn't false-fail on latency alone.\n    const client = createAppClient({ model: model.id, timeout: 180000 });\n    const chatResult = await client.chat(prompt);\n    response = chatResult.response.answer;\n    // messageResponseTime is the model's real latency, captured as a first-class metric beside the answer.\n    responseTimeMs = chatResult.telemetry.messageResponseTime;\n  } else if (model.provider === 'gemini') {\n    // External providers: direct API helpers return the same {answer, timeMs} shape so scoring stays provider-agnostic.\n    const result = await this.callGeminiDirect(prompt);\n    response = result.answer; responseTimeMs = result.timeMs;\n  } else if (model.provider === 'claude') {\n    const result = await this.callClaudeDirect(prompt);\n    response = result.answer; responseTimeMs = result.timeMs;\n  }\n  // ... scoring happens next (see evaluateRubricDimensions)\n  return { promptId, model: model.id, response, responseTimeMs /* , ... */ } as PromptModelResult;\n}"},{"fn":"evaluateRubricDimensions()","explain":"This is the **LLM-as-judge** core: `gpt4omini` scores the answer 1-10 on six dimensions, and the prompt hard-requires JSON-only output so the reply can be parsed. `judgeAnswer.match(/\\{[^}]+\\}/)` extracts the first `{...}` block — a defensive guard against a judge that wraps its JSON in prose despite the instruction (a common LLM quirk), safe only because the flat rubric object has no nested braces for the non-greedy `[^}]+` to trip on. Each raw score is **clamped to 1-10** with `|| 5` filling any missing dimension with a neutral value, so a partial judge reply degrades rather than crashes; scores normalize to 0-1 and each is gated at `>= 0.70` — meaning `passed` is per-dimension, while `averageNormalized` is the single aggregate the ranking ultimately sorts on.","code":"private async evaluateRubricDimensions(prompt: string, response: string) {\n  // JSON-mode by instruction: the judge is told to respond with ONLY a JSON object so the reply is parseable.\n  const judgePrompt = `You are an evaluation judge. Score the following AI\nresponse on these 6 dimensions using a scale of 1-10.\n\nUSER PROMPT: ${prompt}\nAI RESPONSE: ${response}\n\n1. accuracy  2. completeness  3. clarity_structure\n4. handling_ambiguity  5. hallucination_resistance  6. formatting_fidelity\n\nRespond ONLY with a JSON object, no other text.`;\n\n  // A cheap, fixed judge model (gpt4omini) scores every answer — the SAME judge keeps scores comparable across models.\n  const judgeClient = createAppClient({ model: 'gpt4omini' });\n  const judgeAnswer = (await judgeClient.chat(judgePrompt)).response.answer;\n  // Extract the first {...} block — defends against a judge that wraps its JSON in prose (flat object only, no nesting).\n  const rawScores = JSON.parse(judgeAnswer.match(/\\{[^}]+\\}/)[0]);\n\n  const dimensionScores = dimensions.map(dim => {\n    // Clamp to 1-10 and default any missing dimension to 5 (neutral) — a partial judge reply degrades, never crashes.\n    const rawScore = Math.min(10, Math.max(1, rawScores[dim] || 5));\n    const normalizedScore = Math.round((rawScore / 10) * 1000) / 1000;\n    // Per-dimension PASS gate at 0.70; averageNormalized (below) is the aggregate the ranking actually sorts on.\n    return { dimension: dim, rawScore, normalizedScore, passed: normalizedScore >= 0.70 };\n  });\n  const averageNormalized = /* mean of the 6 normalizedScore values */ 0;\n  return { dimensions: dimensionScores, averageNormalized };\n}"},{"fn":"buildModelSummaries()","explain":"Per-model roll-up over the full matrix, where the **`!r.error` filter is load-bearing**: errored responses are excluded from every average, so a model that timed out on three prompts isn't dragged down by counting those as zeros — they simply don't count toward `total`. `passCount` tallies the `verdict === 'PASS'` field (not the raw score), and both `avgAggregate` and `avgResponseTimeMs` are guarded by `total > 0` to dodge a divide-by-zero when every prompt for a model errored. `passRate` is rendered as a rounded percentage **string** (`'82%'`) purely for display, while `avgAggregate` stays a 3-decimal number — the ranking sorts on the number, never the string.","code":"private buildModelSummaries(models: ModelDef[], results: PromptModelResult[]): ModelSummary[] {\n  return models.map(model => {\n    // !r.error is load-bearing: errored responses are dropped from every average, not counted as zeros.\n    const modelResults = results.filter(r => r.model === model.id && !r.error);\n    const passCount = modelResults.filter(r => r.verdict === 'PASS').length;\n    const total = modelResults.length;\n\n    // total>0 guards divide-by-zero when every prompt for this model errored out.\n    const avgAggregate = total > 0\n      ? Math.round((modelResults.reduce((s, r) => s + r.aggregateScore, 0) / total) * 1000) / 1000\n      : 0;\n    const avgResponseTimeMs = total > 0\n      ? Math.round(modelResults.reduce((s, r) => s + r.responseTimeMs, 0) / total)\n      : 0;\n\n    // passRate is a display string (e.g. \"82%\"); the ranking sorts on avgAggregate (a number), not this.\n    return { model: model.id, provider: model.provider, totalPrompts: total,\n             passCount, avgAggregate, avgResponseTimeMs,\n             passRate: total > 0 ? `${Math.round((passCount / total) * 100)}%` : '0%' };\n  });\n}"},{"fn":"buildRecommendation()","explain":"The recommendation is calibrated by the **score gap**, not the raw winner: `sorted` arrives ranked by `avgAggregate` descending, so `sorted[0]` is best and `sorted[sorted.length - 1]` worst, and the gap between them is bucketed — **`\u003c 0.05`** means effectively tied, flipping the advice to 'choose on latency and cost'; **`\u003c 0.15`** is a moderate trade-off; anything larger is a clear win worth acting on. These thresholds exist because a rubric-scored aggregate carries noise, so a 0.02 lead is not a real difference. It then re-sorts a **copy** (`[...sorted]`) by `avgResponseTimeMs` and, if the fastest model isn't the winner, appends that fact — deliberately surfacing the quality-vs-speed tension rather than hiding it behind the top score.","code":"private buildRecommendation(sorted: ModelSummary[]): string {\n  // sorted is already ranked by avgAggregate desc: [0] is the best model, the last entry is the worst.\n  const best = sorted[0];\n  const worst = sorted[sorted.length - 1];\n\n  let rec = `Winner: ${best.model} (${best.provider}) with aggregate score ` +\n    `${best.avgAggregate.toFixed(3)} and ${best.passRate} pass rate.`;\n\n  if (sorted.length > 1) {\n    // Bucket the top-to-bottom gap: a rubric aggregate is noisy, so a tiny lead isn't a real difference.\n    const gap = best.avgAggregate - worst.avgAggregate;\n    if (gap \u003c 0.05) rec += ' Models perform similarly — choose based on latency and cost.';\n    else if (gap \u003c 0.15) rec += ' Moderate performance difference — consider the trade-off.';\n    else rec += ' Significant performance gap — strongly recommend the top model.';\n  }\n\n  // Re-sort a COPY by latency; if the fastest model isn't the winner, surface the quality-vs-speed trade-off.\n  const fastest = [...sorted].sort((a, b) => a.avgResponseTimeMs - b.avgResponseTimeMs)[0];\n  if (fastest.model !== best.model) rec += ` Fastest: ${fastest.model} (${fastest.avgResponseTimeMs}ms avg).`;\n  return rec;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Two in-house models, head to head</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A 40-prompt support dataset and two in-house models, `Brain-Fast` and `Brain-Deep`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Scoreboard: Brain-Deep wins at `0.87` aggregate and an 82% pass rate versus Brain-Fast&#39;s `0.79`. Gap &gt; 0.15, so the recommendation reads &#39;Significant gap — strongly recommend Brain-Deep,&#39; with a per-prompt score sheet attached.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Adding external models as a benchmark</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The same 40 prompts with `--include-external`, benchmarking the in-house model against two well-known external ones.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A three-way ranking where the in-house model lands second, 0.03 behind the leader. Gap &lt; 0.05 triggers &#39;Models perform similarly — choose based on latency and cost,&#39; and the in-house model is flagged fastest at 2,100ms avg.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A `--limit 5` pipeline smoke test</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>First 5 prompts across three models to validate wiring before a full run.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A fast mini-report confirming all three models answered, with early scores and latencies, so the dataset, API reachability, and scoring service are all verified before committing to the full 40-prompt run.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node &gt;= 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>The assistant API&#39;s base URL and access token, so the agent can issue real prompts.</li><li>A golden dataset JSON — the file The Answer Grader&#39;s convert step emits, or any dataset in that shape.</li><li>The toolkit&#39;s local scoring service running, so each response gets a privacy/safety and quality check.</li><li>(Optional) <code>GOOGLE_API_KEY</code> and/or <code>ANTHROPIC_API_KEY</code> to enable Gemini and Claude as external benchmarks.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed by Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Needed only the first time on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent code, install dependencies, and start the local scoring service.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+# one-time: install the scoring service&#39;s own dependencies
+npm run eval:service:install
+
+# then start it (leave this running in its own terminal tab)
+npm run eval:service:start</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the xlsx writer and the model clients. The scoring service is a separate process that runs the privacy/safety and quality checks — it must be listening before a comparison runs.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Installs everything and starts the service listening locally.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Leave the service up across comparisons — no restart needed per run.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Point it at the assistant and, optionally, enable external benchmarks (env vars).</div>
+        <pre class="rb__cmd"><code>export APP_API_URL=https://your-assistant-host.example.com
+export APP_API_TOKEN=your-access-token
+export APP_MODEL=gpt4o
+export GOOGLE_API_KEY=your-gemini-key       # optional — enables Gemini as a benchmark
+export ANTHROPIC_API_KEY=your-claude-key    # optional — enables Claude as a benchmark</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: which assistant to call, the token that authorizes it, and which external providers are available. Nothing is hard-coded — swap these to retarget environments.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run a <code>--limit 5</code> smoke test, then the full comparison.</div>
+        <pre class="rb__cmd"><code># quick check — 5 questions, no outside brains, to confirm the pipeline works
+npm run eval:compare -- --limit 5
+
+# full run — the assistant&#39;s own brains plus Gemini and Claude as benchmarks
+npm run eval:compare -- --include-external</code></pre>
+        <div class="rb__why"><span>Why</span> The limited run verifies the wiring — dataset found, assistant reachable, scoring service up — before spending time and API cost on the full set. <code>--include-external</code> adds Gemini and Claude to the matrix.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Runs the full prompt matrix, dual-scores each response, and ranks the models.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Every run is independent — nothing carries over. Re-run any time you need a current scoreboard, e.g. after a model upgrade.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the scoreboard.</div>
+        <pre class="rb__cmd"><code>open outputs/eval/comparisons/model-comparison-&lt;timestamp&gt;.xlsx
+# and the same data as JSON, for feeding into another tool:
+open outputs/eval/comparisons/model-comparison-&lt;timestamp&gt;.json</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.xlsx</code> is the shareable artifact — Model Summary, per-prompt comparison, raw scores, and a latency sheet. The <code>.json</code> is the same data for programmatic consumption.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--models &lt;list&gt;</dt><dd>Comma-separated in-house model ids to include (default: the standard <code>gpt4o</code>/<code>gpt4omini</code> pair).</dd><dt>--include-external</dt><dd>Adds enabled external models (Gemini, and Claude when requested by id) as benchmarks.</dd><dt>--limit &lt;n&gt;</dt><dd>Run only the first N prompts — a smoke test.</dd><dt>--dataset &lt;path&gt;</dt><dd>Which golden dataset to use; without it, the agent auto-selects the most recently generated one.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>model-comparison-&lt;timestamp&gt;.xlsx</dt><dd>A multi-sheet scoreboard — model summary, per-prompt comparison, raw dimension scores, and latencies.</dd><dt>model-comparison-&lt;timestamp&gt;.json</dt><dd>The same comparison, machine-readable.</dd><dt>model-comparison-&lt;timestamp&gt;.docx (optional)</dt><dd>A cover-page report naming the winner, for sharing outside the team.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No incremental mode — every run is a fresh, timestamped comparison. Re-run whenever you need a current scoreboard, e.g. right after a model upgrade or when a new external model becomes available.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> The winner and recommendation are the evidence for choosing the backing model. Wire a nightly <code>--limit 5 --include-external</code> run into CI as a lightweight regression check that the chosen model hasn&#39;t silently degraded.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>3-4 min screencast: run a head-to-head model comparison and watch the ranked scoreboard build.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 6</div>
+        <h3 class="display">Resolves the model set</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, before any prompt is sent.</dd>
+          <dt>Takes in</dt><dd>Requested model ids, plus the <code>--include-external</code> flag.</dd>
+          <dt>Shows out</dt><dd>A validated <code>ModelDef[]</code> of at least two models — in-house registry entries plus enabled external ones (Gemini, Claude) when requested.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 6</div>
+        <h3 class="display">Runs the prompt matrix</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per prompt, per model.</dd>
+          <dt>Takes in</dt><dd>One shared prompt from the dataset.</dd>
+          <dt>Shows out</dt><dd>Response text and latency from each model, via the in-house <code>app</code> client or the external provider APIs.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 6</div>
+        <h3 class="display">Dual-scores each response</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Immediately after each response returns.</dd>
+          <dt>Takes in</dt><dd>The prompt and the response.</dd>
+          <dt>Shows out</dt><dd>A privacy/safety gate result from the checker service, plus a 1-10 six-dimension rubric score from the LLM-as-judge.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 6</div>
+        <h3 class="display">Combines into a verdict</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once both scores exist.</dd>
+          <dt>Takes in</dt><dd>The gate result and the six rubric scores.</dd>
+          <dt>Shows out</dt><dd>One aggregate score and a PASS / WARNING / FAIL verdict for that response.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 6</div>
+        <h3 class="display">Aggregates the scoreboard</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After the full matrix completes.</dd>
+          <dt>Takes in</dt><dd>Every scored response across all models.</dd>
+          <dt>Shows out</dt><dd>Per-model means, a ranking, and a gap-calibrated recommendation naming the winner.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="5">
+        <div class="uh-slide__no">6 / 6</div>
+        <h3 class="display">Writes the artifacts</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, once the scoreboard is final.</dd>
+          <dt>Takes in</dt><dd>The finished comparison.</dd>
+          <dt>Shows out</dt><dd>A multi-sheet <code>.xlsx</code>, a <code>.json</code> data file, and an optional <code>.docx</code> cover report.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button><button class="uh-dot" data-uh-dot="5" aria-label="Slide 6"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-phone-tester.html">← The Phone Tester</a>
+      <a href="the-answer-grader.html">The Answer Grader →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

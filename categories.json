@@ -1,0 +1,50 @@
+[
+  {
+    "id": "find",
+    "no": "Section 01",
+    "name": "Finding & reporting problems",
+    "desc": "Triage and document defects: turn failed test runs into filed, linked bug tickets, re-verify fixes in a live browser before release, and generate the repro test straight from a bug report."
+  },
+  {
+    "id": "plan",
+    "no": "Section 02",
+    "name": "Deciding what to test",
+    "desc": "Turn requirements into a test plan: aggregate feature context, generate and review test cases, sharpen vague acceptance criteria against the designs, and schedule execution across the team."
+  },
+  {
+    "id": "tracker",
+    "no": "Section 03",
+    "name": "Keeping the project tracker up to date",
+    "desc": "Keep Azure DevOps in sync via the REST API — create, link, and update work items and test cases, import from spreadsheets, post results, and push rollups — with no manual board-keeping."
+  },
+  {
+    "id": "screens",
+    "no": "Section 04",
+    "name": "Checking the screens look right",
+    "desc": "Verify the UI across viewports: drive the app on emulated devices with Playwright, diff live screens against the design source, and capture repro steps when a breakpoint fails."
+  },
+  {
+    "id": "grade",
+    "no": "Section 05",
+    "name": "Grading the AI assistant's answers",
+    "desc": "Evaluate LLM output: score answers against a rubric, benchmark competing models on the same prompts, and check the assistant obeys its own system prompt — LLM-as-judge, with evidence."
+  },
+  {
+    "id": "probe",
+    "no": "Section 06",
+    "name": "Investigating the app's data & behavior",
+    "desc": "Inspect data and behavior directly: translate questions to SQL, drive the app's API, trace agent-mode steps, and verify citations and latency claims against ground truth."
+  },
+  {
+    "id": "report",
+    "no": "Section 07",
+    "name": "Turning results into reports people read",
+    "desc": "Turn raw results into shareable artifacts: aggregate scattered quality scores and UAT feedback into self-contained HTML dashboards and stakeholder-ready reports."
+  },
+  {
+    "id": "toolkit",
+    "no": "Section 08",
+    "name": "The reusable toolkit — works on any project",
+    "desc": "Four jobs recurred on every project, so they're extracted into typed, dependency-checked modules that drop into any repo — ADO client, HTML report builder, API tester, DB verifier — with or without Azure."
+  }
+]

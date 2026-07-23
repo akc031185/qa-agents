@@ -1,0 +1,190 @@
+{
+  "slug": "the-tracker-sync",
+  "plate": 16,
+  "name": "The Tracker Sync",
+  "techName": "qa-tracker-agent.ts",
+  "category": "tracker",
+  "oneLiner": "Refreshes the master QA status workbook from live ADO data — hours, bug counts, statuses — via Microsoft Graph download/upload, no manual data entry.",
+  "lead": "Teams keep a master status workbook — one row per feature/story, with columns for logged hours, bugs, pass/fail tallies, and status. This agent pulls the file from SharePoint over Microsoft Graph, queries ADO for the live figures, writes every cell with `exceljs`, and PUTs the updated workbook back.",
+  "chore": "Keeping that workbook current is a weekly grind. Someone opens ADO, looks up each story's QA hours, counts its bugs, tallies pass/fail, checks status, and types it into the right cell — every row, every sprint. It takes hours, the numbers are stale the moment they're typed, and a fat-fingered figure quietly misleads everyone reading the report.",
+  "instead": "The agent downloads the workbook from SharePoint, then per story queries ADO for the real figures — logged QA hours (`CompletedWork`), child bug count, pass/fail, and `System.State` — and writes them into the current sprint's columns. It rebuilds a severity-color-coded bug sheet, refreshes each story's status, then uploads the file back. A `--dry-run` mode writes locally without publishing.",
+  "whyItMatters": "A status report that's automatically accurate means leadership decides on live numbers, not a workbook that quietly drifted out of date.",
+  "howItWorks": [
+    {
+      "step": "It resolves the current sprint (or the one you name) and downloads the master workbook from SharePoint over Microsoft Graph.",
+      "fn": "downloadFromSharePoint()",
+      "explain": "The whole function is guarded by a graceful degradation contract: a missing `GRAPH_TOKEN` returns `null` (not an error), which is the caller's signal to fall back to a local copy instead of failing the run. The Graph URL is the fiddly part — the SharePoint path is `encodeURIComponent`'d to escape spaces and special characters, but then `%2F` is un-escaped back to `/` because the drive addressing syntax `root:/path/to/file:/content` needs **real slashes** as path separators while everything else stays encoded. Success is narrowed to `status === 200` **and** a present `result.buffer` — a 200 with no body still returns `null` rather than a truthy-but-empty download, so the caller never syncs into an empty workbook.",
+      "code": "async function downloadFromSharePoint(): Promise<Buffer | null> {\n  // No token -> return null (not throw); the caller reads that as 'fall back to a local copy'.\n  if (!GRAPH_TOKEN) {\n    console.log('  No access token set — skipping download');\n    return null;\n  }\n  // Encode the path to escape spaces/specials, then restore %2F -> / because the Graph drive syntax\n  // root:/path:/content needs REAL slashes as separators while the rest stays encoded.\n  const encodedPath = encodeURIComponent(SP_FILE_PATH).replace(/%2F/g, '/');\n  const result = await graphRequest('GET', `/sites/${SHAREPOINT_SITE}/drive/root:${encodedPath}:/content`);\n\n  // Require 200 AND a body - a 200 with no buffer must not pass as a valid (empty) download.\n  if (result.status === 200 && result.buffer) {\n    return result.buffer;\n  }\n  console.log(`  Download failed: HTTP ${result.status}`);\n  return null;\n}"
+    },
+    {
+      "step": "For each story, it queries ADO for logged QA hours and writes them into that sprint's columns.",
+      "fn": "getQATasksHours()",
+      "explain": "Logged QA effort lives on the story's child Tasks, not the story, so this walks `Hierarchy-Forward` (parent → child) relations and extracts each child's ID from `r.url` with the regex `/workItems\\/(\\d+)/` — ADO relations carry the target only inside the URL. It **sums** `Microsoft.VSTS.Scheduling.CompletedWork` (ADO's field for hours actually logged, as opposed to `RemainingWork`) across only Tasks whose lowercased title contains `qa_test`, so non-QA child tasks under the same story don't inflate the figure. Every read is defensive: no children short-circuits to `0`, and `|| 0` covers a Task that exists but has never had hours logged, so a story mid-flight reports real partial hours rather than `NaN`.",
+      "code": "async function getQATasksHours(storyId: number): Promise<number> {\n  const wi = await getWorkItemWithRelations(storyId);\n  // Hierarchy-Forward = parent -> child; the target id lives only inside r.url, so regex it out.\n  const childIds = (wi.relations || [])\n    .filter((r: any) => r.rel === 'System.LinkTypes.Hierarchy-Forward')\n    .map((r: any) => parseInt(r.url.match(/workItems\\/(\\d+)/)[1]));\n\n  if (childIds.length === 0) return 0; // no children -> no hours\n  const batch = await adoBatchRequest(childIds, [\n    'System.WorkItemType', 'System.Title', 'Microsoft.VSTS.Scheduling.CompletedWork',\n  ]);\n\n  let totalHrs = 0;\n  for (const child of batch.value) {\n    const title = (child.fields?.['System.Title'] || '').toLowerCase();\n    // Only QA Tasks count, so non-QA child tasks under the same story don't inflate the total.\n    if (child.fields?.['System.WorkItemType'] === 'Task' && title.includes('qa_test')) {\n      // CompletedWork = hours actually logged (not RemainingWork); || 0 for a Task with no hours yet, avoids NaN.\n      totalHrs += child.fields?.['Microsoft.VSTS.Scheduling.CompletedWork'] || 0;\n    }\n  }\n  return totalHrs;\n}"
+    },
+    {
+      "step": "It also queries ADO for each story's child bug count and writes it into the same row.",
+      "fn": "getChildBugCount()",
+      "explain": "The same `Hierarchy-Forward` walk as the hours query, but the payoff is a count: after batch-fetching the children it filters to `System.WorkItemType === 'Bug'` and returns `.length`. It requests `System.State` in the batch even though the count ignores it — the field is fetched so the shared batch shape matches the bug-sheet rebuild elsewhere, avoiding a second round-trip. This counts **every** child bug regardless of state, so a closed/fixed bug still contributes to the story's total defect count — the number reflects bugs *found*, not bugs *open*.",
+      "code": "async function getChildBugCount(storyId: number): Promise<number> {\n  const wi = await getWorkItemWithRelations(storyId);\n  // Same parent->child walk as the hours query; ids are inside r.url.\n  const childIds = (wi.relations || [])\n    .filter((r: any) => r.rel === 'System.LinkTypes.Hierarchy-Forward')\n    .map((r: any) => parseInt(r.url.match(/workItems\\/(\\d+)/)[1]));\n\n  if (childIds.length === 0) return 0;\n  // State is fetched but unused here - keeps the batch shape shared with the bug-sheet rebuild, saving a round-trip.\n  const batch = await adoBatchRequest(childIds, ['System.WorkItemType', 'System.State']);\n  // Counts EVERY child bug regardless of state -> reflects bugs found, not just bugs still open.\n  return batch.value.filter((wi: any) => wi.fields?.['System.WorkItemType'] === 'Bug').length;\n}"
+    },
+    {
+      "step": "It refreshes each story's `System.State` (New, Active, Resolved, Closed) and color-codes the cell so state reads at a glance.",
+      "fn": "main()",
+      "explain": "This writes the story's live `System.State` into the workbook and colors it so the state reads at a glance. `row.getCell(5)` is column 5 (1-indexed in `exceljs`, not 0-indexed) — the status column — and the value is set before the color so a state always lands even if it matches no branch. Colors are `exceljs` **ARGB** strings, where the leading `FF` is the alpha (fully opaque) followed by the RGB hex — omit the alpha and the color silently won't apply. The `if` guard skips the whole write when `state` is empty, so a story ADO returned nothing for keeps its previous cell rather than being blanked; and only the three known states (`Closed`/`Active`/`New`) get recolored — any other state writes the text but leaves the font as-is, so the value is never hidden just because it wasn't anticipated.",
+      "code": "const wi = await getWorkItem(storyId, ['System.State']);\nconst state = wi?.fields?.['System.State'] || '';\nif (state) { // empty state -> skip the write, keep the cell's prior value rather than blanking it\n  row.getCell(5).value = state; // column 5 (exceljs cells are 1-indexed); set value before color so it always lands\n  // exceljs colors are ARGB: leading FF = fully-opaque alpha, then RGB hex - omit the alpha and it won't apply.\n  if (state === 'Closed') {\n    row.getCell(5).font = { size: 10, color: { argb: 'FF2E7D32' } };   // green\n  } else if (state === 'Active') {\n    row.getCell(5).font = { size: 10, color: { argb: 'FF1565C0' } };   // blue\n  } else if (state === 'New') {\n    row.getCell(5).font = { size: 10, color: { argb: 'FF888888' } };   // gray\n  }\n  // Any other state: value is written but font left unchanged, so nothing is hidden for being unanticipated.\n}"
+    },
+    {
+      "step": "It writes a local backup, then PUTs the finished workbook back to SharePoint.",
+      "fn": "uploadToSharePoint()",
+      "explain": "The mirror of the download: a **PUT** of the raw bytes to the same `root:/path:/content` endpoint, which **overwrites** the existing file in place (Graph's simple upload — fine here because the workbook is small; files over ~4 MB would need a chunked upload session instead). The same `encodeURIComponent` → restore-`%2F` path dance is repeated so upload and download address the identical file. A missing token returns `false` up front rather than attempting an unauthenticated write, and success is any **2xx** (`>= 200 && < 300`) — not just 200 — because Graph may answer a create-or-replace with `201 Created` the first time and `200 OK` thereafter.",
+      "code": "async function uploadToSharePoint(fileBuf: Buffer): Promise<boolean> {\n  if (!GRAPH_TOKEN) return false; // no token -> report failure rather than attempt an unauthenticated write\n  // Same encode-then-restore-/ path dance as the download, so both address the identical file.\n  const encodedPath = encodeURIComponent(SP_FILE_PATH).replace(/%2F/g, '/');\n  const result = await graphRequest(\n    'PUT', // PUT to :/content overwrites the file in place (Graph simple upload; >~4MB would need a chunked session)\n    `/sites/${SHAREPOINT_SITE}/drive/root:${encodedPath}:/content`,\n    fileBuf,\n  );\n  // Accept any 2xx, not just 200: Graph create-or-replace returns 201 the first time, 200 after.\n  return result.status >= 200 && result.status < 300;\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Weekly refresh of the status workbook",
+      "input": "Sync this sprint's numbers into the master QA tracker.",
+      "output": "Downloaded the workbook, updated 18 story rows with hours and bug counts, refreshed 40 statuses, rebuilt the bug sheet (23 bugs), and PUT the file back. 0 errors."
+    },
+    {
+      "caption": "Preview without publishing",
+      "input": "Dry run for sprint 10.",
+      "output": "Pulled the live numbers and wrote a local copy of the workbook, but skipped the upload — nothing on SharePoint changed."
+    },
+    {
+      "caption": "Download only",
+      "input": "Download the tracker but don't sync anything.",
+      "output": "Downloaded the current workbook (312 KB) and saved a local copy. No numbers changed."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Downloading the workbook",
+      "whenRuns": "First, unless you point it at a local file.",
+      "input": "A SharePoint file path and a Microsoft Graph token.",
+      "output": "The master workbook downloaded into a Buffer, plus a local backup copy."
+    },
+    {
+      "heading": "Querying ADO for live figures",
+      "whenRuns": "Once per story row in the sprint being synced.",
+      "input": "A story's ID.",
+      "output": "Its total logged QA hours (summed `CompletedWork` across the qa_test Tasks) and its child bug count."
+    },
+    {
+      "heading": "Refreshing story status",
+      "whenRuns": "For every row in the Feature Summary sheet.",
+      "input": "The story's `System.State` from ADO.",
+      "output": "The status cell updated with color-coded font — green (Closed), blue (Active), gray (New)."
+    },
+    {
+      "heading": "Rebuilding the bug sheet",
+      "whenRuns": "After the story rows are updated.",
+      "input": "Every bug found under every story, across all features.",
+      "output": "A sorted, severity-color-coded bug table on its own sheet."
+    },
+    {
+      "heading": "Publishing the workbook",
+      "whenRuns": "Last, unless it's a dry run or local-only pass.",
+      "input": "The updated workbook, written locally first.",
+      "output": "The file PUT back to SharePoint over Microsoft Graph, ready for the team to open."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Azure DevOps access with a **PAT**, and SharePoint access with a **Microsoft Graph token** (needed only for the download/upload steps).",
+      "The master status workbook already on SharePoint, in the format this agent expects — a 'Sprint Tracker' sheet and a 'Feature Summary' sheet."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the engine that runs the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript run under Node — a one-time per-machine install.",
+        "firstRun": "One-time setup per machine."
+      },
+      {
+        "label": "Clone the agent and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls `exceljs` and the ADO/Graph clients into `node_modules`.",
+        "firstRun": "Cold install — a minute or two.",
+        "rerun": "No-op unless `package.json` changed."
+      },
+      {
+        "label": "Set the ADO and Graph credentials (env vars).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token\nexport GRAPH_API_TOKEN=your-graph-token   # only needed to download/upload",
+        "why": "The PAT reads live hours/bugs/status from ADO; the Graph token fetches and publishes the workbook. Without the Graph token it falls back to a local copy of the file."
+      },
+      {
+        "label": "Preview a sync with --dry-run.",
+        "cmd": "npm run qa:tracker:sync -- --sprint S10",
+        "why": "`--dry-run` mode: downloads the current workbook, pulls the live figures from ADO, and writes a local copy — but skips the upload, so nothing on SharePoint changes yet.",
+        "firstRun": "Pulls the full workbook plus every story's figures for the chosen sprint.",
+        "rerun": "Safe to repeat — it re-reads the latest figures each time."
+      },
+      {
+        "label": "Run the real sync and publish it.",
+        "cmd": "npm run qa:tracker -- --sprint S10",
+        "why": "Same steps as the dry run, but PUTs the finished workbook back to SharePoint so the rest of the team sees the refreshed numbers.",
+        "rerun": "Idempotent — recomputes every cell from live ADO data and overwrites the previous version, so re-running (e.g. weekly) just keeps the sheet current."
+      },
+      {
+        "label": "Open the local backup, if you just want to look.",
+        "cmd": "open outputs/reports/qa-tracker/Q3-2026/Q3_QA_Tracker.xlsx",
+        "why": "A local backup is always written before any upload, so you can inspect exactly what went out — or work fully offline with `--local-only`."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--sprint <name>",
+        "desc": "Which sprint's columns to refresh (defaults to whichever sprint's dates cover today)."
+      },
+      {
+        "name": "--dry-run",
+        "desc": "Sync from ADO but skip the SharePoint upload."
+      },
+      {
+        "name": "--local-only / --file <path>",
+        "desc": "Skip SharePoint entirely and read/write a local (or manually downloaded) copy."
+      },
+      {
+        "name": "--download-only",
+        "desc": "Just fetch the current workbook from SharePoint; don't sync or upload."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Q3_QA_Tracker.xlsx (local backup)",
+        "desc": "Written before every run, with the sprint's hours/bugs and every story's status refreshed."
+      },
+      {
+        "name": "the same file, republished",
+        "desc": "PUT back to SharePoint so the whole team sees the current numbers (unless --dry-run or --local-only)."
+      },
+      {
+        "name": "rebuilt Bug Summary sheet",
+        "desc": "Every bug under every story, sorted and color-coded by severity and state."
+      }
+    ],
+    "rerun": "Idempotent by design — every pass recomputes each cell from live ADO data and overwrites what was there, so running it weekly (or on a schedule) is exactly the intended use; no accumulating state goes stale.",
+    "integrate": "Schedule the real sync (not the dry run) to run at the start of each week so the status workbook leadership reads from is never more than a few days stale."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-minute screen recording: preview a sync, then publish the refreshed status workbook.",
+    "script": [
+      "Open a terminal beside the current status spreadsheet.",
+      "Say: 'Keeping this sheet current used to be a weekly grind. Watch this instead.'",
+      "Run `node -v` and `npm install` (or note it's already done).",
+      "Show the `export ADO_...` and `GRAPH_API_TOKEN` lines — the only project-specific part.",
+      "Run `npm run qa:tracker:sync -- --sprint S10`; narrate the per-row hours/bugs it prints as it queries the board.",
+      "Open the local backup file it produced; show one row's hours and bug count updated.",
+      "Run the real sync (no --dry-run); note the 'Uploading to SharePoint... done' line.",
+      "Switch to the shared drive in a browser and refresh — show the live file now matches.",
+      "Point out the rebuilt Bug Summary sheet, color-coded by severity.",
+      "Close: 'Same command, safe to run every week — it just recomputes and republishes.'"
+    ]
+  }
+}

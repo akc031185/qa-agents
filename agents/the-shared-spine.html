@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Shared Spine — Agent 38</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s8">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">38<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip chip--toolkit">The reusable toolkit — works on any project</span></div>
+        <h1>The Shared Spine</h1>
+        <p class="lead">The config seam every agent shares: reads env vars once, computes a capability map, and degrades each agent to offline instead of crashing.</p>
+        <p class="kicker">Source file: src/core/config.ts</p>
+      </div>
+    </div>
+
+    <p>The backbone all agents share. <code>loadConfig()</code> reads the env once, treats blanks and placeholders as unset, and computes a <code>capabilities</code> map — <code>ado</code>, <code>api</code>, <code>db</code>, <code>llm</code> — from what&#39;s genuinely present. Agents gate optional behaviour on that map and call <code>requireCapability()</code> only where they truly can&#39;t proceed, so a missing credential yields a clear message or an offline fallback, never a crash. It&#39;s why the whole kit runs with or without Azure, on whatever subset a team has.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The prior setup copy-pasted the same env — org, project, board URL, PATs — into dozens of scripts, each assuming everything was present and connected. A missing piece failed with a confusing error deep in a later call, and there was no single way to ask &#39;what can I actually run right now?&#39;</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One <code>loadConfig()</code> reads every setting and returns a capability map plus per-capability <code>issues</code> hints — always a usable config, degraded or not. Agents branch on <code>cfg.capabilities.*</code>; <code>requireCapability()</code> throws one actionable error at the exact point an ability is needed. <code>npm run doctor</code> prints the whole scorecard, secrets redacted. The kit runs on any subset — cloud or none.</p></div>
+    </div>
+    <p>The same toolkit runs for a team on full Azure and for a team with almost nothing configured — no rewrites, no dead ends. Every agent asks the config what it can do before it tries, so the result is simply the subset that can run, running.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>real()</code> decides whether an env value counts as genuinely present, treating blanks and obvious placeholders (<code>PASTE_YOUR_KEY</code>, <code>&lt;...&gt;</code>) as unset.</span>
+          <span class="fc-node__fn">real()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>loadConfig</code> builds the per-domain config, then computes one <code>capabilities</code> map from what&#39;s genuinely present — always returning a usable config, never throwing.</span>
+          <span class="fc-node__fn">loadConfig()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>requireCapability</code> asserts an ability up front and throws one actionable error naming the missing setting — instead of a baffling failure deep in a later call.</span>
+          <span class="fc-node__fn">requireCapability()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>callGemini</code> falls back to rule-based behaviour when no AI key is present — trying Gemini, then Claude, then returning an empty answer — so callers treat &#39;no AI&#39; as a normal case.</span>
+          <span class="fc-node__fn">callGemini()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>doctor.ts</code> loads the config once and prints a scorecard line per capability — on/off with a reason — never revealing a secret value.</span>
+          <span class="fc-node__fn">doctor.ts</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"real()","explain":"The gatekeeper that stops a **placeholder from masquerading as a real credential**. It trims the value, treats empty as unset (`''`), then rejects anything that looks like leftover template text — the regex matches values that *start* with `PASTE`, `REPLACE`, `EXAMPLE`, `CHANGE`, `YOUR_`/`YOUR-`, or an `\u003c…>` angle-bracket token, case-insensitively — returning `''` for those too. This matters because capabilities are computed by truthiness downstream: if `PASTE_YOUR_KEY` counted as present, a capability would flip **on** and then fail confusingly at call time. Returning a clean `''` makes 'not really configured' indistinguishable from 'blank', which is exactly what the capability map wants.","code":"function real(v: string | undefined): string {\n  const s = (v ?? '').trim(); // undefined/whitespace both collapse to ''.\n  if (!s) return ''; // blank is unset.\n  // Reject leftover .env template text so a placeholder can't flip a capability on.\n  if (/^(PASTE|REPLACE|EXAMPLE|CHANGE|YOUR[_-]|\u003c.*>)/i.test(s)) return '';\n  return s;\n}"},{"fn":"loadConfig()","explain":"The single seam that reads the environment **once** and always returns a usable `ToolkitConfig` — it never throws on missing values. Every var passes through `real()` first, so blanks and placeholders are already normalized to `''` before capabilities are computed. `ado.offline` is **derived, not configured**: `!pat` means no write token, so fixture mode. Each capability is a plain `Boolean(...)` over its truly-required vars (`ado` needs org **and** project; `db` needs a connection string **or** a bridge dir), and every capability that comes out off pushes an actionable `issues` hint naming the exact env var to set. The returned object bundles the per-domain configs, the capability map, and those hints — the rest of the toolkit branches on it.","code":"export function loadConfig(opts: { envPath?: string } = {}): ToolkitConfig {\n  const issues: string[] = []; // collected enable-hints for every off capability.\n  const e = process.env;\n  const org = real(e.ADO_ORG);\n  const project = real(e.ADO_PROJECT);\n  const pat = real(e.ADO_PAT);\n  // offline is DERIVED, not configured: no PAT => fixture mode.\n  const ado: AdoConfig = { org, project, pat, offline: !pat, /* ... */ } as AdoConfig;\n  const api: ApiConfig = { baseUrl: real(e.API_BASE_URL), bearerToken: real(e.API_BEARER_TOKEN) } as ApiConfig;\n  const db: DbConfig = { connectionString: real(e.DB_CONNECTION_STRING), bridgeDir: real(e.DB_BRIDGE_DIR) };\n  const llm: LlmConfig = { googleApiKey: real(e.GOOGLE_API_KEY), anthropicApiKey: real(e.ANTHROPIC_API_KEY) };\n\n  // Each capability is Boolean() over the vars it genuinely needs to function.\n  const capabilities = {\n    ado: Boolean(org && project),\n    api: Boolean(api.baseUrl),\n    db: Boolean(db.connectionString || db.bridgeDir), // either backend counts.\n    llm: Boolean(llm.googleApiKey || llm.anthropicApiKey),\n  };\n  // Off capabilities get an actionable hint naming the exact var(s) to set.\n  if (!capabilities.db) issues.push('DB capability off: set DB_CONNECTION_STRING or DB_BRIDGE_DIR.');\n  return { ado, api, db, llm, capabilities, issues };\n}"},{"fn":"requireCapability()","explain":"The **fail-fast assertion** agents call at the one point they truly can't proceed without an ability. If the capability is on it returns silently; if off, it looks up the matching hint from `cfg.issues` — the entry whose text starts with `{cap} capability`, the same hints `loadConfig` pushed — and throws a single error that both names the missing capability and states the exact setting to add: `Required capability \"db\" is unavailable. DB capability off: set …`. The point is **placement**: called deliberately at the moment of need, it converts what would be a cryptic failure three calls deep into one actionable message at the top of the stack. When no matching hint exists it still throws a sensible generic fallback.","code":"export function requireCapability(cfg: ToolkitConfig, cap: Capability): void {\n  if (cfg.capabilities[cap]) return; // capability present -> proceed silently.\n  // Reuse the exact enable-hint loadConfig already produced for this capability.\n  const hint = cfg.issues.find(i => i.toLowerCase().startsWith(`${cap} capability`))\n    || `${cap} capability is not configured.`;\n  // One actionable throw at the point of need, not a mystery failure deep in a call.\n  throw new Error(`[qa-agent-toolkit] Required capability \"${cap}\" is unavailable. ${hint}`);\n}"},{"fn":"callGemini()","explain":"Makes 'no AI configured' a **normal, non-throwing case**, so an agent's AI-assisted step can degrade to plain logic. It reads the keys via `keysOf(opts)` and, if there's no `googleApiKey`, immediately hands off to `callClaudeFallback` (which itself no-ops to rule-based behaviour when no Anthropic key exists) — primary provider, then secondary, then nothing. The `{ answer: '', model: 'none' }` return is the deliberate **harmless sentinel** for the neither-key path: an empty answer a caller reads as 'AI unavailable' rather than an exception to catch. Combined with the retry-on-429 and fall-back-on-hard-failure behaviour in the elided body, no LLM outage ever crashes a run.","code":"export async function callGemini(prompt: string, opts?: LLMOptions): Promise\u003cLLMResponse> {\n  const { googleApiKey } = keysOf(opts); // resolve keys from opts, else env.\n  // No primary key -> try the secondary provider (which itself degrades to rules).\n  if (!googleApiKey) return callClaudeFallback(prompt, opts);\n  // ... call the Gemini API, retrying on 429, falling back on any hard failure\n  // Harmless sentinel: empty answer, model 'none' — callers read this as \"no AI\", not an error.\n  return { answer: '', timeMs: 0, model: 'none' };\n}"},{"fn":"doctor.ts","explain":"The human-facing view of the capability map — it calls the real `loadConfig()` once and prints one aligned line per capability, `✅` when on and `⚪ (off)` when not, each with a short reason, using `padEnd(22)` to keep the column tidy. It reports **status, never secrets**: the note describes where a capability points or what to set, but no key or PAT value is ever printed. The important nuance is the extra branch — when ADO is *on* (`capabilities.ado`) but `ado.offline` is true (org/project set, no PAT), it prints a dedicated line clarifying the tracker is in **OFFLINE fixture mode**, rather than leaving someone to wonder why writes aren't hitting the board. It's the same `loadConfig` every agent uses, just rendered for a person.","code":"const cfg = loadConfig(); // the exact same seam every agent uses at startup.\n// One aligned row per capability: mark + padded label + (off) + reason. Never a secret.\nconst line = (on: boolean, label: string, note: string) =>\n  `  ${on ? '✅' : '⚪'}  ${label.padEnd(22)} ${on ? '' : '(off) '}${note}`;\n\nfor (const c of caps) {\n  const on = cfg.capabilities[c.key]; // drive the mark straight off the capability map.\n  console.log(line(on, c.label, on ? c.on : c.off));\n}\n// ADO configured (org+project) but PAT-less: call out fixture mode explicitly.\nif (cfg.capabilities.ado && cfg.ado.offline) {\n  console.log('\\n  ℹ️  ADO is in OFFLINE mode (no ADO_PAT): reads/writes use local fixtures.');\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Run with almost nothing configured</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A `.env` with only `API_BASE_URL` set, everything else blank.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>`doctor` reports API `on` and ADO / DB / LLM `off`, each with a one-line enable hint — and the kit runs the parts it can.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">No cloud at all</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>No `ADO_PAT` and no AI key, just `ADO_ORG` and `ADO_PROJECT`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>`ado.offline` is true, so the tracker uses fixtures, and `callGemini` falls back to rule-based logic — the agents still run, no cloud required.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Actionable error, not a mystery failure</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>An agent that calls `requireCapability(cfg, &#39;db&#39;)` when no DB is configured.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>It throws immediately: &#39;Required capability &quot;db&quot; is unavailable. DB capability off: set DB_CONNECTION_STRING or DB_BRIDGE_DIR.&#39; — instead of failing deep inside with a cryptic error.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--live">
+      You can run this yourself, end to end — every command below is real.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Node.js (installed in step 1 below) — nothing else.</li><li>No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A <code>.env</code> only matters later, if you point it at something real.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The toolkit is TypeScript on Node. One install per machine; no other runtime required.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/qa-agent-toolkit
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the toolkit&#39;s only dependency (<code>dotenv</code>) into <code>node_modules</code>. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (seconds — the dependency list is tiny).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">(Optional) copy the env template — only to go live later.</div>
+        <pre class="rb__cmd"><code>cp .env.example .env
+# then open .env and fill in ONLY the section you need</code></pre>
+        <div class="rb__why"><span>Why</span> Skippable for the demo — every capability is off by default and the demo runs regardless. <code>.env</code> matters only once you point the toolkit at a real board, service, or database.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the capability check.</div>
+        <pre class="rb__cmd"><code>npm run doctor</code></pre>
+        <div class="rb__why"><span>Why</span> Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty <code>.env</code> everything reads <code>(off)</code>, which is expected: nothing here needs to be on.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the health check — this IS the demo for this plate.</div>
+        <pre class="rb__cmd"><code>npm run doctor</code></pre>
+        <div class="rb__why"><span>Why</span> <code>doctor.ts</code> calls the real <code>loadConfig()</code> and prints its capability scorecard — with nothing in <code>.env</code>, every capability legitimately reads <code>(off)</code>, which is exactly the point: the spine doesn&#39;t crash or complain, it tells you plainly what won&#39;t run and why.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> With no <code>.env</code> (or a blank one), every capability shows <code>⚪ (off)</code> with a one-line hint on the setting that would turn it on.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Run it again after adding one line to <code>.env</code> (e.g. <code>API_BASE_URL=https://jsonplaceholder.typicode.com</code>) and exactly that capability flips to <code>✅</code> — nothing else changes.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Flip one capability on and rerun, to see the spine react.</div>
+        <pre class="rb__cmd"><code>cp .env.example .env
+echo &#39;API_BASE_URL=https://jsonplaceholder.typicode.com&#39; &gt;&gt; .env
+npm run doctor</code></pre>
+        <div class="rb__why"><span>Why</span> The whole design in one before/after: add one setting and only the &#39;API testing&#39; line flips from <code>⚪ (off)</code> to <code>✅ target · https://jsonplaceholder.typicode.com</code> — tracker, database, and AI stay exactly as they were, degraded or not.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>nothing</dt><dd><code>loadConfig()</code> reads whatever is in <code>.env</code> (or the real environment) and never throws on missing values — run it with no <code>.env</code> at all and it still returns a complete, usable config with every capability off.</dd><dt>any subset of the env vars</dt><dd>ADO_ORG/ADO_PROJECT/ADO_PAT, API_BASE_URL/API_BEARER_TOKEN, DB_CONNECTION_STRING/DB_BRIDGE_DIR, GOOGLE_API_KEY/ANTHROPIC_API_KEY — fill in only the ones you have; each is independently optional.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console scorecard</dt><dd>One line per capability (ADO, API, DB, LLM) — a ✅/⚪ mark, on/off, and either where it&#39;s pointed (live) or exactly which setting would turn it on (off). Never prints a secret value.</dd><dt>offline-mode note</dt><dd>If ADO_ORG/ADO_PROJECT are set but ADO_PAT is not, an extra line explains the tracker is in OFFLINE (fixture) mode rather than failing.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Safe and cheap to run any time, on any machine, in any state — it only reads env vars and mutates nothing. Add or remove a setting in <code>.env</code> and the next <code>npm run doctor</code> reflects it immediately.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Import the seam directly: <code>import { loadConfig, requireCapability } from &#39;./src/core/config&#39;</code>; call <code>loadConfig()</code> once at startup, gate optional behaviour behind <code>cfg.capabilities.ado</code> / <code>.api</code> / <code>.db</code> / <code>.llm</code>, and call <code>requireCapability(cfg, &#39;db&#39;)</code> at the one point an agent truly can&#39;t proceed without it — you get a clear, actionable error instead of a cryptic failure three calls deep. Every other plate in this toolkit (tracker, report, API, DB) is built on exactly this pattern.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: run the health check with nothing configured, then flip one capability on and watch only that line change.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Reads every setting once</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, the moment any agent starts up.</dd>
+          <dt>Takes in</dt><dd>Env vars for the board, the service, the database, and the AI keys.</dd>
+          <dt>Shows out</dt><dd>One config object, placeholders and blanks already treated as unset via <code>real()</code>.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Computes the capability map</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after the settings are read.</dd>
+          <dt>Takes in</dt><dd>Which vars are genuinely present.</dd>
+          <dt>Shows out</dt><dd>An on/off map — <code>ado</code>, <code>api</code>, <code>db</code>, <code>llm</code> — plus an <code>issues</code> hint for every off capability.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Degrades instead of crashing</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Whenever a piece is missing.</dd>
+          <dt>Takes in</dt><dd>A missing credential (no PAT, no AI key).</dd>
+          <dt>Shows out</dt><dd>The affected agent takes its offline/fallback path — fixtures for the board, rule-based logic for AI — nothing throws.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Demands a capability only when needed</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>At the one point an agent can&#39;t proceed without an ability.</dd>
+          <dt>Takes in</dt><dd>The capability name via <code>requireCapability</code>.</dd>
+          <dt>Shows out</dt><dd>Nothing (present) or one clear, actionable error naming the exact setting to add.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Prints the scorecard on demand</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>On <code>npm run doctor</code>.</dd>
+          <dt>Takes in</dt><dd>Nothing — it just reads the current environment.</dd>
+          <dt>Shows out</dt><dd>A short per-capability scorecard, on/off with a reason and never a secret value — so a new team sees in seconds what will run.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-database-verifier.html">← The Database Verifier</a>
+      <a href="../index.html">Contents →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

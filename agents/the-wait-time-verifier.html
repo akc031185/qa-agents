@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Wait-Time Verifier — Agent 30</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s6">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">30<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Investigating the app&#39;s data &amp; behavior</span></div>
+        <h1>The Wait-Time Verifier</h1>
+        <p class="lead">Measures the assistant&#39;s real answer latency and checks it against the &#39;estimated wait&#39; range the app displays.</p>
+        <p class="kicker">Source file: time-range-verification-agent.ts</p>
+      </div>
+    </div>
+
+    <p>While the assistant is thinking, the app shows a range like &#39;Wait time: about 5 to 10 seconds.&#39; This agent verifies that promise: it fires questions across a size spectrum, scrapes the displayed range, times the actual latency to a tenth of a second via Playwright, and flags any estimate the real wait blew past.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The manual version: sit with a stopwatch, type a question, read the estimate, start timing on Enter, stop when the answer appears. Repeating that across short questions, long essay prompts, and everything between is tedious and imprecise — human timing is off by seconds, and nobody wants to babysit fifty prompts by hand.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent fires a whole library of differently-sized questions, scrapes the on-screen estimate for each, times the real wait to the tenth of a second, and marks whether the actual latency fell inside the promised range. It also captures screenshots throughout, as evidence of what the screen showed at each moment.</p></div>
+    </div>
+    <p>If the app keeps promising &#39;5 seconds&#39; but takes 40, users lose patience and trust; catching that gap early keeps the estimate believable.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Loads the built-in library of short, medium, long, and very-long questions (or a custom pipe-separated list from the CLI), tagged by category.</span>
+          <span class="fc-node__fn">parseArgs()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Launches Playwright Chromium and navigates to the app, reusing a cached storage-state so most runs skip sign-in.</span>
+          <span class="fc-node__fn">launch()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Types the question, presses Enter, starts a <code>Date.now()</code> timer, and scrapes the on-screen &#39;Wait time: about X to Y seconds&#39; range.</span>
+          <span class="fc-node__fn">capturePrompt()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Polls until the thinking/analyzing/wait indicators all disappear to mark the real wait, then keeps polling until the answer text length holds steady to mark total time.</span>
+          <span class="fc-node__fn">capturePrompt()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Checkpoints the JSON after every question, then builds a color-coded Excel report grouped by category with a per-category pass rate.</span>
+          <span class="fc-node__fn">run()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"parseArgs()","explain":"A hand-rolled arg loop, and the two defaults are deliberate: `env` defaults to `'dev'` (the safe target) and `headless` defaults to `false` so the **first run is visible** — you need to watch it to sign in. The value flags use `args[++i]` to consume the *next* token as their argument, advancing the loop index in place. `--prompts` splits on `|` because spaces can't delimit prompts that themselves contain spaces — a pipe is a safe separator for free-text questions. The whole question set is a **fallback**: `ALL_PROMPTS` (the built-in short→very-long library) is used unless the user supplied custom prompts, and each custom prompt is `.trim()`-ed and tagged `'Custom'` so it still flows through the same category-grouped reporting as the built-ins.","code":"function parseArgs() {\n  const args = process.argv.slice(2);\n  let env = 'dev';         // safe default target\n  let headless = false;    // default visible: the first run must be watchable to sign in\n  let customPrompts = [];\n\n  for (let i = 0; i \u003c args.length; i++) {\n    switch (args[i]) {\n      case '--env':      env = args[++i]; break;              // ++i consumes the NEXT token as the value\n      case '--headless': headless = true; break;\n      case '--prompts':  customPrompts = args[++i].split('|'); break;   // pipe-split: prompts contain spaces, so space can't delimit\n    }\n  }\n\n  let prompts = ALL_PROMPTS; // built-in categories: Short / Medium / Longer / Very Long Running...\n  if (customPrompts.length > 0) {\n    // Custom prompts still get trimmed + a category so they flow through the same grouped report.\n    prompts = customPrompts.map(p => ({ prompt: p.trim(), category: 'Custom' }));\n  }\n  return { env, headless, prompts };\n}"},{"fn":"launch()","explain":"The environment maps through `ENV_URLS[env]` so `--env` picks the target with no hard-coded address in the flow. Auth is **conditionally injected** via the spread `...(hasAuth ? { storageState: authFile } : {})` — an idiom that adds the `storageState` key only when the saved session file exists, giving a clean context on the very first run and a silent-login context thereafter. The **fixed 1920×1080 viewport** matters for this agent specifically: the 'Wait time' note and the processing indicators must be reliably on-screen to scrape, and a stable large viewport keeps their layout consistent across runs so a timing screenshot is comparable. The `goto` waits only for `domcontentloaded` (not `networkidle`) because this app streams and background-polls — `networkidle` may never fire — and sign-in is handled downstream **only** if the navigation actually lands on a login page.","code":"async launch(env, headless) {\n  const url = ENV_URLS[env];   // --env selects the target; no address hard-coded in the flow\n  this.browser = await chromium.launch({ headless });\n\n  const authFile = path.resolve(__dirname, '..', 'fixtures', '.auth', 'user.json');\n  const hasAuth = fs.existsSync(authFile);\n\n  this.context = await this.browser.newContext({\n    // Spread injects storageState ONLY when the saved session exists — clean context on first run.\n    ...(hasAuth ? { storageState: authFile } : {}),\n    // Fixed large viewport keeps the 'Wait time' note + indicators on-screen and\n    // their layout consistent, so timing screenshots are comparable run-to-run.\n    viewport: { width: 1920, height: 1080 },\n  });\n  this.page = await this.context.newPage();\n  // domcontentloaded, not networkidle: this app streams/background-polls, so networkidle may never fire.\n  await this.page.goto(url, { waitUntil: 'domcontentloaded' });\n  // ... only handles sign-in here if redirected to a login page\n}"},{"fn":"capturePrompt()","explain":"Measurement accuracy hinges on **where the clock starts**: `startMs = Date.now()` is captured *between* `fill` and `press('Enter')`, so the fill time (which isn't part of the app's latency) is excluded and timing begins at the exact instant the user's action commits. The wait-time note is scraped with a **case-insensitive text locator** (`text=/Wait time/i`) rather than a brittle CSS path, and a 15s `waitFor` allows for the note appearing slightly after submit. The range regex `(\\d+)\\s*[-–]\\s*(\\d+)` matches **both** an ASCII hyphen and a Unicode en-dash (`–`) because UIs often render ranges with the typographic dash — missing that would drop every estimate. Critically it's guarded by `if (match)`: when no range is found `displayedWaitRange` stays unset, which is what lets a later step report 'no estimate shown' instead of comparing against a bogus range.","code":"await textarea.fill(promptDef.prompt);\nconst startMs = Date.now(); // timer starts BETWEEN fill and Enter, so fill time is excluded from latency\nawait page.keyboard.press('Enter');\n\n// Locate the note by case-insensitive text, not a brittle CSS path; allow 15s for it to appear.\nconst waitTimeLoc = page.locator('text=/Wait time/i').first();\nawait waitTimeLoc.waitFor({ state: 'visible', timeout: 15000 });\nconst rawText = (await waitTimeLoc.textContent()) || '';\n\n// Match BOTH ASCII hyphen and Unicode en-dash (–) — UIs often render ranges with the typographic dash.\nconst match = rawText.match(/(\\d+)\\s*[-–]\\s*(\\d+)/);\nif (match) result.displayedWaitRange = `${match[1]}-${match[2]}`;   // guarded: no match -> stays unset -> reported as 'no estimate shown'"},{"fn":"capturePrompt()","explain":"This deliberately measures **two different things**. The first loop defines the *wait* — the moment the app stops promising and starts answering — as the point where **all three** processing signals (thinking, analyzing, and the 'Wait time' note itself) are simultaneously gone; requiring all three prevents calling it early when one indicator lingers. `actualWaitSec` is stamped there, which is the number compared against the promised range. The second loop then measures *total render time* by a **stability heuristic**: the answer's text length must hold identical for **3 consecutive 1s reads**, and any growth resets `stableCount` to 0, so a mid-stream pause can't be mistaken for completion. Each visibility read is `.catch(() => false)` so a transient locator error reads as 'indicator gone' rather than throwing. The verdict is a plain inclusive-bounds check (`>= lo && \u003c= hi`) against the scraped range — deterministic, so the same latency always grades the same way.","code":"while (Date.now() \u003c deadline) {\n  // .catch(() => false): a transient locator error reads as 'gone', not a throw.\n  const thinking  = await page.locator(SEL.thinking).isVisible().catch(() => false);\n  const analyzing = await page.locator(SEL.analyzing).isVisible().catch(() => false);\n  const waitVis   = await page.locator('text=/Wait time/i').isVisible().catch(() => false);\n  // Require ALL THREE signals gone — prevents calling it early when one lingers.\n  if (!thinking && !analyzing && !waitVis) break; // response has started\n  await page.waitForTimeout(1000);\n}\nresult.actualWaitSec = (Date.now() - startMs) / 1000;   // THE number compared against the promised range\n\n// Now wait for the growing text to go stable (fully rendered) — a separate measurement.\nlet prevLen = 0, stableCount = 0;\nwhile (stableCount \u003c 3) {   // need 3 consecutive identical reads; any growth resets it below\n  const curLen = (await page.locator('[role=\"log\"]').last().textContent()).length;\n  stableCount = curLen === prevLen ? stableCount + 1 : 0;   // growth -> back to 0, so a mid-stream pause isn't 'done'\n  prevLen = curLen;\n  await page.waitForTimeout(1000);\n}\nresult.withinRange = result.actualWaitSec >= lo && result.actualWaitSec \u003c= hi;   // inclusive bounds, deterministic verdict"},{"fn":"run()","explain":"The JSON is **rewritten after every single prompt**, not once at the end — this is a checkpoint, so a crash or a hang on prompt 40 of 50 still leaves the first 39 results on disk (the run is long and includes deliberately slow very-long questions, so losing it all would be costly). Each write includes a `completed` count so a partial file is self-describing. The per-category summary tests `withinRange === true` with a **strict equality** rather than a truthy check, which is intentional: a prompt with *no* estimate shown has `withinRange` unset/`undefined`, and this excludes it from the in-range tally instead of miscounting it as a pass — the pass rate reflects only prompts that actually had a promise to keep. `categoryOrder` fixes the row order so short→very-long reads intuitively in the workbook.","code":"for (let i = 0; i \u003c prompts.length; i++) {\n  const r = await this.capturePrompt(prompts[i], env, i + 1, prompts.length);\n  results.push(r);\n  // Checkpoint after EVERY prompt: a crash on a late, slow question still keeps earlier results.\n  // `completed` makes a partial file self-describing.\n  fs.writeFileSync(partialJsonPath, JSON.stringify({ results, completed: results.length }, null, 2));\n}\n\nfor (const cat of categoryOrder) {   // fixed order so short->very-long reads intuitively\n  const catResults = resultsByCategory[cat];\n  // Strict === true, not truthy: a 'no estimate shown' prompt (withinRange undefined)\n  // is EXCLUDED from the tally, not miscounted as a pass.\n  const catInRange = catResults.filter(r => r.withinRange === true).length;\n  ws.addRow([cat, catResults.length, `${catInRange}/${catResults.length}`]);\n}\nawait wb.xlsx.writeFile(xlPath);"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A quick factual question</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>&#39;What&#39;s the capital of France?&#39; — the app shows &#39;Wait time: about 2 to 6 seconds.&#39;</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The real answer starts in 3.4s. Marked INSIDE range, green, with a screenshot of the estimate.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A long report-writing request</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A prompt for a 2000-word status report — the app shows &#39;Wait time: about 20 to 40 seconds.&#39;</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The real wait is 71s. Marked OUTSIDE range, red — so the tester can flag the estimate as too optimistic for long tasks.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">An answer with no displayed estimate</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A medium question where the app never renders a &#39;Wait time&#39; note.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The agent still times the real latency but records status &#39;no estimate shown&#39;, so a missing promise is visible rather than silently ignored.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>An app login — the agent navigates straight to the app and only stops for sign-in on an actual redirect to a login page.</li><li>No content prep: a built-in library of sample questions ships with the agent, short to very-long, so it runs out of the box.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime the agent runs on.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. One-time setup per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed on a fresh machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install the agent&#39;s dependencies, then Playwright in its sibling folder.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+# the browser-clicking library lives in its own sibling folder:
+cd Playwright
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> The root install pulls the ExcelJS writer and the <code>tsx</code> runner. The second pulls in Playwright — which opens the app, types the question, and watches the screen.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two, longer the first time Playwright fetches its Chromium binary).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">(Optional) set an SSO password if your login uses one.</div>
+        <pre class="rb__cmd"><code>export SSO_PASSWORD=your-password</code></pre>
+        <div class="rb__why"><span>Why</span> The agent goes straight to the app; on a redirect to a company SSO page it tries this password automatically. Leave it unset and sign in by hand the first time — either way the storage-state gets saved for next time.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run against the target environment.</div>
+        <pre class="rb__cmd"><code>npx tsx agents/time-range-verification-agent.ts --env dev</code></pre>
+        <div class="rb__why"><span>Why</span> The actual run. A visible Chromium window opens, asks each library question in turn, scrapes the on-screen estimate, times the real latency to a tenth of a second, and screenshots throughout.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> A browser opens; sign in when prompted (or it uses the password above). A full run can take a while — the library includes deliberately slow, very-long-response questions.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Add <code>--headless</code> once signed in, so it runs invisibly: <code>npx tsx agents/time-range-verification-agent.ts --env dev --headless</code>.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the report.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/wait-time/WaitTime_dev_&lt;timestamp&gt;.xlsx</code></pre>
+        <div class="rb__why"><span>Why</span> A color-coded workbook — green for latencies inside the promised range, red for outside — grouped by category, plus a screenshots tab and a full screenshot folder.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--env &lt;dev|qa&gt;</dt><dd>Which environment&#39;s URL to open.</dd><dt>--headless</dt><dd>Run invisibly in the background instead of showing the browser window.</dd><dt>--prompts &quot;A|B|C&quot;</dt><dd>Run your own pipe-separated question list instead of the built-in library.</dd><dt>--offset / --limit / --worker-id</dt><dd>Shard the library across parallel runs — useful for a big batch.</dd><dt>environment variables</dt><dd>An optional SSO password, only if your login has one.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>WaitTime_&lt;env&gt;_&lt;timestamp&gt;.json</dt><dd>Every question&#39;s displayed wait-time range, the two measured times, and the inside/outside verdict.</dd><dt>WaitTime_&lt;env&gt;_&lt;timestamp&gt;.xlsx</dt><dd>A color-coded, category-grouped report with a per-category accuracy percentage and a screenshots tab.</dd><dt>screenshots_&lt;env&gt;_&lt;timestamp&gt;/</dt><dd>A full folder of screenshots — the prompt, the wait-time note, the processing state every few seconds, and the finished answer.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Every run times every question fresh — nothing is cached but the login session. It&#39;s built to shard: run four workers in parallel, each with a different <code>--offset</code>/<code>--limit</code>/<code>--worker-id</code>, and merge the reports after.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Run it nightly (or post-deploy) against QA and watch the per-category accuracy over time. An estimate that used to hold and now doesn&#39;t is exactly the quiet regression this catches before users notice.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: watch the agent ask a question, read the app&#39;s wait-time promise, and time the real answer against it.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Loads the question library</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, before the browser opens.</dd>
+          <dt>Takes in</dt><dd>A built-in set of short/medium/long/very-long questions — or a custom pipe-separated CLI list.</dd>
+          <dt>Shows out</dt><dd>An ordered, category-tagged list of questions ready for timing.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Opens the app — no token needed</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, at launch.</dd>
+          <dt>Takes in</dt><dd>A cached storage-state file, if a previous run left one.</dd>
+          <dt>Shows out</dt><dd>A ready-to-chat Chromium page — falling back to interactive sign-in only on an actual redirect to a login screen.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Times each answer twice</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per question, right after Enter.</dd>
+          <dt>Takes in</dt><dd>The moment the question is submitted.</dd>
+          <dt>Shows out</dt><dd>Two readings: time to the first sign of a real answer, and time until the answer stops growing.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Checks the promise against reality</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after each answer finishes rendering.</dd>
+          <dt>Takes in</dt><dd>The scraped &#39;Wait time: X to Y seconds&#39; range and the two measured times.</dd>
+          <dt>Shows out</dt><dd>An inside/outside verdict for that question, plus a screenshot trail taken every few seconds while it waited.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Builds the report</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every question in the library has run.</dd>
+          <dt>Takes in</dt><dd>Every timing result, grouped by category.</dd>
+          <dt>Shows out</dt><dd>A color-coded Excel workbook (green = inside range, red = outside, yellow = no estimate shown) plus a JSON backup and per-category accuracy.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-source-link-inspector.html">← The Source-Link Inspector</a>
+      <a href="the-teaching-screen-recorder.html">The Teaching-Screen Recorder →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

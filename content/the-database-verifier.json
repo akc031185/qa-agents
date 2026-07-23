@@ -1,0 +1,182 @@
+{
+  "slug": "the-database-verifier",
+  "plate": 37,
+  "name": "The Database Verifier",
+  "techName": "src/core/db.ts",
+  "category": "toolkit",
+  "oneLiner": "One reconciliation engine that checks a displayed value against the record behind it — seven compare modes, pure and offline, no DB required.",
+  "lead": "A single `compare()` engine that reconciles a source-of-truth value against a value-under-test across seven modes — exact, numeric tolerance, set, contains, presence, empty, count. It's a pure function with no I/O, so the comparison logic needs no database, network, or credentials. Optional `jsonPath()` extraction and a direct-or-bridge SQL backend feed it real data when you go live; the same `compare()` runs in both.",
+  "chore": "The prior setup meant opening the source records by hand, reading the real value, then flipping to the app to eyeball a match. Slow, mind-numbing, and easy to miss a subtle mismatch — a trailing space, a differently-formatted date, a same-set list in a different order.",
+  "instead": "One `compare()` engine takes two values, a mode, and returns a typed pass/fail with a reason. It normalizes both sides first — `trim`, `lower`, `date` — so a cosmetic difference isn't a false fail. It runs as a pure function, no DB attached; when you need real records, a direct connection or a folder-relay bridge fetches them, but the comparison itself is I/O-free and trivially unit-testable.",
+  "whyItMatters": "Catching a silent mismatch between what users see and what is actually stored prevents the kind of quiet data error that erodes trust in a whole system — and because `compare()` is a pure function, that logic is unit-testable with zero infrastructure.",
+  "howItWorks": [
+    {
+      "step": "`normalizeVal` applies a comma-list of ops — `trim`, `lower`, `date` — to both sides before comparison, so a cosmetic difference doesn't fail a real match.",
+      "fn": "normalizeVal()",
+      "explain": "The false-positive filter: before any comparison, both expected and actual are pushed through the **same** comma-separated op chain, so a purely cosmetic difference never grades as a real mismatch. Ops apply in written order and each is type-guarded — `trim`/`lower` only touch strings, while `date` parses via `new Date()` and reformats to `YYYY-MM-DD` (`toISOString().slice(0, 10)`) but on an unparseable value (`isNaN(getTime())`) **leaves the original untouched** rather than emitting `Invalid Date`. Arrays are mapped element-wise through the inner `one()`, so a list normalizes per item. No ops string means the value returns unchanged — normalization is strictly opt-in.",
+      "code": "export function normalizeVal(v: unknown, ops?: string): unknown {\n  if (!ops) return v; // normalization is opt-in: no ops -> value unchanged.\n  // Ops are a comma list applied in written order (e.g. \"trim,lower,date\").\n  const list = String(ops).split(',').map(s => s.trim()).filter(Boolean);\n  const one = (x: unknown): unknown => {\n    if (x == null) return x;\n    let s: unknown = x;\n    for (const op of list) {\n      // Each op is type-guarded so it only touches values it understands.\n      if (op === 'trim' && typeof s === 'string') s = s.trim();\n      else if (op === 'lower' && typeof s === 'string') s = s.toLowerCase();\n      else if (op === 'date') {\n        const d = new Date(s as string);\n        // Unparseable date -> keep the original, never emit \"Invalid Date\".\n        s = isNaN(d.getTime()) ? s : d.toISOString().slice(0, 10);\n      }\n    }\n    return s;\n  };\n  return Array.isArray(v) ? v.map(one) : one(v); // normalize lists element-wise.\n}"
+    },
+    {
+      "step": "`compare` reads one `ReconCheck` (name, mode, expected, actual), normalizes both sides, and routes to whichever of the seven modes the check asked for — returning a `ReconResult` with a plain reason.",
+      "fn": "compare()",
+      "explain": "The reconciliation engine — a **pure function with zero I/O**, which is what makes it unit-testable with no database. It lowercases the mode and **defaults to `exact`** if unrecognized, normalizes both sides through `normalizeVal` with the check's `normalize` ops, then `switch`es to one of the seven mode branches. Two are shown: `set` uses `setEq` for **order-insensitive** membership (so `[a,b]` equals `[b,a]`), while `exact`/default compares canonical `JSON.stringify(tryJson(...))` on both sides so structurally-equal values match regardless of key spacing. Every branch funnels through the `done()` closure to return a `ReconResult` carrying `pass` plus a human-readable `detail` — the reason is always spelled out, never a bare boolean.",
+      "code": "export function compare(check: ReconCheck): ReconResult {\n  // Normalize the mode; anything unrecognized falls through to 'exact'.\n  const mode = (String(check.mode).toLowerCase() as CompareMode) || 'exact';\n  const expected = normalizeVal(check.expected, opt.normalize);\n  const actual = normalizeVal(check.actual, opt.normalize);\n  // Every branch returns through done(): pass + a human-readable reason.\n  const done = (pass: boolean, detail: string): ReconResult => ({ ...check, pass, detail });\n\n  switch (mode) {\n    case 'set': {\n      const ok = setEq(tryJson(expected), tryJson(actual)); // order-insensitive membership.\n      return done(ok, ok ? 'sets equal' : `set mismatch (exp ${display(expected)} / act ${display(actual)})`);\n    }\n    case 'exact':\n    default: {\n      // Canonical stringify both sides: structural equality regardless of formatting.\n      const ok = JSON.stringify(tryJson(expected)) === JSON.stringify(tryJson(actual));\n      return done(ok, ok ? 'equal' : `differ (exp ${display(expected)} / act ${display(actual)})`);\n    }\n  }\n}"
+    },
+    {
+      "step": "`jsonPath` pulls the actual value out of an API JSON body — dotted paths, array indexes, a `[*]` wildcard that fans out over a list, and a trailing `.length` for counts.",
+      "fn": "jsonPath()",
+      "explain": "Extracts the value-under-test out of an API JSON body with a compact path grammar. It first rewrites bracket syntax `[0]`/`[*]` into dotted segments (`.0`/`.*`) so a single split on `.` handles both. The clever bit is the **frontier**: `cur` is always an array of live nodes, and a `*` segment **fans out** by pushing every element of each array node — so `data.regions[*].name` walks from `[body]` to the regions array to a list of names. Missing nodes are skipped (`node == null` continue), so a bad path yields empty rather than throwing. When the expression contained `[*]` it returns the whole `cur` list (feeding a set or count check); otherwise it unwraps to the single element, and a trailing `.length` on a fanned-out list is how a count-mode check gets its number.",
+      "code": "export function jsonPath(obj: unknown, pathExpr: string | null | undefined): unknown {\n  if (pathExpr == null || pathExpr === '') return obj; // empty path -> whole object.\n  // Rewrite [0]/[*] into .0/.* so a single split('.') handles both forms.\n  const parts = String(pathExpr).replace(/\\[(\\d+|\\*)\\]/g, '.$1').split('.').filter(p => p !== '');\n  // The frontier: a [*] segment fans out by pushing every array element.\n  let cur: unknown[] = [obj]; // work on a frontier to support [*]\n  for (const part of parts) {\n    const next: unknown[] = [];\n    for (const node of cur) {\n      if (node == null) continue;\n      // '*' fans out: push each element of an array node onto the next frontier.\n      if (part === '*') { if (Array.isArray(node)) next.push(...node); }\n      else next.push((node as Record<string, unknown>)[part]);\n    }\n    cur = next;\n  }\n  // [*] present -> return the whole list (for set/count); else unwrap to one value.\n  return pathExpr.includes('[*]') ? cur : cur.length === 1 ? cur[0] : cur[0];\n}"
+    },
+    {
+      "step": "`BridgeBackend.query` runs SQL two ways — a direct connection, or a file-drop 'bridge' for databases only reachable from a locked-down host.",
+      "fn": "BridgeBackend.query()",
+      "explain": "The **inbox/outbox file bridge** for a database only reachable from a locked-down host that has no driver or network path installed here. It writes the SQL to a uniquely-named `{id}.sql` in a shared `inbox/` — the id combines `Date.now()` with a random suffix to avoid collisions between concurrent queries — then **polls** `outbox/` every 2 s for a `{id}.done` marker until `timeoutSec` (default 300) elapses. The `.done` file is the completion signal: a helper on the secured host runs the SQL and writes both the marker and a `{id}.csv`, and only once the marker exists does this read and `parseCsv` the result. On timeout it throws `[db] bridge timeout waiting for {name}`, so a stalled bridge fails loudly instead of hanging forever.",
+      "code": "async query(sql: string, opts: QueryOptions = {}): Promise<QueryResult> {\n  const inbox = path.join(this.bridgeDir, 'inbox');\n  const outbox = path.join(this.bridgeDir, 'outbox');\n  // Unique query id (timestamp + random) so concurrent queries never collide.\n  const name = `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;\n  fs.writeFileSync(path.join(inbox, name + '.sql'), sql, 'utf8'); // drop the SQL for the host helper.\n\n  const deadline = Date.now() + (opts.timeoutSec ?? 300) * 1000; // default 5-minute bound.\n  while (Date.now() < deadline) {\n    await sleep(2000); // poll the outbox every 2s for the completion marker.\n    const donePath = path.join(outbox, name + '.done');\n    // The '.done' marker means the host wrote the result CSV and it's safe to read.\n    if (fs.existsSync(donePath)) {\n      const raw = fs.readFileSync(path.join(outbox, name + '.csv'), 'utf8');\n      const rows = parseCsv(raw); // same CSV parser the offline demo showcases.\n      return { rows, rowCount: rows.length, raw };\n    }\n  }\n  // No marker before the deadline -> fail loudly rather than hang forever.\n  throw new Error(`[db] bridge timeout waiting for ${name}`);\n}"
+    },
+    {
+      "step": "`reconStep` converts a `ReconResult` into the same `EvidenceStep` shape the API tester emits, so DB and API checks render side by side in one report.",
+      "fn": "reconStep()",
+      "explain": "The adapter that lets DB checks share a report with API checks: it converts a `ReconResult` into the very same `EvidenceStep` shape the API tester emits, differing only by `kind: 'db'`, so the shared report builder colour-codes and lays them out identically. The `pass` boolean maps to a `'pass'`/`'fail'` `Verdict` (what drives green vs red), the mode and expected value go into `req`, and the actual value plus the `detail` reason go into `resp`; both values are `display()`d with a 120-char cap so a large field can't blow out the panel. Because API and DB evidence are structurally identical, a single dashboard can show them **side by side**.",
+      "code": "export function reconStep(result: ReconResult): EvidenceStep {\n  const verdict: Verdict = result.pass ? 'pass' : 'fail'; // pass boolean -> the panel's colour.\n  return {\n    kind: 'db', // same EvidenceStep shape as API; only the kind differs.\n    does: result.name,\n    // Mode + expected in req, actual + reason in resp; both capped at 120 chars.\n    req: `${result.mode}: expected=${display(result.expected, 120)}`,\n    resp: `actual=${display(result.actual, 120)} — ${result.detail}`,\n    verdict,\n  };\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Confirm a displayed total matches the record",
+      "input": "Expected 42, actual 42, mode `exact`.",
+      "output": "A green pass reading 'equal', logged as an `EvidenceStep` — no DB or network for the comparison itself."
+    },
+    {
+      "caption": "Ignore a cosmetic formatting difference",
+      "input": "Record date `2026-07-21` vs app value `' 2026-07-21 '`, normalized with `trim`.",
+      "output": "A pass — both sides are trimmed before comparison, so a real match isn't reported as a mismatch."
+    },
+    {
+      "caption": "Reach a locked-down database",
+      "input": "A SQL query that must run from a separate secured host, sent via `DB_BRIDGE_DIR`.",
+      "output": "The SQL is dropped into `inbox/`, a helper on the secured host runs it and writes the result CSV to `outbox/`, and the verifier `parseCsv`s it back — no direct connection or DB driver on the running host."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Takes expected and actual",
+      "whenRuns": "First, for every check handed in.",
+      "input": "A `ReconCheck` — name, mode, expected (source of truth), actual (under test).",
+      "output": "Both sides normalized identically, if a normalize rule was given."
+    },
+    {
+      "heading": "Applies the mode",
+      "whenRuns": "Right after normalizing.",
+      "input": "One of seven modes — exact, numeric-tolerance, set, contains, present, empty, count.",
+      "output": "A pass/fail `ReconResult` with a plain reason — pure and offline, no DB for the comparison itself."
+    },
+    {
+      "heading": "Extracts from an API body",
+      "whenRuns": "When the actual side comes from a JSON body.",
+      "input": "The JSON body and a path like `data.items[*].id`.",
+      "output": "The value (or list of values) at that path, ready to compare."
+    },
+    {
+      "heading": "Fetches real records",
+      "whenRuns": "Only when the expected side comes from live SQL.",
+      "input": "SQL text, via a direct connection or the folder-relay bridge.",
+      "output": "Rows as plain objects — `parseCsv`d from the bridge's CSV when no driver is installed."
+    },
+    {
+      "heading": "Emits report evidence",
+      "whenRuns": "Last, once every check has a verdict.",
+      "input": "The full set of `ReconResult`s.",
+      "output": "One colour-coded `EvidenceStep` per check, rendered by the shared report builder alongside API and tracker evidence."
+    }
+  ],
+  "status": "toolkit",
+  "runbook": {
+    "runnable": true,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Node.js (installed in step 1 below) — nothing else.",
+      "No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A `.env` only matters later, if you point it at something real."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The toolkit is TypeScript on Node. One install per machine; no other runtime required.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/qa-agent-toolkit\nnpm install",
+        "why": "`npm install` pulls the toolkit's only dependency (`dotenv`) into `node_modules`. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.",
+        "firstRun": "Downloads everything (seconds — the dependency list is tiny).",
+        "rerun": "No-op unless the dependency list changed."
+      },
+      {
+        "label": "(Optional) copy the env template — only to go live later.",
+        "cmd": "cp .env.example .env\n# then open .env and fill in ONLY the section you need",
+        "why": "Skippable for the demo — every capability is off by default and the demo runs on inline sample data regardless. `.env` matters only once you point the toolkit at a real board, service, or database."
+      },
+      {
+        "label": "Run the capability check.",
+        "cmd": "npm run doctor",
+        "why": "Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty `.env` everything reads `(off)`, which is expected: the demo needs none of them on."
+      },
+      {
+        "label": "Run the DB-verification demo — reconcile a synthetic DB row against a synthetic API body.",
+        "cmd": "npm run demo:db",
+        "why": "Feeds the real recon engine an inline synthetic 'DB row' and 'API response' and runs one check per mode — exact, numeric-tolerance, set, contains, presence, null, count — split into an all-pass group and an all-fail group, proving every mode works both ways.",
+        "firstRun": "Runs all 16 checks (9 passing, 7 failing on purpose) and prints a results table per group plus a summary.",
+        "rerun": "Fully deterministic — same inline data every time, so the same 9 pass / 7 fail. No DB, network, or state at all."
+      },
+      {
+        "label": "Read the pass/fail tables.",
+        "cmd": "# printed straight to the terminal — no file written:\n#   EXPECTED-TO-PASS  (9/9 PASS)\n#   EXPECTED-TO-FAIL  (7/7 FAIL, as intended)\n#   Summary: compare modes exercised: contains, count, exact, null, numeric, presence, set (all 7)",
+        "why": "Each row shows the mode, the check name, and the exact detail — e.g. '|7.35-7.34| = 0.00999... <= tol 0.05' — so you see precisely why a check passed or failed, not just that it did."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "nothing",
+        "desc": "The demo defines its own synthetic `dbRow` (source of truth) and `apiBody` (value under test) inline in `examples/db/demo.ts` — no DB connection or credentials to exercise the compare engine."
+      },
+      {
+        "name": "DB_CONNECTION_STRING / DB_BRIDGE_DIR (optional, for real use)",
+        "desc": "Set one in `.env` to fetch the real expected side via live SQL — direct connection or folder-relay bridge for a locked-down DB — instead of a value already in hand."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console tables",
+        "desc": "An 'EXPECTED-TO-PASS' table (9 checks, all PASS) and an 'EXPECTED-TO-FAIL' table (7 checks, all FAIL as intended) — one row per check with its mode and plain-English detail."
+      },
+      {
+        "name": "jsonPath + parseCsv showcase",
+        "desc": "Prints how `jsonPath()` extracts from a nested JSON body (e.g. `data.regions[*].name`) and how `parseCsv()` turns a bridge CSV response into rows — offline, on inline sample text."
+      },
+      {
+        "name": "summary line",
+        "desc": "'DEMO OK — recon engine ran with zero infrastructure.'"
+      }
+    ],
+    "rerun": "Idempotent: the compare engine is a pure function of the inline `dbRow`/`apiBody`, so reruns always print the identical 9 pass / 7 fail. Point real checks at a live `DbVerifier.scalar(sql)` result and an actual API body, and the same `compare()` / `runDbVerification()` calls reconcile your real data.",
+    "integrate": "Import the pure engine directly: `import { compare, jsonPath, normalizeVal } from './src/core/db'` — `compare()` takes `{ name, mode, expected, actual }` and returns a `ReconResult` with no I/O, so it's trivially unit-testable. For a full check list, use `runDbVerification()` (`./agents/db`) with an array of `DbCheckSpec`s and an `apiBody`; each result converts to report evidence via `reconStep()`, rendering alongside API and tracker checks in the same dashboard."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: run the DB-verification demo and watch all 7 compare modes pass and fail on cue, zero database connected.",
+    "script": [
+      "Open a terminal in the qa-agent-toolkit folder.",
+      "Say: 'This is the toolkit's comparing brain — the part that checks a displayed value really matches the record behind it. No database needed for this demo.'",
+      "Run `node -v` and `npm install` briefly.",
+      "Run `npm run demo:db`; point at the `jsonPath` showcase lines first — pulling `data.id` and a wildcarded `data.regions[*].name` out of a JSON body.",
+      "Scroll to the EXPECTED-TO-PASS table; read out two rows: the numeric-tolerance check ('|7.35-7.34|... <= tol 0.05') and the set check (regions matching regardless of order).",
+      "Scroll to the EXPECTED-TO-FAIL table; read the same numeric check with zero tolerance now failing, and the null check catching a populated field that should have been empty.",
+      "Point at the summary line: '9/9 checks passed OK' and '0/7 checks passed, 7 failed OK (all failed as intended)'.",
+      "Point at 'compare modes exercised: ... (all 7)' — say this proves every rule in the engine actually works, both ways.",
+      "Point at the parseCsv line at the bottom; say this is the same parser the folder-relay bridge uses for a locked-down database.",
+      "Read the final line: 'DEMO OK — recon engine ran with zero infrastructure.'",
+      "Close: 'Same seven rules, pointed at a real SQL result and a real API response, are exactly what runs in production.'"
+    ]
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "slug": "the-spec-reverse-engineer",
+  "plate": 8,
+  "name": "The Spec Reverse-Engineer",
+  "techName": "tc-spec-agent.ts",
+  "category": "plan",
+  "oneLiner": "Reconstructs a feature's spec — description, acceptance criteria, scope — from its test cases alone, grounded only in what the tests evidence.",
+  "lead": "Recovers the written spec when tests exist but the specification was never finished or was lost. Reads the test cases, groups them by story, and reverse-engineers a feature description plus a list of acceptance criteria straight from what the steps and expected results actually assert — no invented requirements.",
+  "chore": "Documenting a feature that has dozens of test cases but no spec is slow detective work: read every test, infer the behavior each one proves, group by topic, then write a description, acceptance criteria, and in/out-of-scope notes. It's manual, and two analysts produce two different write-ups.",
+  "instead": "The agent loads the test cases, buckets them by parent story, and calls the LLM to emit a description, an acceptance-criteria list, and in-scope/out-of-scope notes per group — constrained to what the tests evidence, never inventing requirements. Outputs Word, Markdown, and JSON.",
+  "whyItMatters": "A feature with no spec is one nobody can safely change. Reconstructing the description turns undocumented behavior back into something the team can reason about and regression-test against.",
+  "howItWorks": [
+    {
+      "step": "Loads the test cases — from ADO (by feature, story IDs, or test-case IDs) or from an xlsx export.",
+      "fn": "loadTestCases()",
+      "explain": "A precedence-ordered dispatcher: the first truthy source wins, so the checks double as a priority list. Offline `excelPath` is tried first because it needs no ADO connection, then the increasingly broad ADO paths — specific `tcIds`, then `storyIds`, then a whole `featureId`. The array checks are guarded with `&& input.tcIds.length` so an empty-but-present array falls through to the next option instead of resolving to zero test cases. If nothing matches it **throws** rather than returning `[]`, turning a misconfigured invocation into an immediate, obvious failure instead of a spec silently reverse-engineered from nothing.",
+      "code": "private async loadTestCases(input) {\n  if (input.excelPath)                          return this.loadFromExcel(input.excelPath); // offline source checked first — an xlsx export needs no ADO connection at all\n  if (input.tcIds    && input.tcIds.length)     return this.loadTcsByIds(input.tcIds); // .length guard: an empty array falls through to the next source\n  if (input.storyIds && input.storyIds.length)  return this.loadByStoryIds(input.storyIds);\n  if (input.featureId)                          return this.loadByFeature(input.featureId);\n  throw new Error('Provide one of: --feature-id, --story-ids, --tc-ids, --excel'); // no source at all is a hard error, not a silent empty run\n}"
+    },
+    {
+      "step": "Parses each test case's steps and expected results out of the stored XML.",
+      "fn": "parseStepsXml()",
+      "explain": "ADO stores test steps as an escaped XML blob, so this is a tolerant regex extractor rather than a real XML parse. `matchAll(/<step...>/gi)` walks each `<step>` element and, per step, pulls its `<action>` and `<expectedResult>` inner text; the `[\\s\\S]*?` (lazy, dot-all) is used instead of `.*?` precisely because step bodies contain newlines that `.` wouldn't cross. `stripHtml(...?.[1] || '')` removes the rich-text markup ADO injects, and the optional-chaining plus `|| ''` means a step missing an expected result degrades to an empty string instead of throwing. Crucially `idx` only increments inside `if (action)`, so numbering stays gap-free even when blank steps are skipped, and a step with no action is dropped entirely.",
+      "code": "function parseStepsXml(stepsXml) {\n  if (!stepsXml) return []; // test cases can have no steps (shared-steps refs, empty shells) — return empty, don't crash\n  const steps = [];\n  const stepMatches = stepsXml.matchAll(/<step[^>]*>([\\s\\S]*?)<\\/step>/gi);\n  let idx = 1;\n  for (const m of stepMatches) {\n    const inner = m[1]; // m[1] = the captured content between <step>...</step>\n    const actionMatch = inner.match(/<action[^>]*>([\\s\\S]*?)<\\/action>/i);\n    const expectMatch = inner.match(/<expectedResult[^>]*>([\\s\\S]*?)<\\/expectedResult>/i);\n    const action = stripHtml(actionMatch?.[1] || '').trim(); // strip the HTML ADO wraps around rich-text, then trim; ?. so a missing <action> => empty string\n    const expected = stripHtml(expectMatch?.[1] || '').trim();\n    if (action) steps.push({ stepNumber: idx++, action, expected }); // only number steps that have an action; idx increments per KEPT step, so numbering is gap-free\n  }\n  return steps;\n}"
+    },
+    {
+      "step": "Buckets the test cases by parent story so each group maps to one coherent unit of behavior.",
+      "fn": "groupByStory()",
+      "explain": "Buckets tests into one spec section per parent story using a `Map` keyed by `String(tc.storyId)`. Stringifying the key is deliberate — it collapses a numeric `123` and a string `'123'` into the same bucket rather than two, and any test with no `storyId` funnels into a single `'ungrouped'` key so orphan IDs still get documented instead of dropped. `label` degrades gracefully: real `storyTitle`, else a synthesized `Story <id>`, else `'General'` for the orphan bucket. The `if (!map.has(key))` guard creates a bucket only on first encounter, so subsequent tests with the same key just `.push` — and `Array.from(map.values())` returns the groups in first-seen order, which keeps the output stable.",
+      "code": "private groupByStory(testCases) {\n  const map = new Map();\n  for (const tc of testCases) {\n    const key = tc.storyId ? String(tc.storyId) : 'ungrouped'; // stringify so numeric & string story IDs collide into one Map bucket; orphans -> 'ungrouped'\n    const label = tc.storyTitle || (tc.storyId ? `Story ${tc.storyId}` : 'General'); // human label: real title, else 'Story <id>', else 'General' for the orphan bucket\n    if (!map.has(key)) map.set(key, { groupTitle: label, groupId: tc.storyId, testCases: [] }); // create the bucket on first sight of a key; later tests with the same key just append\n    map.get(key).testCases.push(tc);\n  }\n  return Array.from(map.values());\n}"
+    },
+    {
+      "step": "Reverse-engineers, per group, a description, acceptance criteria, and in/out-of-scope notes from the tests alone.",
+      "fn": "generateSpec()",
+      "explain": "Each group is reverse-engineered independently — one `callGeminiFlash` per story so the model reasons about a single coherent unit at a time. The prompt serializes every test's `[TC-id]`, priority, title and numbered `action → Expected` steps, then hard-constrains the model: return JSON **based ONLY on what the test cases evidence**, the guard against inventing requirements the tests never assert. The response is mined with `.match(/\\{[\\s\\S]*\\}/)[0]` — a greedy first-brace-to-last-brace slice that extracts the JSON object out of any prose or markdown fence before `JSON.parse` (note: unlike the other agents this uses raw `JSON.parse`, so a malformed response throws here). Finally the parsed `{ featureDescription, acceptanceCriteria, inScope, outOfScope }` is spread in **after** the trusted `groupTitle`/`groupId`/`tcCount`, and the real `testCaseTitles` are attached as provenance for every claim.",
+      "code": "private async generateSpec(group) {\n  const tcSummary = group.testCases.map(tc => {\n    const stepText = tc.steps.map(s =>\n      `  ${s.stepNumber}. ${s.action} → Expected: ${s.expected}`).join('\\n');\n    return `Test Case [TC-${tc.id}] P${tc.priority}: \"${tc.title}\"\\n${stepText}`;\n  }).join('\\n\\n');\n\n  const prompt = `You are a senior business analyst. Reverse-engineer\nthe following QA test cases into a clear feature specification.\n\nFeature/Story: \"${group.groupTitle}\"\n--- TEST CASES ---\n${tcSummary}\n--- END ---\n\nBased ONLY on what the test cases evidence, return valid JSON:\n{ \"featureDescription\": \"...\", \"acceptanceCriteria\": [...],\n  \"inScope\": [...], \"outOfScope\": [...] }`;\n\n  const llmRes = await callGeminiFlash(prompt); // one LLM call per story group, so each section is reasoned about in isolation\n  const parsed = JSON.parse(llmRes.answer.match(/\\{[\\s\\S]*\\}/)[0]); // greedy {...} slice pulls the JSON out of any surrounding prose or markdown fence before parsing\n  return { groupTitle: group.groupTitle, groupId: group.groupId,\n    tcCount: group.testCases.length, ...parsed, // spread the model fields in, but keep our own group metadata authoritative\n    testCaseTitles: group.testCases.map(tc => `[TC-${tc.id}] ${tc.title}`) };\n}"
+    },
+    {
+      "step": "Serializes the reconstructed spec to JSON, Markdown, and — with `--word` — a Word document.",
+      "fn": "saveOutputs()",
+      "explain": "Persistence with a filesystem-safe naming scheme. `label` is built by replacing every non-`[a-zA-Z0-9]` character in the feature title with `-` and slicing to 40 chars, so an arbitrary title can't produce an illegal or absurdly long filename; it falls back to `'tc-spec'` when there's no title. JSON (pretty-printed) and Markdown are always written under `input.outputDir || this.outputDir`, and the `${ts}` timestamp in each name makes every run a distinct snapshot rather than an overwrite. The docx is conditional on `input.word`, so `docxPath` stays `undefined` when it's skipped — and the returned object reflects that honestly, letting the caller report exactly which artifacts exist.",
+      "code": "private async saveOutputs(result, ts, input) {\n  const dir = input.outputDir || this.outputDir;\n  const label = (result.featureTitle || 'tc-spec').replace(/[^a-zA-Z0-9]/g, '-').slice(0, 40); // sanitize the title into a safe filename slug: non-alphanumerics -> '-', capped at 40 chars\n\n  const jsonPath = path.join(dir, `TcSpec_${label}_${ts}.json`);\n  fs.writeFileSync(jsonPath, JSON.stringify(result, null, 2)); // full result pretty-printed — the canonical machine artifact\n\n  const mdPath = path.join(dir, `TcSpec_${label}_${ts}.md`);\n  fs.writeFileSync(mdPath, this.buildMarkdown(result));\n\n  let docxPath;\n  if (input.word) docxPath = await this.buildWord(result, dir, label, ts); // docx is opt-in; docxPath stays undefined otherwise, and the return reflects that\n\n  return { json: jsonPath, md: mdPath, docx: docxPath };\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "A password-reset feature with tests but no spec",
+      "input": "18 test cases linked to a 'Reset password' story, covering valid links, expired links, and mismatched passwords.",
+      "output": "A description ('Lets a signed-out user reset a forgotten password via an emailed link'), acceptance criteria ('The user can request a reset link', 'The system rejects an expired link with a clear message'), and an out-of-scope note ('Two-factor re-enrolment is not covered by these tests')."
+    },
+    {
+      "caption": "A batch of loose test IDs",
+      "input": "A comma-separated `--tc-ids` list handed over with no other context.",
+      "output": "The tests resolved to their parent stories and grouped, each group rendered as its own mini-spec section in one Word document, ready for stakeholder review."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Loads the test cases",
+      "whenRuns": "First, at startup.",
+      "input": "A feature ID, story IDs, test-case IDs, or an xlsx export.",
+      "output": "Test cases with title, priority, and steps — via the ADO REST API or parsed from the spreadsheet."
+    },
+    {
+      "heading": "Parses the stored steps",
+      "whenRuns": "Per test case pulled from ADO.",
+      "input": "The raw Steps XML on the test-case work item.",
+      "output": "A numbered list of action / expected-result pairs, HTML stripped."
+    },
+    {
+      "heading": "Groups by story",
+      "whenRuns": "Once, after all test cases are loaded.",
+      "input": "The full test-case list.",
+      "output": "One group per parent story — or an `ungrouped`/`General` bucket for loose IDs with no parent."
+    },
+    {
+      "heading": "Reverse-engineers the spec via the LLM",
+      "whenRuns": "Once per group.",
+      "input": "The group's test-case titles, priorities, and steps.",
+      "output": "A description, acceptance criteria, and in/out-of-scope notes via Gemini Flash — constrained to what the tests evidence."
+    },
+    {
+      "heading": "Writes the specification",
+      "whenRuns": "Once, at end of run.",
+      "input": "The generated specs, one per group.",
+      "output": "Markdown and JSON always; a Word document too with `--word`."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Read access to Azure DevOps and a **personal access token** (`ADO_PAT`) — OR an xlsx export of test cases if you'd rather not connect live.",
+      "A Google Gemini API key — this agent always calls the LLM to write the description and criteria."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program executed under Node. One-time install per machine.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone the code and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` resolves the agent's dependencies — the ADO REST client, the xlsx reader, the docx writer, and the Gemini client — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op unless the dependency set changed."
+      },
+      {
+        "label": "Set the environment variables.",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token\nexport GOOGLE_API_KEY=your-gemini-key",
+        "why": "Read at startup: the ADO org/project to query, the PAT that authorizes it, and the Gemini key that writes the spec. Skip the ADO vars entirely if you're loading from an xlsx file."
+      },
+      {
+        "label": "Dry-run first — inspect the loaded test cases without an LLM call.",
+        "cmd": "npx ts-node agents/tc-spec-agent.ts --feature-id 5001 --dry-run",
+        "why": "`--dry-run` loads and groups the test cases as normal but skips the LLM step, so you can confirm it resolved the right tests before spending model calls.",
+        "firstRun": "Prints the grouping only — no description or criteria yet."
+      },
+      {
+        "label": "Run for real, from whichever source you have.",
+        "cmd": "# From a feature's test cases in ADO:\nnpx ts-node agents/tc-spec-agent.ts --feature-id 5001 --word\n\n# Or from an xlsx export of test cases:\nnpx ts-node agents/tc-spec-agent.ts --excel ./inputs/test-cases.xlsx --word",
+        "why": "Drop `--dry-run` to call the LLM. `--feature-id` pulls every test case under a feature; `--excel` reads them from a spreadsheet — pick whichever matches where your tests live. `--word` also emits a docx.",
+        "firstRun": "Groups the tests by story, reverse-engineers each group's spec via the LLM, and writes the outputs.",
+        "rerun": "No change-tracking — every run recomputes fresh; re-run whenever the test cases change."
+      },
+      {
+        "label": "Open the reconstructed specification.",
+        "cmd": "open ./outputs/reports/tc-spec/",
+        "why": "Outputs land as JSON, Markdown, and — with `--word` — a docx, one section per group of test cases."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--feature-id <id> | --story-ids <ids> | --tc-ids <ids> | --excel <path>",
+        "desc": "The test-case source — pick exactly one."
+      },
+      {
+        "name": "--word / --dry-run",
+        "desc": "--word also emits a Word document; --dry-run skips the LLM call and just prints the grouping."
+      },
+      {
+        "name": "environment variables",
+        "desc": "`ADO_ORGANIZATION`, `ADO_PROJECT`, `ADO_PAT` (if using ADO), and `GOOGLE_API_KEY`."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "TcSpec_<label>_<timestamp>.json / .md",
+        "desc": "One section per group of test cases — description, acceptance criteria, in-scope/out-of-scope notes."
+      },
+      {
+        "name": "TcSpec_<label>_<timestamp>.docx",
+        "desc": "The same content as a shareable Word document (only with --word)."
+      }
+    ],
+    "rerun": "No fingerprinting or change-tracking — every run reads the current test cases fresh and re-queries the LLM. Re-run whenever the underlying test cases change or after adding new ones; treat each run's output as the latest snapshot, not a diff against the prior one.",
+    "integrate": "Reach for this when a feature has tests but no spec — hand the output to the **Requirements Sharpener** or straight to stakeholders as the 'what this feature actually does' reference. Works as a one-off audit tool or scheduled to catch specs that went stale."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: point the agent at a feature's test cases and watch a reconstructed spec come back.",
+    "script": [
+      "Open a terminal; have the feature's test cases visible in another tab for comparison.",
+      "Say: 'This agent works backwards — it reads the tests and rebuilds the spec nobody wrote.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's done); explain it grabs the helper libraries.",
+      "Show the `export` lines including the AI key; say this is the only client-specific part.",
+      "Run the command with `--dry-run`; show the test cases grouped by story, no AI content yet.",
+      "Re-run without `--dry-run`, adding `--word`; narrate as each group gets sent to the AI.",
+      "Open the produced Markdown; read one group's description and a couple of acceptance criteria out loud.",
+      "Point at the 'Out of Scope' section — explain it's inferred from gaps in the tests, not guessed.",
+      "Close: 'No spec existed for this feature ten minutes ago — now there's a defensible one.'"
+    ]
+  }
+}

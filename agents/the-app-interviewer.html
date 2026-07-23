@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The App Interviewer — Agent 26</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s6">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">26<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Investigating the app&#39;s data &amp; behavior</span></div>
+        <h1>The App Interviewer</h1>
+        <p class="lead">Turns one plain-English request into the correct sequence of API calls, chains their outputs, and executes them against the live app.</p>
+        <p class="kicker">Source file: app-api-agent.ts</p>
+      </div>
+    </div>
+
+    <p>The app exposes an HTTP API — <code>create_conversation</code>, <code>search_users</code>, <code>list_documents</code>, and so on. This agent lets you drive it in natural language: describe the outcome, and an LLM plans the ordered list of endpoint calls, wires each step&#39;s response into the next, executes them with a bearer token, and reports every step&#39;s result.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Driving the API by hand means knowing each endpoint&#39;s exact name, its request body shape, and how to feed one call&#39;s response into the next. A single wish like &#39;create a conversation about X and share it with Jordan&#39; is three separate, carefully chained requests. Testers and analysts who aren&#39;t developers can&#39;t build them by hand.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Write one sentence. The agent has an LLM plan the call sequence, threads each step&#39;s output into the next via <code>$prev</code> references, executes them against the live API, and logs what each returned.</p></div>
+    </div>
+    <p>It turns a developer-only API into something anyone on the team can drive with a sentence, so testing and everyday tasks stop bottlenecking on scarce technical hands.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Sends your request to an LLM with a strict instruction to return only a JSON array of API actions and their parameters.</span>
+          <span class="fc-node__fn">parseIntent()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Threads outputs between steps: for &#39;create a conversation and share it,&#39; the plan marks where step one&#39;s returned ID drops into steps two and three.</span>
+          <span class="fc-node__fn">resolveRefs()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Executes each step in order against the live API, substituting cross-step references as it goes.</span>
+          <span class="fc-node__fn">executeAction()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For a share-with-a-named-person step, first resolves the name against the directory to a real account before issuing the share.</span>
+          <span class="fc-node__fn">resolveUser()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Prints a running log of each step&#39;s result, then persists the full plan and every response to a JSON file.</span>
+          <span class="fc-node__fn">formatResult()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"parseIntent()","explain":"This is the **planning** step: the model's only job is to translate one sentence into a machine-executable `ActionStep[]`, so the code treats its reply as data, not prose. Models routinely wrap JSON in Markdown fences even when told not to, so it **strips ```json and ``` fences defensively** before parsing rather than assuming clean output. The `try/catch` converts a malformed reply into an explicit, truncated error (`slice(0, 200)`) — that truncation keeps a runaway multi-KB response from flooding the log while still showing enough to diagnose. A parse failure **aborts the whole run before any API call fires**, which is the safe default: better no actions than a half-understood plan executed against the live app.","code":"async function parseIntent(userPrompt: string): Promise\u003cActionStep[]> {\n  const response = await callLLM(INTENT_PROMPT + userPrompt);\n  // Strip Markdown code fences the model adds even when asked not to, so the\n  // remaining text is parseable JSON.\n  const cleaned = response.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  try {\n    return JSON.parse(cleaned);\n  } catch {\n    // A bad plan aborts BEFORE any live API call; truncate so a runaway reply\n    // doesn't flood the log but enough shows to diagnose.\n    throw new Error(`Failed to parse intent: ${cleaned.slice(0, 200)}`);\n  }\n}"},{"fn":"resolveRefs()","explain":"This is the **data-flow glue** that makes multi-step plans work: the LLM can't know a conversation's ID at planning time, so it writes the placeholder `$prev.conversationId` and this resolver fills it in at run time from actual results. The common case is special-cased to read the **most recent** result (`prevResults.length - 1`), and it tolerates API shape drift by trying `conversationId` first and falling back to `id` — different endpoints name the field differently. The final `|| ''` means an unresolvable reference degrades to an **empty string rather than `undefined`**, which surfaces downstream as an obvious bad-parameter API error instead of a silent `undefined` crash. Only string values starting with `$prev` are touched; every literal parameter passes through untouched.","code":"function resolveRefs(params: Record\u003cstring, any>, prevResults: any[]): Record\u003cstring, any> {\n  const resolved: Record\u003cstring, any> = {};\n  for (const [k, v] of Object.entries(params)) {\n    // Only strings tagged with the $prev sentinel are rewritten; every literal\n    // param passes straight through.\n    if (typeof v === 'string' && v.startsWith('$prev')) {\n      if (v === '$prev.conversationId') {\n        const last = prevResults[prevResults.length - 1];   // most-recent result\n        // Tolerate API shape drift: conversationId first, then id; empty string\n        // (not undefined) if neither exists, so a bad ref fails as a clear API\n        // error downstream rather than an undefined crash.\n        resolved[k] = last?.conversationId || last?.id || '';\n      } else {\n        // ...match $prev.\u003cindex>.\u003cfield> and pull it from an earlier result\n      }\n    } else {\n      resolved[k] = v;\n    }\n  }\n  return resolved;\n}"},{"fn":"executeAction()","explain":"A **closed dispatch** — the `switch` is an allow-list, and the `default` throws on any action name the LLM invents, so a hallucinated verb can never reach the live API. The `share_conversation` case does the real work: it maps each planned recipient through `resolveUser` (name → real account) and **encodes the role as a number** (`edit → 1`, anything else → `0`/read-only), so the safer permission is the default when the role is unspecified or unrecognized. It **guards against sharing with nobody** — if every name fails to resolve, it throws rather than firing a share with an empty user list, which would either error opaquely or silently share with no one. `params.users || []` tolerates a plan that omitted the users array entirely.","code":"async function executeAction(api: AppApi, action: string, params: Record\u003cstring, any>): Promise\u003cany> {\n  switch (action) {   // closed allow-list — unknown verbs hit default and throw, never the API\n    case 'create_conversation':\n      return api.createConversation(params.name);\n    case 'send_message':\n      return api.sendMessage(params.conversationId, params.question, { service: params.model });\n    case 'share_conversation': {\n      const users = [];\n      for (const u of params.users || []) {   // || [] tolerates a plan that omitted users\n        const resolved = await api.resolveUser(u.name);   // name -> real account\n        // Encode role numerically; anything other than 'edit' defaults to 0 (read-only),\n        // so the SAFER permission wins when the role is unspecified/unknown.\n        if (resolved) users.push({ ...resolved, role: u.role === 'edit' ? 1 : 0 });\n      }\n      // Never fire a share with an empty recipient list — fail loudly instead.\n      if (users.length === 0) throw new Error('No users resolved for sharing');\n      return api.shareConversation(params.conversationId, users);\n    }\n    // ...\n    default:\n      throw new Error(`Unknown action: ${action}`);   // hallucinated action name -> hard stop\n  }\n}"},{"fn":"resolveUser()","explain":"Sharing with the wrong person is the exact bug this must not create, so matching is **strict-first**: the whole candidate list is scanned for an **exact** display-name equality before any fuzzy logic runs, so 'John Smith' never binds to 'John Smithson' when the exact person exists. Only if no exact hit is found does it fall to a **case-insensitive contains** pass as a convenience. The search *term* is deliberately looser than the match — it takes only the part before the first comma (`split(',')[0]`) so a 'Last, First' input still returns candidates from a directory that indexes on last name, while the equality check still uses the full original string. Every field read is defensively chained (`displayName || userName || name`, `email || mail || userEmail`) to survive directory-payload shape differences, and it returns `null` — not a guess — when nothing matches, so the caller can refuse to share rather than pick someone arbitrary.","code":"async resolveUser(exactName: string): Promise\u003c{ userId: string; userName: string; userEmail: string } | null> {\n  // Search on last name only (part before the first comma) so a 'Last, First'\n  // input still returns candidates from a last-name-indexed directory...\n  const searchTerm = exactName.split(',')[0].trim();\n  const result = await this.searchUsers(searchTerm);\n  // ...normalize the payload: array, or .value/.users wrapper depending on the API.\n  const users = Array.isArray(result) ? result : (result.value || result.users || []);\n\n  // PASS 1 — exact display-name equality wins, so 'John Smith' can't bind to\n  // 'John Smithson' while the exact person is in the list.\n  for (const u of users) {\n    const name = u.displayName || u.userName || u.name || '';   // field name varies by API\n    if (name === exactName) {\n      return { userId: u.id || u.userId, userName: name, userEmail: u.email || u.mail || u.userEmail || '' };\n    }\n  }\n  // PASS 2 — only if no exact match: case-insensitive contains, as a convenience.\n  for (const u of users) {\n    const name = u.displayName || u.userName || u.name || '';\n    if (name.toLowerCase().includes(exactName.toLowerCase())) {\n      return { userId: u.id || u.userId, userName: name, userEmail: u.email || u.mail || u.userEmail || '' };\n    }\n  }\n  return null;   // no match -> null (never a guess), so the caller can refuse to share\n}"},{"fn":"formatResult()","explain":"This is **display-only** — it never mutates state, it condenses each raw response into one readable console line so you can follow the plan live (the full raw payload still lands in the JSON report). Each branch is written to **not throw on a partial response**: `result.answer || ''` before `.match`/`.slice` guards against a missing answer, and the word count uses `?.length || 0` so a null match reads as 0 rather than crashing. The `send_message` branch **truncates the answer to 200 chars** so a multi-paragraph reply doesn't wall the terminal, and `search_users` **caps the printout at 10 people** for the same reason while still reporting the true total count. The `default` branch pretty-prints anything unrecognized and hard-caps it at 1000 chars — a safety net so a new action type still logs something bounded.","code":"function formatResult(action: string, result: any): string {\n  if (!result) return '(empty response)';   // guard: some actions return nothing\n  switch (action) {\n    case 'create_conversation':\n      return `Conversation created: ${result.id}`;\n    case 'send_message':\n      // || '' guards a missing answer; ?.length || 0 makes a null match read as\n      // 0 words; slice(0,200) keeps a long reply from walling the terminal.\n      return `Response (${(result.answer || '').match(/\\S+/g)?.length || 0} words): ${(result.answer || '').slice(0, 200)}...`;\n    case 'search_users': {\n      const users = Array.isArray(result) ? result : (result.value || []);\n      // Report the TRUE total but only print the first 10 rows.\n      return `Found ${users.length} user(s):\\n` + users.slice(0, 10).map((u) =>\n        `  ${u.displayName || u.name} — ${u.mail || u.email || ''}`).join('\\n');\n    }\n    default:\n      // Safety net for any unrecognized action — bounded pretty-print, capped at 1000 chars.\n      return JSON.stringify(result, null, 2).slice(0, 1000);\n  }\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">One sentence, three chained calls</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Request: &#39;Create a conversation asking about renewable-energy projects and share it with Rivera, Sam.&#39;</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A three-step plan runs: a conversation is created, the question is sent and answered, Sam Rivera is resolved in the directory, and the conversation is shared read-only — each step logged as it completes.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A single lookup</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Request: &#39;Search for user Priya.&#39;</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>One directory-search call returns a short list of matching people with names and email addresses.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Reading feature flags</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Request: &#39;Get feature flags.&#39;</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>One call to the settings endpoint returns the on/off flags controlling which features are currently live.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>A reachable instance of the app&#39;s API to target, plus a bearer token authorized to call it.</li><li>Directory search must be reachable through that same API, since any share-with-a-named-person step resolves people by name.</li><li>An AI key (defaults to a Google model) — a sentence has to be planned into an ordered call sequence before anything executes.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime the agent runs on.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. Install once per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed on a fresh machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent code and install its dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the agent&#39;s dependencies — the AI client and the HTTPS request helper it calls the API with.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target environment (environment variables).</div>
+        <pre class="rb__cmd"><code>export APP_API_URL_DEV=https://dev.your-app.example.com
+export APP_API_TOKEN_DEV=your-bearer-token
+export GOOGLE_API_KEY=your-ai-key
+export APP_MODEL=gpt5   # optional, this is the default</code></pre>
+        <div class="rb__why"><span>Why</span> The base URL and token select the environment&#39;s API and authorize it. The AI key is what plans your one-sentence request into an ordered call sequence.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">State the outcome in one sentence and run it.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/app-api-agent.ts --env dev \
+  --prompt &quot;Create a conversation asking about renewable-energy projects and share it with Rivera, Sam&quot;</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--env</code> selects the environment; <code>--prompt</code> is your sentence. The agent plans it (create, then ask, then share), resolves &#39;Rivera, Sam&#39; against the directory, and executes every step against the live API.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Nothing is cached — it plans and executes live against the real environment every time.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Identical each time: a brand-new conversation is created and, if sharing was requested, a fresh share call goes out.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the run record.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/api-agent/ApiAgent_dev_&lt;timestamp&gt;.json</code></pre>
+        <div class="rb__why"><span>Why</span> The saved file holds the LLM&#39;s step-by-step plan plus the raw response from every step — proof of exactly what ran, in what order.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--env dev|qa</dt><dd>Which environment&#39;s API to call.</dd><dt>--prompt &quot;...&quot;</dt><dd>One natural-language sentence describing the outcome you want.</dd><dt>environment variables</dt><dd>The API URL and bearer token for the chosen environment, plus the AI key.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console log</dt><dd>Each step in the plan printed as it runs, with a one-line result summary.</dd><dt>ApiAgent_&lt;env&gt;_&lt;timestamp&gt;.json</dt><dd>The full plan the LLM produced plus every step&#39;s raw response, timestamped for the record.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No idempotency: running the same prompt twice creates two conversations, and if the prompt includes a share step, fires the share twice. Treat every run as a fresh, live action against the real environment, not a safe replay.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> The fastest way to smoke-test the API after a deploy — one sentence exercises a whole chain of real calls (create, ask, share) instead of three hand-built requests. Feed it a prompt list from a CI job to catch a broken chain before a person does.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-minute screen recording: type one sentence, watch it turn into a chain of real service-counter calls.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Plans the call sequence</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, the moment you submit a request.</dd>
+          <dt>Takes in</dt><dd>Your natural-language request.</dd>
+          <dt>Shows out</dt><dd>A JSON array of API actions to run, in order, produced by the LLM.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Chains step outputs</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Just before each step runs.</dd>
+          <dt>Takes in</dt><dd>A step&#39;s parameters, which may contain a placeholder like <code>$prev.conversationId</code>.</dd>
+          <dt>Shows out</dt><dd>The placeholder substituted with the real value from an earlier step, so step two can use the ID step one returned.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Calls the app&#39;s API</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per step in the plan.</dd>
+          <dt>Takes in</dt><dd>The resolved action name and parameters.</dd>
+          <dt>Shows out</dt><dd>An HTTPS request to the app&#39;s API, authorized with a bearer token, and the parsed response.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Resolves names before sharing</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Only for steps that share with a named person.</dd>
+          <dt>Takes in</dt><dd>The name you typed.</dd>
+          <dt>Shows out</dt><dd>That person&#39;s real account, resolved against the directory — exact match first, contains match as fallback.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Persists the run</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every step has executed.</dd>
+          <dt>Takes in</dt><dd>The full plan plus every step&#39;s result.</dd>
+          <dt>Shows out</dt><dd>One timestamped JSON file capturing exactly what was requested, what ran, and what came back.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-data-questioner.html">← The Data Questioner</a>
+      <a href="the-share-tester.html">The Share Tester →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

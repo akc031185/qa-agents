@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Results Poster — Agent 13</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s3">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">13<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Keeping the project tracker up to date</span></div>
+        <h1>The Results Poster</h1>
+        <p class="lead">Derives each test case&#39;s Passed/Failed outcome from the story&#39;s ADO state — QA task closure and bug links — then posts the results to a test run.</p>
+        <p class="kicker">Source file: ado-test-results-agent.ts</p>
+      </div>
+    </div>
+
+    <p>After execution, someone has to record Passed/Failed on every test point. This agent infers the outcome from signals already in ADO — whether the QA execution Task is Closed and whether bugs are linked to specific test cases — then posts the verdicts automatically via a test run.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>A tester finishes a feature, then updates the tracker one test point at a time: open each, decide pass or fail, recall which bug maps to which test case, and click through several screens to record it. Across dozens of test cases and many features it&#39;s an afternoon of clicking — and easy to mismark or skip a few.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent reads each story and applies three deterministic rules. QA task Closed with no bugs → every test case Passed. Bugs linked to specific test cases → exactly those Failed, the rest Passed. QA task not Closed → skip and leave a reminder comment instead of guessing. It then posts all outcomes to a single test run.</p></div>
+    </div>
+    <p>An accurate results board is what signals a feature is genuinely shippable — a rushed or wrong outcome can green-light something that isn&#39;t.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For each story it reads relations to find the QA execution Task, child Bugs, and the test cases tracked via <code>TestedBy-Forward</code> links.</span>
+          <span class="fc-node__fn">analyzeStory()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">It applies the rules: QA task Closed with no bugs → all Passed; bugs linked to test cases → those Failed (rest Passed); task not Closed → skip and queue a reminder comment.</span>
+          <span class="fc-node__fn">resolveOutcomes()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">If a bug links to no test case, it queues a comment asking someone to link it, so no defect goes unaccounted for.</span>
+          <span class="fc-node__fn">findBugTcLinks()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">It creates a test run, writes each Passed/Failed outcome with a reason comment, and completes the run.</span>
+          <span class="fc-node__fn">postResults()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">A <code>status</code> mode tallies the current outcomes read-only, writing nothing.</span>
+          <span class="fc-node__fn">showStatus()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"analyzeStory()","explain":"This reads a story's structure from **two different relation types in one pass**: `Hierarchy-Forward` gives the child work items (the QA Task and Bugs live under the story), while `TestedBy-Forward` gives the test cases the story is verified by — test cases are *not* children, they're a separate link type, so both must be pulled. The QA Task is identified by a title-contains match on `qa test execution` (lowercased for safety), and its `System.State` is captured because the whole pass/fail decision downstream hinges on whether it's `Closed`. Bugs are collected with an empty `linkedTcIds`, then a second loop calls `findBugTcLinks` per bug — a deliberate second round-trip, because a bug's own relations (not the story's) are what tie it to specific test cases.","code":"private async analyzeStory(storyId: number): Promise\u003cStoryAnalysis> {\n  const wi = await this.client.getWorkItemWithRelations(storyId);\n  const relations = wi.relations || [];\n  // Two DIFFERENT link types off the same story:\n  const childIds = this.client.extractRelationIds(relations, 'System.LinkTypes.Hierarchy-Forward');      // QA Task + Bugs are children\n  const testCaseIds = this.client.extractRelationIds(relations, 'Microsoft.VSTS.Common.TestedBy-Forward'); // test cases are a separate link, not children\n\n  let qaTask: StoryAnalysis['qaTask'] = null;\n  const childBugs: StoryAnalysis['bugs'] = [];\n\n  const children = await this.client.getWorkItemsBatch(childIds);\n  for (const child of children) {\n    const type = child.fields?.['System.WorkItemType'];\n    const title = child.fields?.['System.Title'] || '';\n    // Identify the QA Task by title-contains (lowercased); its System.State drives the whole verdict downstream.\n    if (type === 'Task' && title.toLowerCase().includes('qa test execution')) {\n      qaTask = { id: child.id, title, state: child.fields['System.State'],\n                 assignedTo: this.client.extractDisplayName(child.fields['System.AssignedTo']) };\n    }\n    if (type === 'Bug') childBugs.push({ id: child.id, title, state: child.fields['System.State'], linkedTcIds: [] } as any);\n  }\n  // Second round-trip per bug: a bug's OWN relations (not the story's) tell us which test cases it maps to.\n  for (const bug of childBugs) bug.linkedTcIds = await this.findBugTcLinks(bug.id);\n  return { storyId, storyTitle: wi.fields?.['System.Title'], qaTask, testCaseIds, bugs: childBugs };\n}"},{"fn":"resolveOutcomes()","explain":"This is the deterministic verdict engine — two **fail-safe guards** come first: no QA Task at all skips silently, and a QA Task not in state `closed` (compared lowercased, since ADO state casing varies) refuses to guess — it queues a reminder comment and skips every test case rather than mark anything Passed on an unfinished run. Only past those guards does it grade: it builds `failedTcIds` from bugs, but critically only counts a bug's `linkedTcIds` that are **also in this story's `testCaseIds`** — a bug pointing at a test case outside this story is ignored, so cross-story noise can't fail the wrong case. Then the second loop marks every remaining, non-failed test case Passed. The `Set` guarantees a case failed by multiple bugs is recorded once, and a test case never lands in both buckets.","code":"private async resolveOutcomes(analysis: StoryAnalysis) {\n  const results: PendingResult[] = [];\n  const comments: PendingComment[] = [];\n\n  // Guard 1: no QA Task -> nothing to grade, skip silently.\n  if (!analysis.qaTask) {\n    return { results: [], comments: [], skipped: analysis.testCaseIds.length };\n  }\n  // Guard 2: QA Task not Closed (lowercased - ADO state casing varies) -> refuse to guess.\n  // Queue a reminder and skip rather than mark anything Passed on an unfinished run.\n  if (analysis.qaTask.state.toLowerCase() !== 'closed') {\n    comments.push({ workItemId: analysis.qaTask.id,\n      comment: 'QA Test Execution pending. Please complete and close this task so results can be recorded.' });\n    return { results: [], comments, skipped: analysis.testCaseIds.length };\n  }\n\n  const failedTcIds = new Set\u003cnumber>();\n  for (const bug of analysis.bugs) {\n    for (const tcId of bug.linkedTcIds) {\n      // Only fail cases that belong to THIS story; a bug linked to a foreign test case is ignored.\n      if (analysis.testCaseIds.includes(tcId)) {\n        failedTcIds.add(tcId); // Set -> a case hit by multiple bugs is recorded once\n        results.push({ testCaseId: tcId, outcome: 'Failed', comment: `Bug #${bug.id}: ${bug.title}` });\n      }\n    }\n  }\n  // Everything not explicitly failed passes - the two buckets never overlap.\n  for (const tcId of analysis.testCaseIds) {\n    if (!failedTcIds.has(tcId)) results.push({ testCaseId: tcId, outcome: 'Passed', comment: 'Auto-resolved: no linked bugs' });\n  }\n  return { results, comments, skipped: 0 };\n}"},{"fn":"findBugTcLinks()","explain":"A bug can be tied to a test case by any of three link types, so this accepts all of them — `TestedBy-Forward`, `TestedBy-Reverse`, and plain `Related` — because teams link inconsistently and being strict about direction here would miss real associations. ADO relations don't carry the target ID as a field; it's embedded in `rel.url` (e.g. `.../workItems/1234`), so the ID is pulled with the regex `/workItems\\/(\\d+)/i` and `parseInt`. Note this returns *every* linked work item ID from those relation types without checking the target is actually a Test Case — the caller (`resolveOutcomes`) does that narrowing by intersecting against the story's `testCaseIds`.","code":"private async findBugTcLinks(bugId: number): Promise\u003cnumber[]> {\n  const bug = await this.client.getWorkItemWithRelations(bugId);\n  const relations = bug.relations || [];\n  const tcIds: number[] = [];\n\n  for (const rel of relations) {\n    // Accept all three link types - teams link bugs to test cases inconsistently,\n    // and being strict about direction would miss real associations.\n    if (\n      rel.rel === 'Microsoft.VSTS.Common.TestedBy-Forward' ||\n      rel.rel === 'Microsoft.VSTS.Common.TestedBy-Reverse' ||\n      rel.rel === 'System.LinkTypes.Related'\n    ) {\n      // ADO relations carry the target ID only inside rel.url (.../workItems/1234), not as a field.\n      const match = rel.url?.match(/workItems\\/(\\d+)/i);\n      // Returns EVERY linked ID; resolveOutcomes narrows these to real test cases via the story's testCaseIds.\n      if (match) tcIds.push(parseInt(match[1], 10));\n    }\n  }\n  return tcIds;\n}"},{"fn":"postResults()","explain":"You can't post an outcome against a test case directly in ADO — results attach to a **test run**, and a run is created over **test point** IDs, so step 1's `tcToPoint` map is the essential bridge (a test point is the intersection of a test case with a suite/config). Results are then filtered to only cases that actually have a point in this suite, so a stray ID can't break the run. The non-obvious ordering is steps 2→3: creating the run **auto-generates** one empty result per point, and those carry the result IDs you must have to update them — hence the immediate `getTestRunResults` fetch, then a re-match of each auto-created result back to its pending outcome by `testCase.id` before the PATCH. `completeTestRun` at the end is what flips the run from in-progress to a finished, reportable state; skip it and the results exist but the run reads as still running. The `dryRun` return sits after the mapping so a preview still validates the point coverage without creating anything.","code":"private async postResults(planId: number, suiteId: number, results: PendingResult[], runName: string, dryRun: boolean): Promise\u003cnumber | null> {\n  // Step 1: results attach to test POINTS, not test cases directly - build the TC id -> point id bridge.\n  // A test point = a test case intersected with this suite/config.\n  const testPoints = await this.client.getTestPoints(suiteId, planId);\n  const tcToPoint = new Map\u003cnumber, number>();\n  for (const tp of testPoints) tcToPoint.set(tp.testCaseReference.id, tp.id);\n\n  // Drop any result whose case has no point in THIS suite, so a stray id can't break the run.\n  const validResults = results.filter(r => tcToPoint.has(r.testCaseId));\n  const pointIds = validResults.map(r => tcToPoint.get(r.testCaseId)!);\n  if (dryRun) return null; // preview still validated point coverage above, but writes nothing\n\n  // Step 2: create the run over those point IDs.\n  const run = await this.client.createTestRun(runName, pointIds);\n  // Step 3: creating the run AUTO-generates one empty result per point; we need those result IDs to update them.\n  const runResults = await this.client.getTestRunResults(run.id);\n  // Step 4: re-match each auto-created result back to its pending outcome by testCase.id, then PATCH.\n  const updates = runResults\n    .map(rr => ({ rr, pending: validResults.find(r => r.testCaseId === rr.testCase?.id) }))\n    .filter(x => x.pending)\n    .map(x => ({ id: x.rr.id, outcome: x.pending!.outcome, comment: x.pending!.comment }));\n  await this.client.updateTestRunResults(run.id, updates);\n  // Step 5: complete the run - flips it from in-progress to finished/reportable; skip it and results read as still running.\n  await this.client.completeTestRun(run.id);\n  return run.id;\n}"},{"fn":"showStatus()","explain":"A pure read: it fetches the suite's test points and tallies each point's `results.lastResultOutcome` — the outcome of that point's **most recent** run, which is why this reflects live state without re-deriving anything from bugs or QA tasks. Points never executed have no such field, so the `|| 'Unspecified'` fallback buckets them explicitly rather than dropping them — that count is itself the signal of how much testing remains. The optional chaining (`?.`) matters because `results` is absent on a fresh point, not just empty. Nothing is written, so this is safe to call any time as an 'are we there yet' check.","code":"private async showStatus(planId: number, suiteId: number): Promise\u003cvoid> {\n  const points = await this.client.getTestPoints(suiteId, planId);\n  const outcomes: Record\u003cstring, number> = {};\n\n  for (const tp of points) {\n    // lastResultOutcome = the point's MOST RECENT run result; ?. because a never-run point has no 'results' at all.\n    // 'Unspecified' bucket = not-yet-executed points, which is itself useful signal.\n    const outcome = (tp as any).results?.lastResultOutcome || 'Unspecified';\n    outcomes[outcome] = (outcomes[outcome] || 0) + 1;\n  }\n  console.log('Summary:', outcomes);\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A closed story with one linked bug</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Post results for story #204 (QA task Closed; bug #970 linked to one test case).</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>5 test cases resolved: the one linked to bug #970 → Failed, the other 4 → Passed. Posted to a new test run and completed it.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">QA task not yet closed</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Post results for story #205.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>QA execution Task isn&#39;t Closed. Queued a reminder comment — &#39;please complete and close so results can be recorded&#39; — and skipped its 6 test cases instead of guessing.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Manual override of one test case</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Mark test case #430 as Passed manually.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Posted test case #430 as Passed in a one-off run labeled with today&#39;s date.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Azure DevOps Test Plans access and a <strong>PAT</strong> scoped to write test results.</li><li>The stories under test must have their QA execution Task Closed, and any bugs filed must be <code>TestedBy</code>-linked to the test case they came from — otherwise the agent skips and queues a reminder instead of guessing.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the engine that runs the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript run under Node — a one-time per-machine install.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> One-time setup per machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent and install its dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the ADO client and xlsx reader into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Cold install — a minute or two.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless <code>package.json</code> changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target org, project, and PAT (env vars).</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: which ADO org/project to hit and the PAT that authorizes writing results.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Preview outcomes with --dry-run.</div>
+        <pre class="rb__cmd"><code>npm run ado:results:update -- --plan-id 12345 --suite-id 67890 --stories 3101,3102 --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--dry-run</code> runs the same analysis and prints exactly what it would post — Passed/Failed/skipped, story by story — without creating a run. Review before writing.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Analyzes each story fresh.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Post the outcomes for real.</div>
+        <pre class="rb__cmd"><code>npm run ado:results:update -- --plan-id 12345 --suite-id 67890 --stories 3101,3102</code></pre>
+        <div class="rb__why"><span>Why</span> Same analysis, but now it creates a test run, PATCHes every result, and completes the run.</div>
+        
+        <div class="rb__run rb__run--again"><span>Re-run</span> Non-idempotent — each invocation creates a new test run, so re-running the same stories posts a second, redundant run. Re-run only once the underlying bug links or QA task state actually changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Check current status any time, read-only.</div>
+        <pre class="rb__cmd"><code>npm run ado:results:status -- --plan-id 12345 --suite-id 67890</code></pre>
+        <div class="rb__why"><span>Why</span> Never writes — tallies each test point&#39;s <code>lastResultOutcome</code>, handy for a quick &#39;are we there yet&#39; check.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--plan-id &lt;id&gt; --suite-id &lt;id&gt;</dt><dd>Which Test Plan and suite to post results into.</dd><dt>--stories &lt;ids&gt; / --feature-id &lt;id&gt; / --from-excel &lt;path&gt;</dt><dd>Which stories to analyze — explicit list, parent feature, or a spreadsheet column.</dd><dt>--test-case &lt;id&gt; --outcome &lt;value&gt;</dt><dd>Manual override to set a single test case&#39;s outcome directly.</dd><dt>--status</dt><dd>Read-only: print the current outcome tally without posting.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>a new test run in ADO</dt><dd>Created, PATCHed result-by-result with Passed/Failed plus a reason comment, then completed — nothing saved locally.</dd><dt>reminder comments</dt><dd>Posted on the QA task (if not Closed) or on a bug (if not linked to a test case), so nothing silently falls through.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Non-idempotent by design — every successful post creates a fresh test run, so re-running against unchanged data yields a second, redundant run. Re-run only after the QA task state or a bug&#39;s links actually changed.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Trigger this right after the QA execution Task is Closed so the results board updates automatically the moment execution is done, instead of waiting for someone to click through it by hand.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-minute screen recording: preview outcomes, then post them to a test run.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Analyzing the story</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>For each story you pass it.</dd>
+          <dt>Takes in</dt><dd>A story ID.</dd>
+          <dt>Shows out</dt><dd>Its QA execution Task, child/related Bugs, and the test cases tracked via <code>TestedBy</code> links.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Resolving outcomes</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once a story&#39;s analysis is done.</dd>
+          <dt>Takes in</dt><dd>The QA Task&#39;s <code>state</code> and any bugs found.</dd>
+          <dt>Shows out</dt><dd>An outcome per test case — Passed, Failed, or skipped with a queued reminder.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Resolving bug-to-test links</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>For every bug found under a story.</dd>
+          <dt>Takes in</dt><dd>A bug&#39;s own relations in ADO.</dd>
+          <dt>Shows out</dt><dd>The test case IDs it links to, or — if none — a queued comment asking someone to link it.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Posting the test run</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once all stories are analyzed and it isn&#39;t a dry run.</dd>
+          <dt>Takes in</dt><dd>Every outcome collected across all stories.</dd>
+          <dt>Shows out</dt><dd>A new ADO test run, PATCHed result-by-result, then completed.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Read-only status</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When you request current status instead of posting results.</dd>
+          <dt>Takes in</dt><dd>The suite&#39;s current test points.</dd>
+          <dt>Shows out</dt><dd>A read-only tally of test points per outcome, from each point&#39;s <code>lastResultOutcome</code>.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-test-suite-organizer.html">← The Test-Suite Organizer</a>
+      <a href="the-test-case-importer.html">The Test-Case Importer →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

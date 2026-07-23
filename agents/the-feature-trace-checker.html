@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Feature-Trace Checker — Agent 28</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s6">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">28<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Investigating the app&#39;s data &amp; behavior</span></div>
+        <h1>The Feature-Trace Checker</h1>
+        <p class="lead">Drives the app in a real browser, enables the function-call trace toggle, sends a prompt, and asserts the answer, its trace, and the saved conversation all appear.</p>
+        <p class="kicker">Source file: function-call-share-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Runs the actual app in a headless-or-headed Chromium session via Playwright, exactly as a user would — clicking, typing, waiting. It first flips the settings toggle that surfaces the app&#39;s function-call trace, sends a prompt, waits for the streamed answer to fully settle, then asserts the trace panel rendered and the conversation persisted to history.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Checking this by hand is tedious and easy to rush: open settings, find the toggle, set it to Yes, save, start a new chat, type the prompt, then — the slow part — watch until the streamed answer stops growing (minutes), squint for the function-call panel, note the title, go home, and scroll the list to confirm the conversation saved. Across many prompts it&#39;s mind-numbing, and a distracted tester calls a half-streamed answer &#39;done&#39;.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent runs the full click-by-click routine and, critically, waits for the answer to truly finish streaming before asserting. Per prompt it records answer length, whether the trace panel appeared, the conversation title, and whether the conversation showed up in the saved list — then returns a clean pass/fail summary.</p></div>
+    </div>
+    <p>A human watching a screen eventually blinks, gets bored, or calls a still-streaming answer finished — the agent never does, so slow or missing function-call traces get caught instead of waved through.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Launches Chromium, reusing a saved storage-state session if one exists, otherwise pausing up to three minutes for a one-time manual sign-in.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Navigates settings and flips the function-call-modifier toggle to Yes, then submits — only changing it if it isn&#39;t already Yes, and falling back to a human if the menu markup shifted.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Per prompt: starts a new chat, waits for the prompt box to become editable, types the prompt, and submits.</span>
+          <span class="fc-node__fn">waitForEditable()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Watches the streaming answer and only proceeds once its HTML has held byte-for-byte identical across 30 consecutive checks — its stability signal that the answer is complete, not merely paused.</span>
+          <span class="fc-node__fn">waitForResponseComplete()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Asserts the function-call panel rendered, captures the conversation title, navigates home, and polls the saved-conversations list up to 45s for a title match.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Repeats for every prompt, then prints a summary and writes the JSON report, recovering on its own if one prompt throws.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"main()","explain":"The auth model is **cache-if-present, sign-in-once-if-not**: the spread `...(fs.existsSync(AUTH_FILE) ? { storageState: AUTH_FILE } : {})` conditionally injects the saved cookies/tokens, so a returning run is authenticated silently and a first run gets a clean context. Login is detected by **URL sniffing** — if the app bounced the browser to `login.microsoftonline`/`login.live.com`, a human is given up to 180s to complete SSO (including MFA), after which `storageState({ path: AUTH_FILE })` **persists the session so it never asks again**. The `goto` is wrapped in `.catch(() => {})` because `networkidle` on an app with background polling can legitimately time out — swallowing it lets the very next line inspect the real URL rather than crashing on a non-fatal navigation timeout. `headless: !args.headed` means headed is opt-in, which matters precisely for that first manual sign-in.","code":"const browser = await pw.chromium.launch({ headless: !args.headed });   // headed is opt-in (needed for first sign-in)\nconst context = await browser.newContext({\n  // Inject saved cookies/tokens if we have them; otherwise a clean context.\n  ...(fs.existsSync(AUTH_FILE) ? { storageState: AUTH_FILE } : {}),\n  viewport: { width: 1920, height: 1080 },\n});\nconst page = await context.newPage();\n\n// networkidle can legitimately time out on an app that background-polls; swallow\n// it so the next line can inspect the ACTUAL landing URL instead of crashing.\nawait page.goto(baseUrl + '/home', { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});\n\n// Detect an SSO bounce by URL. If redirected, wait for the human to finish login...\nif (page.url().includes('login.microsoftonline') || page.url().includes('login.live.com')) {\n  console.log('Waiting for manual login (up to 3 min)...');\n  await page.waitForURL(`${baseUrl}/**`, { timeout: 180000 });   // return-to-app == login done\n  await context.storageState({ path: AUTH_FILE });   // persist so future runs skip sign-in\n}"},{"fn":"main()","explain":"The toggle is set **read-before-write**: it reads `currentVal` and only opens the dropdown and picks 'Yes' when the value isn't already 'Yes', so a re-run doesn't needlessly re-toggle and risk flipping a setting that's already correct. The comparison is defensively normalized (`?.trim().toLowerCase()`) so stray whitespace or casing in the rendered label can't cause a false 'not yes'. Locators are chosen for **resilience to markup drift**: the container is pinned by the stable `.test-FunctionCallModifiers` test hook, but the caret and the 'Yes' option each supply **two selector alternatives** (`.k-input-button, button[aria-label=\"Select\"]` and `.k-list-item…, li…`) so a component-library class rename doesn't break the click. The final submit uses `click({ force: true })` to bypass Playwright's actionability checks — deliberate, because an overlay or animation shouldn't block a button the agent knows is there.","code":"const toolsItem = page.locator('li[data-menuitem][aria-label=\"Tools\"]').first();\nawait toolsItem.click();\n\nconst modifiersItem = page.locator('li:has-text(\"Modifiers\")').first();\nawait modifiersItem.click();\n\n// Pin the container by a stable test hook, then READ its current value first.\nconst funcCallContainer = page.locator('.test-FunctionCallModifiers').first();\nconst currentVal = await funcCallContainer.locator('.k-input-value-text').textContent().catch(() => '');\n\n// Only toggle if it isn't already 'Yes' — re-runs don't needlessly re-flip it.\n// trim().toLowerCase() defends against stray whitespace/casing in the label.\nif (currentVal?.trim().toLowerCase() !== 'yes') {\n  // Two-selector fallbacks so a component-library class rename doesn't break the click.\n  const caretBtn = funcCallContainer.locator('.k-input-button, button[aria-label=\"Select\"]').first();\n  await caretBtn.click();\n  const yesOption = page.locator('.k-list-item:has-text(\"Yes\"), li:has-text(\"Yes\")').first();\n  await yesOption.click();\n}\n\nconst submitBtn = page.locator('.test-SubmitButton').first();\nawait submitBtn.click({ force: true });   // force: bypass actionability so an overlay/animation can't block it"},{"fn":"waitForEditable()","explain":"The prompt box is disabled while the app initializes, so typing into it too early would silently drop characters — this **polls until it's genuinely typeable** rather than guessing with a fixed sleep. Editability requires **both** signals to clear: `aria-readonly !== 'true'` AND the native `readonly` attribute being absent (`=== null`), because the app can toggle either one independently. Every `getAttribute` is `.catch`-guarded to a **pessimistic default** (`'true'` / a truthy readonly) so a transient DOM detach during a re-render reads as 'still locked' and keeps waiting instead of falsely declaring success. On timeout it escalates through a two-stage recovery — a `force`-click to jolt focus, then a full page reload — before returning `false`, so a truly stuck box is reported rather than hung on forever.","code":"async function waitForEditable(page: Page, textarea: any, baseUrl: string, timeoutMs = 30000): Promise\u003cboolean> {\n  const deadline = Date.now() + timeoutMs;\n  while (Date.now() \u003c deadline) {\n    // Pessimistic .catch defaults: a transient DOM detach reads as 'still locked'\n    // so we keep waiting rather than falsely declaring the box ready.\n    const ro = await textarea.getAttribute('aria-readonly').catch(() => 'true');\n    const readonlyAttr = await textarea.getAttribute('readonly').catch(() => null);\n    // Require BOTH signals clear — the app can toggle either independently.\n    if (ro !== 'true' && readonlyAttr === null) return true;\n    await page.waitForTimeout(500);\n  }\n  // Escalating recovery: jolt focus with a forced click...\n  await textarea.click({ force: true });\n  await page.waitForTimeout(2000);\n  const ro2 = await textarea.getAttribute('aria-readonly').catch(() => 'true');\n  if (ro2 !== 'true') return true;\n  // ...then a full reload as a last resort.\n  await page.goto(baseUrl + '/home', { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});\n  // ...retries once more before giving up\n  return false;   // report a genuinely stuck box rather than hang forever\n}"},{"fn":"waitForResponseComplete()","explain":"This is the agent's headline capability: it distinguishes a **finished** answer from a merely **paused** one, which a human watcher can't reliably do. It compares `innerHTML` **byte-for-byte** — not text, and not just length — so even a late-arriving citation chip or formatting change resets stability; and it demands **30 consecutive unchanged reads at 2s each = ~60s of true silence** before declaring done, deliberately long because streamed LLM output stalls mid-answer for many seconds. `curHTML.length > 0` is a required guard so an empty read (element momentarily detached) can never be mistaken for a stable answer, and **any** change resets `stableCount` to 0, so the 60s window must be clean end-to-end. The whole thing is bounded by a 5-minute deadline so a never-completing answer eventually returns what it has rather than hanging the batch; `.catch(() => '')` on every read keeps a transient locator error from aborting the wait.","code":"async function waitForResponseComplete(page: Page, timeoutMs = 300000): Promise\u003cstring> {\n  const responseLocator = page.locator('div.textMessageOutput').last();   // .last(): the newest answer\n  await responseLocator.waitFor({ state: 'attached', timeout: 60000 }).catch(() => {});\n\n  let prevHTML = '';\n  let stableCount = 0;\n  const deadline = Date.now() + timeoutMs;   // 5-min hard cap so a never-ending answer can't hang the batch\n\n  while (Date.now() \u003c deadline) {\n    const curHTML = await responseLocator.innerHTML({ timeout: 5000 }).catch(() => '');   // '' on transient error\n    // length>0 guards against an empty read (element momentarily detached) being\n    // mistaken for a stable answer. Compare HTML byte-for-byte, not text/length,\n    // so a late citation chip still resets stability.\n    if (curHTML.length > 0 && curHTML === prevHTML) {\n      stableCount++;\n      // Need 30 consecutive stable checks (30 x 2s = 60s of no change)\n      if (stableCount >= 30) break;\n    } else {\n      stableCount = 0;   // ANY change restarts the 60s window — it must be clean end-to-end\n    }\n    prevHTML = curHTML;\n    await page.waitForTimeout(2000);\n  }\n  return await responseLocator.textContent({ timeout: 5000 }).catch(() => '');\n}"},{"fn":"main()","explain":"Three assertions in sequence, each written to record a **negative result rather than crash**: the trace presence and title reads both use `isVisible(...).catch(() => false)` so a missing panel logs as 'not found' instead of throwing and losing the whole prompt's result. The persistence check is the interesting one — after navigating home it **polls the saved-list for up to 45s** because save-to-history is asynchronous and the conversation often isn't there the instant you arrive. Matching is a **case-insensitive prefix contains** on the first 30 chars of the title (`slice(0, 30)`), deliberately loose because the panel can truncate or lightly reformat the displayed title versus the header `h2`. It re-queries `panelItems` and its `count` **every iteration** so newly-arrived list entries are seen, and breaks the instant a match is found; if 45s elapses with no hit, `foundInPanel` stays false and that becomes the reportable save-bug signal.","code":"// Trace presence — isVisible().catch(false) so a missing panel logs 'not found', not a throw.\nconst funcCallExpander = page.locator('.k-expander-title:has-text(\"FUNCTION CALLS\")').first();\nif (await funcCallExpander.isVisible({ timeout: 10000 }).catch(() => false)) {\n  funcCallInfo = ((await funcCallExpander.textContent().catch(() => '')) || '').trim();\n}\n\n// Capture the conversation title from the header (same crash-safe pattern).\nconst h2Locator = page.locator('h2.text-primary.text-truncate').first();\nif (await h2Locator.isVisible({ timeout: 5000 }).catch(() => false)) {\n  convTitle = (await h2Locator.textContent({ timeout: 3000 }).catch(() => '')).trim();\n}\n\nawait clickAppHome(page, baseUrl);\n\n// Persistence check: save-to-history is async, so poll the saved list up to 45s.\n// Match on the first 30 chars, lowercased — loose on purpose, since the panel\n// may truncate/reformat the title vs. the header h2.\nconst titleSnippet = convTitle.slice(0, 30).toLowerCase();\nconst panelDeadline = Date.now() + 45000;\nwhile (Date.now() \u003c panelDeadline) {\n  // Re-query every iteration so newly-arrived list entries are seen.\n  const panelItems = page.locator('.main-conversations-panel .conversation-item-btn .k-button-text span');\n  const count = await panelItems.count().catch(() => 0);\n  for (let b = 0; b \u003c count; b++) {\n    const itemText = await panelItems.nth(b).textContent({ timeout: 1000 }).catch(() => '');\n    if (itemText.toLowerCase().includes(titleSnippet)) { foundInPanel = true; break; }\n  }\n  if (foundInPanel) break;\n  await page.waitForTimeout(2000);\n}\n// 45s with no hit -> foundInPanel stays false: the reportable save-bug signal."},{"fn":"main()","explain":"One JSON report captures the whole batch, and the filename is built to be **filesystem-safe and non-colliding**: `toISOString()` has its `:` and `.` replaced (illegal or awkward in filenames on some OSes) and is sliced to second precision, then tagged with `env` so a dev and a qa run never overwrite each other. `mkdirSync(..., { recursive: true })` creates the full report path idempotently on a fresh checkout. The `results` array — every prompt's answer length, trace-found flag, title, and persisted flag — is written **verbatim** so a failing prompt (missing trace, `not found in panel`) is preserved for a human to chase later, not just summarized.","code":"const outDir = path.resolve(__dirname, '..', 'outputs', 'reports', 'function-call-shares');\nfs.mkdirSync(outDir, { recursive: true });   // create the full report path idempotently\n// Replace ':' and '.' (illegal/awkward in filenames), keep second precision;\n// env tag keeps a dev run from clobbering a qa run's report.\nconst ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);\nconst outPath = path.join(outDir, `FuncCallShare_${args.env}_${ts}.json`);\nfs.writeFileSync(outPath, JSON.stringify({\n  env: args.env,\n  timestamp: new Date().toISOString(),\n  results,   // verbatim per-prompt outcomes — a missing-trace/not-found row is preserved to chase\n}, null, 2));"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A prompt that should trigger a function call</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The prompt &#39;What does the firm do for expense reports?&#39; with the trace toggle enabled.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The answer finishes rendering, the function-call panel is detected, the title is captured, and the conversation is confirmed present in the saved list — recorded as a pass with the word count and trace noted.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A batch run from a file</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A file of five prompts run in sequence.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Five conversations driven start to finish; the summary shows, e.g., &#39;5 answered, 4 with a function-call trace, 5 saved to the list, 0 errors.&#39;</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">The conversation never persists</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A prompt whose answer completes normally but whose conversation doesn&#39;t appear in the saved list within the 45s window.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The answer and trace are recorded, but the conversation is flagged &#39;not found in panel after 45s&#39; — a clear save-or-refresh bug signal for a human to chase.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Playwright installed with its Chromium binary downloaded (<code>npx playwright install</code>).</li><li>A real account for the app — the first run pauses up to 3 minutes for a one-time manual sign-in, then reuses the saved storage-state session.</li><li>The app must expose a settings toggle that surfaces its function-call trace — the agent finds and enables it for you.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime the agent runs on.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. Install once per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed on a fresh machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install dependencies and the Chromium binary.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+npx playwright install   # one-time: downloads the actual browser binary</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the agent&#39;s dependencies; <code>playwright install</code> downloads the Chromium binary the agent drives — a one-time download, not a per-run step.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads Chromium (a few minutes on a slow connection).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Skipped entirely once the binary is present.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run once headed to sign in.</div>
+        <pre class="rb__cmd"><code>npx tsx agents/function-call-share-agent.ts --env dev \
+  --prompt &quot;What does the app do for expense reports?&quot;</code></pre>
+        <div class="rb__why"><span>Why</span> Omitting <code>--headless</code> opens a visible Chromium window. The first run pauses on the SSO screen for manual login, then persists the storage-state session so it never asks again.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Pauses up to 3 minutes for manual sign-in, then saves the session to a local file.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Signs in silently from the saved session — no pause, unless it expired.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run for real on a prompt list, headless if you like.</div>
+        <pre class="rb__cmd"><code>npx tsx agents/function-call-share-agent.ts --env dev \
+  --input prompts.txt --headless</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--input</code> reads one prompt per line and runs the full click-type-wait-assert routine for each. <code>--headless</code> drops the window once you trust it — useful in CI.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the report.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/function-call-shares/FuncCallShare_dev_&lt;timestamp&gt;.json</code></pre>
+        <div class="rb__why"><span>Why</span> Per prompt, records whether the trace appeared, the answer&#39;s word count, the conversation title, and whether it persisted to the saved-conversations list.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--prompt &quot;...&quot; (repeatable) or --input &lt;file&gt;</dt><dd>One or more prompts to send, typed directly or read one-per-line from a text file.</dd><dt>--env dev|qa</dt><dd>Which environment&#39;s app instance to drive in the browser.</dd><dt>--headless</dt><dd>Run with no visible window (default is headed, so you can watch and sign in the first time).</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console log</dt><dd>A numbered step trace per prompt as it happens — new chat, prompt sent, response complete, trace checked, saved-list checked.</dd><dt>FuncCallShare_&lt;env&gt;_&lt;timestamp&gt;.json</dt><dd>One pass/fail record per prompt — answer word count, whether the function-call trace rendered, the conversation title, and whether it persisted to the saved list.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Sign-in is cached via the storage-state file, so re-runs skip straight to sending prompts. Everything else is fully live — each run starts a brand-new chat per prompt, so re-running the same list produces a fresh batch to check, not a replay.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Built for a regression suite: point it at a fixed prompt list after any change that could touch the trace feature or the save-to-history path, run it headless in CI, and fail the build on any &#39;not found in panel&#39; or missing-trace result — exactly the intermittent bug a rushed human waves through because they blinked at the wrong moment.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: a real browser drives itself through the app and checks the trace shows up.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 6</div>
+        <h3 class="display">Launches Chromium and signs in</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, before anything else.</dd>
+          <dt>Takes in</dt><dd>A saved storage-state session file, if one exists.</dd>
+          <dt>Shows out</dt><dd>A Chromium session logged into the app — or a 3-minute pause for a one-time manual sign-in.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 6</div>
+        <h3 class="display">Enables the function-call toggle</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, right after signing in.</dd>
+          <dt>Takes in</dt><dd>The app&#39;s settings menu.</dd>
+          <dt>Shows out</dt><dd>The function-call modifier set to Yes and submitted, so every answer from now can surface its trace.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 6</div>
+        <h3 class="display">Submits the prompt like a user</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per prompt in your list.</dd>
+          <dt>Takes in</dt><dd>The prompt text.</dd>
+          <dt>Shows out</dt><dd>A new chat started, the prompt typed and Enter pressed — only once the box is confirmed editable.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 6</div>
+        <h3 class="display">Waits for the stream to settle</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after the prompt is sent.</dd>
+          <dt>Takes in</dt><dd>The streaming answer HTML on screen.</dd>
+          <dt>Shows out</dt><dd>The complete answer — the agent only proceeds once the HTML holds identical for 60s straight, so it never asserts on a half-streamed answer.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 6</div>
+        <h3 class="display">Asserts trace, title, and persistence</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After each answer is confirmed complete.</dd>
+          <dt>Takes in</dt><dd>The finished answer&#39;s DOM.</dd>
+          <dt>Shows out</dt><dd>Whether the function-call panel rendered, the conversation title, and — after navigating home — whether the conversation appears in the saved list.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="5">
+        <div class="uh-slide__no">6 / 6</div>
+        <h3 class="display">Writes the final report</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every prompt in the batch has run.</dd>
+          <dt>Takes in</dt><dd>The pass/fail result of every prompt.</dd>
+          <dt>Shows out</dt><dd>One timestamped JSON file plus a printed summary — how many answered, how many showed a trace, how many persisted.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button><button class="uh-dot" data-uh-dot="5" aria-label="Slide 6"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-share-tester.html">← The Share Tester</a>
+      <a href="the-source-link-inspector.html">The Source-Link Inspector →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

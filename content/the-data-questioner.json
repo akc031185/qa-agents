@@ -1,0 +1,185 @@
+{
+  "slug": "the-data-questioner",
+  "plate": 25,
+  "name": "The Data Questioner",
+  "techName": "db-query-agent.ts",
+  "category": "probe",
+  "oneLiner": "Converts a plain-English question into a correct, read-only SQL query against the app's schema — tables, joins, and date logic already resolved.",
+  "lead": "Ask in natural language — 'how many people used the learning feature yesterday?' — and get back a ready-to-run SELECT. The agent parses the app's `schema.sql` into a table/column/foreign-key map, hands that map to the LLM as context, and constrains generation to the real schema so the query actually compiles against it. No live database connection required.",
+  "chore": "Pulling a number from the database normally means finding someone who knows both the SQL dialect and which of hundreds of tables and columns holds the answer and how they join. They hand-write the query, fix the joins, guess the right date column, and test it. Non-technical requesters can't do any of it, so every ad-hoc question queues behind a specialist.",
+  "instead": "Type the question; get back a correct SELECT with the right tables, joins, and date logic already worked out — plus an optional plain-language explanation of what it does. One LLM round-trip, no queue.",
+  "whyItMatters": "When anyone can pull a trustworthy answer in seconds, decisions stop blocking on a short list of busy SQL specialists.",
+  "howItWorks": [
+    {
+      "step": "Parses the app's `schema.sql` on disk into a structured map of every table, column, and foreign key, plus any trusted reference queries the team keeps alongside it.",
+      "fn": "parse()",
+      "explain": "The schema is read from a **static `schema.sql` DDL export on disk**, never from a live connection — that is the whole safety story: the agent can describe every table without holding any database credential. It **fails fast** with an explicit path in the error if the file is missing, so a misconfigured `schemaDir` surfaces immediately rather than producing an empty schema that silently degrades query generation. `parseDDL` turns raw DDL text into the structured table/column/FK map via pattern matching, then `parseReferenceQueries` layers in the team's trusted example queries so the model can later mirror house style.",
+      "code": "parse(): void {\n  // Resolve the DDL export relative to the configured schema dir — this is a\n  // static file, NOT a live DB; the agent never opens a database connection.\n  const ddlPath = path.join(this.schemaDir, 'schema.sql');\n  if (!fs.existsSync(ddlPath)) {\n    // Fail fast with the exact path so a bad schemaDir is obvious, rather than\n    // silently parsing an empty schema and generating queries against nothing.\n    throw new Error(`Schema file not found: ${ddlPath}`);\n  }\n\n  const ddl = fs.readFileSync(ddlPath, 'utf-8');\n  this.tables = this.parseDDL(ddl);       // regex/pattern-parse DDL -> table/column/FK map\n  this.parseReferenceQueries();           // layer in the team's trusted example queries\n}"
+    },
+    {
+      "step": "Serializes that map into LLM context — every table, column, and foreign-key link, grouped by schema.",
+      "fn": "buildSchemaContext()",
+      "explain": "This flattens the parsed map into **compact, LLM-readable text** — the model never sees raw DDL, only this digest, so what it emits here bounds which tables and columns the query can reference. Two design choices matter: it **groups by schema** (Core vs. the Reporting star schema) so the model can pick the right join path, and it **annotates each column with `PK` and `NOT NULL`** flags because those hints steer the model toward valid joins and away from null-unsafe filters. The optional `schemaFilter` lets `--list-tables` narrow the digest to one schema without rebuilding the parse. Emitting `[schema].[table]` in bracket form nudges the model toward the correct dialect quoting up front.",
+      "code": "buildSchemaContext(schemaFilter?: string): string {\n  const tables = this.getTables(schemaFilter);   // optional filter -> one schema only (used by --list-tables)\n  const parts: string[] = [];\n\n  // Header + a plain-English gloss of each schema's role, so the model knows\n  // Core = transactional and Reporting = star schema before it sees any tables.\n  parts.push('## App Database Schema\\n');\n  parts.push('### Schemas');\n  parts.push('- **Core** — Transactional tables (users, conversations, messages, workflows)');\n  parts.push('- **Reporting** — Star schema (fact + dimension tables)\\n');\n\n  for (const [schema, schemaTables] of bySchema) {\n    parts.push(`### ${schema} Schema (${schemaTables.length} tables)\\n`);\n    for (const t of schemaTables) {\n      const cols = t.columns.map(c => {\n        let desc = `  ${c.name} ${c.type}`;\n        // Surface PK and NOT NULL as inline hints — they steer the model toward\n        // valid join keys and null-safe filters without it guessing.\n        if (c.isPrimaryKey) desc += ' PK';\n        if (!c.nullable) desc += ' NOT NULL';\n        return desc;\n      }).join('\\n');\n      // Bracket-quoted [schema].[table] models the target dialect's quoting up front.\n      parts.push(`[${schema}].[${t.table}]`);\n      parts.push(cols);\n    }\n  }\n  return parts.join('\\n');\n}"
+    },
+    {
+      "step": "Sends the question to the LLM with the schema context and a fixed rule set, constraining generation to real table/column names and to read-only SELECTs — never INSERT/UPDATE/DELETE/DROP/ALTER.",
+      "fn": "buildSystemPrompt()",
+      "explain": "The read-only guarantee lives **here, in the prompt**, not in any downstream sanitizer — rule 1 forbids every mutating verb (`INSERT/UPDATE/DELETE/DROP/ALTER`), so the constraint is applied at generation time before a query ever exists. `dialect` is interpolated into the persona line (`production-ready ${dialect.toUpperCase()}`) so the same rule set retargets MSSQL vs. Postgres without branching. Rules 2–3 pin generation to the **exact** names from `schemaContext` and ban implicit joins, which is what keeps the output compilable against the real schema; rule 5 encodes the star-schema quirk that Reporting facts must be reached **through dimension tables**. The reference queries are appended last so the model treats them as style exemplars rather than hard constraints.",
+      "code": "private buildSystemPrompt(dialect: string): string {\n  const schemaContext = this.schemaParser.buildSchemaContext();          // the table/column digest\n  const referenceQueries = this.schemaParser.buildReferenceQueryContext(); // house-style exemplars\n\n  // dialect is interpolated into the persona line so one rule set retargets\n  // MSSQL vs Postgres; the SELECT-only guarantee is enforced HERE at generation\n  // time (rule 1), not by a downstream sanitizer.\n  return `You are an expert SQL query generator for the app's database.\nYou generate production-ready ${dialect.toUpperCase()} queries.\n\n## Rules\n1. ONLY generate SELECT queries — never INSERT, UPDATE, DELETE, DROP, ALTER\n2. Use the exact table and column names from the schema\n3. Always use proper JOINs — never implicit joins\n4. Include ORDER BY for meaningful result ordering\n5. For the Reporting star schema, always join through dimension tables\n\n${schemaContext}\n\n${referenceQueries}`;   // schema first, then exemplars — exemplars read as style, not law\n}"
+    },
+    {
+      "step": "Parses the LLM reply: pulls the fenced SQL block, the declared tables-used list, and the optional explanation.",
+      "fn": "parseLLMResponse()",
+      "explain": "The model returns free-form prose, so this **defends against a reply that doesn't follow the format** rather than trusting it. Every extraction has a fallback: no fenced ```sql block falls through to `extractFallbackQuery`, and a missing `TABLES_USED:` line falls through to `inferTablesFromQuery`, which derives the table list from the SQL itself — so the tables-used record is never empty just because the model skipped the line. The SQL regex is **non-greedy** (`[\\s\\S]*?`) so it stops at the first closing fence and won't swallow a trailing prose block, while the explanation regex is greedy to `$` to capture the whole trailing note. The explanation stays `undefined` (not empty string) when absent, so callers can distinguish 'no explanation asked for' from 'empty explanation'.",
+      "code": "private parseLLMResponse(response: string): { query: string; explanation?: string; tablesUsed: string[] } {\n  // Non-greedy [\\s\\S]*? stops at the FIRST closing fence so a trailing prose\n  // block isn't swallowed into the query; no fence -> heuristic fallback.\n  const sqlMatch = response.match(/```sql\\s*([\\s\\S]*?)```/);\n  const query = sqlMatch ? sqlMatch[1].trim() : this.extractFallbackQuery(response);\n\n  // Prefer the model's declared TABLES_USED line; if it skipped it, derive the\n  // list FROM the query itself so this is never empty. filter(Boolean) drops\n  // empty entries left by a trailing comma.\n  const tablesMatch = response.match(/TABLES_USED:\\s*(.+)/);\n  const tablesUsed = tablesMatch\n    ? tablesMatch[1].split(',').map(t => t.trim()).filter(Boolean)\n    : this.inferTablesFromQuery(query);\n\n  // Greedy to end-of-string: capture the whole trailing note. Left undefined\n  // (not '') when absent, so callers can tell 'omitted' from 'empty'.\n  const explainMatch = response.match(/EXPLANATION:\\s*([\\s\\S]*?)(?:$)/);\n  const explanation = explainMatch ? explainMatch[1].trim() : undefined;\n\n  return { query, explanation, tablesUsed };\n}"
+    },
+    {
+      "step": "Prints the query and, with `--save`, writes both the `.sql` and a `.json` record to disk.",
+      "fn": "execute()",
+      "explain": "The orchestrator wires the whole pipeline in order, and the single most important choice is **`temperature: 0.1`** — near-deterministic decoding, so the same question against the same schema yields a stable query run-to-run rather than a different-but-equivalent one each time, which is what makes generated SQL reviewable. It re-parses the schema **every invocation** (`this.schemaParser.parse()`) rather than caching, so a freshly re-exported `schema.sql` is always reflected. `--save` is opt-in: `mkdirSync(..., { recursive: true })` makes the output tree idempotently, and the `.sql` file is prefixed with a `-- Question:` comment so the runnable artifact self-documents which ask produced it. The 4096-token cap bounds cost while leaving room for a large query plus its explanation.",
+      "code": "async execute(message: AgentMessage): Promise<AgentResponse> {\n  this.schemaParser.parse();   // re-parse every run — no cache, so a re-exported schema.sql is always current\n\n  const systemPrompt = this.buildSystemPrompt(input.dialect);\n  const userPrompt = this.buildUserPrompt(input.question, input.explain);\n\n  const llmResult = await callClaudeSonnet(systemPrompt, userPrompt, {\n    temperature: 0.1,   // near-deterministic: same question + schema -> stable, reviewable SQL\n    maxTokens: 4096,    // bounds cost while leaving room for a large query + explanation\n  });\n\n  const parsed = this.parseLLMResponse(llmResult.answer);\n  // ...\n\n  if (input.save) {   // persistence is opt-in; a bare run only prints to the terminal\n    fs.mkdirSync(this.outputDir, { recursive: true });   // idempotent — safe if the dir already exists\n    const sqlPath = path.join(this.outputDir, `DbQuery_${ts}.sql`);\n    // Prefix the runnable file with the originating question so the artifact self-documents.\n    fs.writeFileSync(sqlPath, `-- Question: ${input.question}\\n\\n${parsed.query}\\n`);\n  }\n  return this.success(result, 'Query generated successfully');\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Counting yesterday's users of one feature",
+      "input": "Question: 'How many people used the Learning feature yesterday?'",
+      "output": "A read-only SELECT counting distinct users, joining through the date dimension to isolate yesterday and filtering to the Learning activity — printed with the list of tables it touched."
+    },
+    {
+      "caption": "A heavier aggregation, with --explain",
+      "input": "Question: 'Show total word-processing usage by service this week,' with `--explain` set.",
+      "output": "The query plus a plain-language note: aggregates usage per service, groups the week Monday-to-Sunday, orders results descending."
+    },
+    {
+      "caption": "Schema inspection instead of a query",
+      "input": "A `--list-tables` request filtered to one schema.",
+      "output": "A printout of each table in that schema with its column count, foreign-key links, and primary key — no LLM call needed."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Parses the schema DDL",
+      "whenRuns": "First, on every invocation.",
+      "input": "The `schema.sql` DDL file on disk plus any trusted reference queries.",
+      "output": "A structured table/column/foreign-key map, extracted via pattern matching — no live database connection."
+    },
+    {
+      "heading": "Builds the system prompt",
+      "whenRuns": "Right after the schema is parsed.",
+      "input": "The schema map, the reference queries, and the fixed generation rules (joins, SELECT-only, dialect).",
+      "output": "One system prompt carrying everything the LLM needs to emit a correct query in the target dialect (MSSQL or Postgres)."
+    },
+    {
+      "heading": "Calls the LLM",
+      "whenRuns": "Once per question.",
+      "input": "The question plus the system prompt, sent at temperature 0.1 to stay deterministic.",
+      "output": "A reply with a fenced SQL block, a declared TABLES_USED list, and an optional explanation."
+    },
+    {
+      "heading": "Enforces read-only",
+      "whenRuns": "Built into every request — never disabled.",
+      "input": "The generation rules.",
+      "output": "A hard SELECT-only constraint — INSERT/UPDATE/DELETE/DROP/ALTER are never generated."
+    },
+    {
+      "heading": "Persists the result",
+      "whenRuns": "Only with `--save`.",
+      "input": "The generated query, its explanation, and the tables-used list.",
+      "output": "A timestamped `.json` (full record) and `.sql` (runnable query) dropped into the reports folder."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "The app's `schema.sql` DDL export on disk in the toolkit's knowledge folder — no live database connection is needed to generate a query.",
+      "An `ANTHROPIC_API_KEY` — the agent calls Claude to generate the SQL from your natural-language question.",
+      "(Optional) a few trusted reference queries dropped alongside the schema so the model can match the team's house style."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime the agent runs on.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program; Node executes it. Install once per machine.",
+        "firstRun": "Only needed on a fresh machine."
+      },
+      {
+        "label": "Clone the agent code and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the agent's dependencies — the Claude client and the schema-file reader — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op once installed, unless the dependency list changed."
+      },
+      {
+        "label": "Set the one required environment variable.",
+        "cmd": "export ANTHROPIC_API_KEY=your-claude-key",
+        "why": "The agent never touches the database — it reads `schema.sql` on disk, then calls the LLM to generate SQL. The API key is the only hard requirement."
+      },
+      {
+        "label": "Run your question.",
+        "cmd": "npm run db:query -- --question \"How many people used the Learning feature yesterday?\" --explain --save",
+        "why": "`--question` is the natural-language ask. `--explain` appends a plain-language description of the query. `--save` persists it instead of only printing to the terminal.",
+        "firstRun": "Parses the full schema fresh and issues one LLM request.",
+        "rerun": "Identical every time — no cache. A different `--question` just asks something new."
+      },
+      {
+        "label": "Open the generated query.",
+        "cmd": "open ./outputs/reports/db-queries/DbQuery_<timestamp>.sql\n# and the full record:\nopen ./outputs/reports/db-queries/DbQuery_<timestamp>.json",
+        "why": "The `.sql` is the ready-to-paste query. The `.json` is the same query plus its explanation and the tables-used list, for the record."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--question <text>",
+        "desc": "Your natural-language question about the app's records."
+      },
+      {
+        "name": "--dialect",
+        "desc": "Target SQL dialect: the default, or an alternate."
+      },
+      {
+        "name": "--explain, --save, --list-tables, --schema",
+        "desc": "Append an explanation, persist to disk, list every table instead of querying, or filter that listing to one schema."
+      },
+      {
+        "name": "environment variable",
+        "desc": "The `ANTHROPIC_API_KEY` used to generate the query."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "printed query (and explanation)",
+        "desc": "Printed to the terminal on every run, saved or not."
+      },
+      {
+        "name": "DbQuery_<timestamp>.sql",
+        "desc": "The runnable query alone, ready to paste into a DB client (written only with --save)."
+      },
+      {
+        "name": "DbQuery_<timestamp>.json",
+        "desc": "The query plus its explanation and the tables it used (written only with --save)."
+      }
+    ],
+    "rerun": "Every run is a fresh LLM request — no fingerprinting or caching like some of the other agents use. Unsure of a table or column name? Run `--list-tables` first to see the real map before asking.",
+    "integrate": "Wire it behind a chat command or team chatbot so anyone can type a question and get back a vetted, read-only query — no queue, no waiting on the one person who knows the schema. The hard SELECT-only constraint makes it safe to expose broadly."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 2-3 minute screen recording: type a natural-language question, watch a ready-to-run SELECT come back.",
+    "script": [
+      "Open a terminal and say: 'This agent turns a plain question into a database query. Watch.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's already done); explain it's grabbing the AI client and the schema reader.",
+      "Show the schema file sitting on disk; say 'this is the map of every table — the agent never touches the live database.'",
+      "Show the single `export ANTHROPIC_API_KEY=...` line; say this is the only thing it needs to run.",
+      "Type the run command with a real question, e.g. 'How many people used the Learning feature yesterday?', with `--explain --save`.",
+      "Narrate while it runs: schema parsed, prompt sent to the AI, query comes back.",
+      "Open the printed SQL block on screen; read it out loud, pointing at the joins and the date filter.",
+      "Open the saved `.json`; show the explanation and the list of tables it used.",
+      "Close: 'Anyone can ask a question now — no queue, no specialist required.'"
+    ]
+  }
+}

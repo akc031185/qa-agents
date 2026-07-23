@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build your own agent — Field Guide to Software QA Agents</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  /* guide-specific bits only — everything else comes from site.css */
+  .fig{margin:18px 0 26px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-1);padding:22px 20px 14px;text-align:center;}
+  .fig--tint{background:var(--tint);}
+  .fig svg{width:100%;max-width:660px;height:auto;display:inline-block;}
+  .fig figcaption{margin-top:8px;color:var(--ink-soft);font-weight:700;font-size:.85rem;}
+  .fig svg text{font-family:var(--font);}
+  .fig svg .hand{stroke-linecap:round;stroke-linejoin:round;fill:none;}
+  .guide-hero{display:grid;grid-template-columns:1.15fr 1fr;gap:28px;align-items:center;padding:44px 0 10px;}
+  .guide-hero h1.display{margin:16px 0 14px;}
+  .guide-hero .fig{margin:0;}
+  .backlink{display:inline-block;margin-top:20px;font-weight:800;font-size:.9rem;color:var(--ink-soft);text-decoration:none;}
+  .backlink:hover{color:var(--ink);}
+  @media (max-width:760px){.guide-hero{grid-template-columns:1fr;padding-top:30px;}}
+</style>
+</head>
+<body>
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="index.html">Contents</a>
+    <a href="toolkit.html">Toolkit</a>
+    <a href="guides.html">Guides</a>
+    <a href="deck.html">Slides</a>
+  </nav>
+</div></header>
+
+<main class="wrap wrap--article"><article class="plate">
+
+  <a class="backlink" href="guides.html">← All guides</a>
+
+  <!-- ============ Hero ============ -->
+  <section class="s8">
+    <div class="guide-hero">
+      <div>
+        <span class="eyebrow">A guide · build it yourself</span>
+        <h1 class="display">Build your own agent</h1>
+        <p class="lead">Every agent in this catalog is just a small, focused program. With an AI coding CLI — Claude Code or OpenAI's Codex — you describe the agent you want, and it scaffolds, runs, and iterates on the code with you. This guide shows the whole path.</p>
+      </div>
+      <figure class="fig fig--tint">
+        <svg viewBox="0 0 560 300" role="img" aria-label="A terminal window assembling a little robot from a prompt, with a spark above it">
+          <!-- terminal window -->
+          <g transform="rotate(-2 190 150)">
+            <rect x="42" y="58" width="300" height="190" rx="20" fill="#38322F" stroke="var(--deep)" stroke-width="4"/>
+            <circle cx="70" cy="84" r="6" fill="#FF6B6B"/>
+            <circle cx="92" cy="84" r="6" fill="#FFB020"/>
+            <circle cx="114" cy="84" r="6" fill="#2EC4A0"/>
+            <text x="66" y="126" font-size="15" font-weight="800" fill="var(--ac)" font-family="ui-monospace,monospace">$ claude</text>
+            <text x="66" y="154" font-size="13.5" font-weight="700" fill="#FFF3D9" font-family="ui-monospace,monospace">&gt; build me a small CLI</text>
+            <text x="66" y="176" font-size="13.5" font-weight="700" fill="#FFF3D9" font-family="ui-monospace,monospace">&gt; that finds flaky tests…</text>
+            <rect x="66" y="196" width="150" height="10" rx="5" fill="var(--ac)" opacity=".4"/>
+            <rect x="66" y="216" width="110" height="10" rx="5" fill="var(--ac)" opacity=".25"/>
+          </g>
+          <!-- little robot popping out -->
+          <g transform="rotate(3 448 168)">
+            <rect x="398" y="128" width="100" height="82" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+            <circle cx="428" cy="162" r="9" fill="var(--deep)"/>
+            <circle cx="468" cy="162" r="9" fill="var(--deep)"/>
+            <path class="hand" d="M428 186 Q448 198 468 186" stroke="var(--deep)" stroke-width="4.5"/>
+            <path class="hand" d="M448 128 V104" stroke="var(--deep)" stroke-width="4.5"/>
+            <circle cx="448" cy="98" r="8" fill="var(--ac)"/>
+            <rect x="384" y="152" width="14" height="34" rx="7" fill="var(--tint)" stroke="var(--ac)" stroke-width="3.5"/>
+            <rect x="498" y="152" width="14" height="34" rx="7" fill="var(--tint)" stroke="var(--ac)" stroke-width="3.5"/>
+          </g>
+          <text x="448" y="248" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">your new agent</text>
+          <!-- spark + arrow -->
+          <path class="hand" d="M348 150 Q372 148 392 158" stroke="var(--deep)" stroke-width="4.5" stroke-dasharray="1 8"/>
+          <path class="hand" d="M394 46 v20 M384 56 h20" stroke="#FFB020" stroke-width="4.5"/>
+          <circle cx="530" cy="70 " r="6" fill="#2EC4A0"/>
+          <path class="hand" d="M356 258 v14 M349 265 h14" stroke="#FF6B6B" stroke-width="4"/>
+        </svg>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ What you're building ============ -->
+  <section class="s8">
+    <h2 class="display">What you're building</h2>
+    <p>Not a chatbot, and not a server. A <strong>scoped, single-purpose CLI</strong>: typed inputs in, structured outputs out, one job done well. It runs when you invoke it, prints or writes its result, and exits. Most of it is ordinary deterministic code — file reading, parsing, counting. If the job includes a judgment call ("what's the likely <em>cause</em> of this flake?"), the program can make <strong>one narrow LLM call</strong> for exactly that part, and nothing else.</p>
+    <p>That shape is what makes these agents cheap to build, easy to review, and safe to run in CI — and it's the shape every agent in this catalog follows.</p>
+    <figure class="fig">
+      <svg viewBox="0 0 660 200" role="img" aria-label="Pipeline: typed inputs flow into your code, which optionally calls an LLM for judgment, and emits a structured output">
+        <defs>
+          <marker id="ah-pipe" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+          </marker>
+        </defs>
+        <!-- input -->
+        <g transform="rotate(-2 96 96)">
+          <rect x="28" y="66" width="136" height="60" rx="16" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+          <text x="96" y="92" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">typed inputs</text>
+          <text x="96" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink-soft)">files · flags · JSON</text>
+        </g>
+        <path class="hand" d="M170 96 L212 96" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-pipe)"/>
+        <!-- your code -->
+        <g transform="rotate(1.5 314 96)">
+          <rect x="224" y="52" width="180" height="88" rx="18" fill="var(--tint)" stroke="var(--deep)" stroke-width="4"/>
+          <text x="314" y="86" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">your code</text>
+          <text x="314" y="110" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink-soft)">parse · compare · count</text>
+        </g>
+        <!-- optional LLM bubble -->
+        <path class="hand" d="M314 146 Q316 162 330 170" stroke="var(--ac)" stroke-width="4" stroke-dasharray="1 7"/>
+        <g transform="rotate(-2 386 178)">
+          <rect x="308" y="160" width="158" height="34" rx="17" fill="#fff" stroke="var(--ac)" stroke-width="3.5"/>
+          <text x="387" y="182" text-anchor="middle" font-size="12.5" font-weight="800" fill="var(--deep)">optional LLM call ✦ judgment only</text>
+        </g>
+        <path class="hand" d="M410 96 L452 96" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-pipe)"/>
+        <!-- output -->
+        <g transform="rotate(-1.5 552 96)">
+          <rect x="464" y="66" width="176" height="60" rx="16" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+          <text x="552" y="92" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">structured output</text>
+          <text x="552" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink-soft)">report.json · exit code</text>
+        </g>
+      </svg>
+      <figcaption>One job. Deterministic code does the work; the LLM is only consulted for the judgment part.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ Path A — Claude Code ============ -->
+  <section class="s3">
+    <h2 class="display">Path A — Claude Code CLI</h2>
+    <p><strong>Claude Code</strong> is Anthropic's coding agent that lives in your terminal. You point it at a project, describe the tool you want, and it reads your code, scaffolds the program, installs dependencies, runs it, and fixes what breaks — showing you each step for approval. Full setup docs: <a class="doclink" href="https://code.claude.com/docs/en/getting-started" target="_blank" rel="noopener">code.claude.com — getting started</a>.</p>
+
+    <h3 class="display">Install it</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install via npm (needs Node 18+)…</div>
+        <pre class="rb__cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
+        <span class="rb__why"><span>Why</span>The simplest route if you already have Node.js. One global package, updated with <code>npm update -g</code>.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">…or use the native installer (no Node required)</div>
+        <pre class="rb__cmd"><code># macOS / Linux / WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows PowerShell
+irm https://claude.ai/install.ps1 | iex</code></pre>
+        <span class="rb__why"><span>Why</span>Self-contained binary — handy on machines where you don't manage a Node toolchain.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Verify</div>
+        <pre class="rb__cmd"><code>claude --version</code></pre>
+        <span class="rb__why"><span>Why</span>If a version prints, you're installed. First run of <code>claude</code> will walk you through signing in.</span>
+      </li>
+    </ol>
+
+    <h3 class="display">Account: free vs paid</h3>
+    <p>Claude Code runs on either a <strong>paid Claude plan (Pro or Max)</strong> — a fixed monthly subscription that covers CLI usage within the plan's limits — or an <strong>Anthropic API key</strong>, which is pay-as-you-go: you're billed per token the agent uses. Subscription = predictable monthly cost; API key = costs scale with how much you build.</p>
+    <div class="rb__note"><strong>The free Claude.ai plan is chat-only — it does not drive the CLI.</strong> There's no fully-free tier for Claude Code (or, as you'll see below, for Codex). To try it you need a paid plan or an API key. <a class="doclink" href="https://claude.com/pricing" target="_blank" rel="noopener">Check current plans &amp; pricing → claude.com/pricing</a></div>
+
+    <h3 class="display">Build one</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Start Claude Code inside your project</div>
+        <pre class="rb__cmd"><code>cd your-project
+claude</code></pre>
+        <span class="rb__why"><span>Why</span>Claude reads the project it's launched in — your test setup, package manager, and conventions shape what it builds.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Give it a real, scoped prompt</div>
+        <pre class="rb__cmd"><code>&gt; Build a small TypeScript CLI called flaky-finder that reads
+  every JSON file in ./test-results, finds tests that both
+  passed AND failed across runs, and writes a JSON report.
+  Expose it as: npm run analyze -- --input ./test-results
+  --output report.json</code></pre>
+        <span class="rb__why"><span>Why</span>Claude scaffolds the files, installs deps, runs the tool against your data, and iterates — asking you to approve each file edit and command as it goes. The full prompt is in the worked example below.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Own the result</div>
+        <pre class="rb__cmd"><code>npm run analyze -- --input ./test-results --output report.json
+git add -A &amp;&amp; git commit -m "Add flaky-finder CLI"</code></pre>
+        <span class="rb__why"><span>Why</span>The output is a normal program in your repo — you read it, run it, commit it, and change it like any other code. No lock-in to the tool that wrote it.</span>
+      </li>
+    </ol>
+    <div class="rb__note"><strong>Tip: add a <code>CLAUDE.md</code>.</strong> A short markdown file at the repo root ("we use pnpm, tests live in <code>./tests</code>, prefer zod for validation") is read automatically on every session, so the agent starts with your project's context instead of rediscovering it.</div>
+
+    <h3 class="display">Advanced: subagents &amp; the Agent SDK</h3>
+    <p>Once the basics click, Claude Code can define <strong>subagents</strong> — markdown files in <code>.claude/agents/*.md</code> that give a task its own prompt and tool permissions, which Claude delegates to automatically. And for running agents <em>programmatically</em> — say, your flaky-finder as a CI step with no human at the keyboard — the <strong>Claude Agent SDK</strong> (<code>npm i @anthropic-ai/claude-agent-sdk</code> or <code>pip install claude-agent-sdk</code>) exposes the same harness as a library, driven by an API key. Details: <a class="doclink" href="https://code.claude.com/docs/en/agent-sdk/overview" target="_blank" rel="noopener">Agent SDK overview</a>.</p>
+    <pre class="rb__cmd"><code>import { query } from "@anthropic-ai/claude-agent-sdk";
+
+for await (const msg of query({
+  prompt: "Analyze ./test-results and write report.json",
+  options: { allowedTools: ["Read", "Glob", "Write"] },
+})) { /* stream progress into your CI log */ }</code></pre>
+  </section>
+
+  <!-- ============ Path B — Codex ============ -->
+  <section class="s7">
+    <h2 class="display">Path B — OpenAI Codex CLI (the alternative)</h2>
+    <p>If you're already in the ChatGPT ecosystem, <strong>Codex CLI</strong> is OpenAI's equivalent terminal coding agent, and the build flow is the same: launch it in your project, paste the same prompt, approve its steps as it scaffolds, runs, and iterates. Docs: <a class="doclink" href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener">developers.openai.com — Codex CLI</a>.</p>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install</div>
+        <pre class="rb__cmd"><code>npm install -g @openai/codex</code></pre>
+        <span class="rb__why"><span>Why</span>Same npm-global pattern as Claude Code.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Sign in — paid plan or API key</div>
+        <pre class="rb__cmd"><code>codex   # first run prompts you to sign in</code></pre>
+        <span class="rb__why"><span>Why</span>Codex runs on a <strong>paid ChatGPT plan</strong> or an <strong>OpenAI API key</strong> — mirroring Claude Code's model exactly. The free ChatGPT tier doesn't drive the CLI either.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Build — same prompt, same loop</div>
+        <pre class="rb__cmd"><code>cd your-project
+codex
+&gt; Build a small TypeScript CLI called flaky-finder that…</code></pre>
+        <span class="rb__why"><span>Why</span>Describe the tool, approve the steps, keep the code it produces.</span>
+      </li>
+    </ol>
+    <div class="rb__note"><strong>High-level differences, not a verdict:</strong> Codex uses OpenAI's models rather than Anthropic's, and out of the box it carries less project-level configuration and context convention than Claude Code's <code>CLAUDE.md</code> / subagent setup. Both will happily build the worked example below.</div>
+  </section>
+
+  <!-- ============ Worked example ============ -->
+  <section class="s2">
+    <h2 class="display">Worked example: a flaky-test finder</h2>
+    <p>Here's the full prompt you'd hand to either CLI, word for word. Notice how it pins down inputs, outputs, the one optional LLM call, and the exact command surface — the more the prompt reads like a spec, the less the agent has to guess.</p>
+    <pre class="rb__cmd"><code>Build a small TypeScript CLI called flaky-finder.
+
+- Read every JSON file in ./test-results — each file is one
+  test run, listing test names with "passed" or "failed".
+- Find tests that BOTH passed and failed across the runs
+  (those are the flaky ones).
+- Optionally, if an API key is present in the environment,
+  make one LLM call per flaky test to classify the likely
+  cause (timing, ordering, external dependency, …) and
+  suggest a fix. Skip this cleanly if no key is set.
+- Write the findings to a JSON report, sorted by fail rate.
+- Expose it in package.json as:
+    npm run analyze -- --input ./test-results --output report.json
+- No servers, no watch mode: run once, write the file, exit
+  non-zero if any flaky tests were found.</code></pre>
+    <p>A few approved steps later, you get a report shaped like this:</p>
+    <pre class="rb__cmd"><code>{
+  "runsAnalyzed": 12,
+  "flakyTests": [
+    {
+      "name": "checkout › applies discount code",
+      "passed": 9,
+      "failed": 3,
+      "failRate": 0.25,
+      "likelyCause": "race condition — asserts before the cart total re-renders",
+      "recommendation": "await the price update instead of a fixed 500ms sleep"
+    },
+    {
+      "name": "search › returns paginated results",
+      "passed": 11,
+      "failed": 1,
+      "failRate": 0.08,
+      "likelyCause": "external dependency — live search index occasionally cold",
+      "recommendation": "stub the search service in this suite"
+    }
+  ]
+}</code></pre>
+    <div class="rb__note"><strong>Note the split:</strong> counting passes and failures is plain code — free, instant, deterministic. Only <code>likelyCause</code> and <code>recommendation</code> came from the LLM, and the tool still works (minus those two fields) with no API key at all.</div>
+  </section>
+
+  <!-- ============ Free vs paid ============ -->
+  <section class="s1">
+    <h2 class="display">Free vs paid — the honest version</h2>
+    <div class="rb__note"><strong>Good LLM usage costs money.</strong> The models that make these CLIs feel like a competent pair-programmer are the expensive ones to run, and neither vendor gives them away for terminal use. Budget for it the way you'd budget for any developer tool.</div>
+    <div class="rb__note"><strong>Subscription = fixed monthly cost.</strong> A paid Claude plan (Pro/Max) or paid ChatGPT plan is a flat fee with generous-but-real usage limits. Best when you'll use the CLI regularly — heavy weeks don't cost extra.</div>
+    <div class="rb__note"><strong>API key = pay per token.</strong> Building one small agent like the flaky-finder is genuinely cheap this way; costs scale with how much and how often you build. Best for occasional use, CI pipelines, and the Agent SDK.</div>
+    <div class="rb__note"><strong>The free chat tiers won't run either CLI.</strong> Free Claude.ai and free ChatGPT are chat-only. Plans and limits change — always check the live pages: <a class="doclink" href="https://claude.com/pricing" target="_blank" rel="noopener">claude.com/pricing</a> and <a class="doclink" href="https://openai.com/chatgpt/pricing/" target="_blank" rel="noopener">openai.com/chatgpt/pricing</a>.</div>
+  </section>
+
+  <!-- ============ Which to pick ============ -->
+  <section class="s6">
+    <h2 class="display">Which to pick</h2>
+    <p>Both are capable; the fair answer is about fit, not quality.</p>
+    <dl class="rb__list">
+      <dt>Claude Code</dt>
+      <dd>Transparent step-by-step approval of every edit and command; <code>CLAUDE.md</code> for durable project context; subagents for splitting work; the Agent SDK when you want the same harness running headless in CI; MCP servers to plug in trackers, browsers, and databases. The deeper toolbox once agents become a habit.</dd>
+      <dt>OpenAI Codex CLI</dt>
+      <dd>The natural choice if your team already pays for ChatGPT — same sign-in, same ecosystem, and the identical describe → approve → own-the-code loop. Less project-config surface out of the box, which can also mean less to learn on day one.</dd>
+      <dt>Honestly?</dt>
+      <dd>Whichever one you can sign into today. The skill that transfers is writing scoped, spec-like prompts — the worked example above runs on either.</dd>
+    </dl>
+  </section>
+
+</article></main>
+
+<footer class="footer"><div class="wrap">
+  Build your own agent · part of the <strong>Field Guide to Software QA Agents</strong> · describe it, approve it, own the code.
+</div></footer>
+</body>
+</html>

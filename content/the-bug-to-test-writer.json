@@ -1,0 +1,177 @@
+{
+  "slug": "the-bug-to-test-writer",
+  "plate": 4,
+  "name": "The Bug-to-Test Writer",
+  "techName": "bug-tc-generator-agent.ts",
+  "category": "find",
+  "oneLiner": "Turns a bug ticket — text plus screenshots — into a numbered, expected-result test case via a multimodal LLM, tracker-ready.",
+  "lead": "Fetches a bug from ADO, loads a local briefing on its parent story, extracts up to four screenshots, and sends all of it to Gemini 2.0 Flash multimodal to draft a structured test: title, numbered steps, per-step expected results, and a repro-quality rating. Guarantees a sign-in first step, fills gaps from the story briefing, and falls back to a rule-based skeleton if no LLM key is set.",
+  "chore": "Every fixed bug needs a clean test so a tester can confirm it and re-run it later. But reports are messy — one-line title, no steps, an unexplained screenshot. Turning that into a numbered test with a sensible expected result per step is skilled, tedious work, repeated per bug.",
+  "instead": "A complete, ready-to-run test per bug — title, setup, numbered steps each with its own expected result, plus an honest good/partial/poor rating of the original report — serialized as Markdown, a tracker-upload Excel sheet, and optionally Word.",
+  "whyItMatters": "A written test converts a one-time fix into a permanent regression net, and the reporter-quality leaderboard quietly surfaces who writes clear reports and who needs coaching.",
+  "howItWorks": [
+    {
+      "step": "Fetches the raw bug work item (`$expand=all`) and extracts the fields the test needs.",
+      "fn": "fetchBug()",
+      "explain": "The ingest step, hitting the ADO REST API directly rather than through a client wrapper. `$expand=all` is deliberate — it forces ADO to return the **full** field set including the HTML-bearing `System.Description` and `Microsoft.VSTS.TCM.ReproSteps`, which a default fetch omits and which the multimodal draft depends on. Auth is ADO's PAT convention: Basic auth with an **empty username** and the PAT as password (`:${pat}` base64-encoded), which is why the string starts with a bare colon. The `storyRef` regex mines the parent story straight out of the title — `US[_\\s]?(\\d{4,6})` tolerates `US1234`, `US_1234`, or `US 1234`, is case-insensitive, and captures only the digits so downstream code gets a clean number. Every field has a fallback (`priority` defaults to `3`, the rest to `''`) so a sparse ticket still yields a fully-typed `RawBug`.",
+      "code": "private async fetchBug(bugId: number): Promise<RawBug> {\n  const pat = ADO_PAT;\n  const org = process.env.ADO_ORGANIZATION || 'my-org';\n  const proj = process.env.ADO_PROJECT || 'MyProject';\n  // $expand=all forces the HTML description + repro fields the draft needs (a plain GET omits them)\n  const url = `https://dev.azure.com/${org}/${proj}/_apis/wit/workitems/${bugId}?$expand=all&api-version=7.1`;\n  // ADO PAT auth: Basic with EMPTY username + PAT as password -> the leading colon is intentional\n  const auth = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;\n\n  const resp = await fetch(url, { headers: { Authorization: auth } });\n  const data = await resp.json();\n  const f = data.fields || {};\n\n  const title = f['System.Title'] || '';\n  // Tolerates US1234 / US_1234 / US 1234, case-insensitive; captures digits only\n  const storyMatch = title.match(/US[_\\s]?(\\d{4,6})/i);\n  const storyRef = storyMatch ? `US${storyMatch[1]}` : '';\n\n  return {\n    id: bugId, title,\n    priority: f['Microsoft.VSTS.Common.Priority'] || 3, // default to P3 when unset\n    severity: f['Microsoft.VSTS.Common.Severity'] || '',\n    descriptionHtml: f['System.Description'] || '',\n    reproStepsHtml: f['Microsoft.VSTS.TCM.ReproSteps'] || '',\n    storyRef,\n    reportedBy: extractName(f['System.CreatedBy']), // identity object -> plain name\n    // ... plus assignee, tags, and plain-text versions of each field\n  };\n}"
+    },
+    {
+      "step": "Loads a local briefing on the bug's parent story to ground gap-filling — summary, acceptance criteria, business rules.",
+      "fn": "loadStoryIntelligence()",
+      "explain": "The grounding step — it pulls **local** context about the parent story so the LLM can fill gaps in a thin bug without hallucinating product behavior. The story-number match has two fallbacks: try the title first, then `bug.storyRef`, and `storyNumMatch[1] || storyNumMatch[0]` copes with both patterns (the title regex has a capture group; the bare `\\d{4,6}` on `storyRef` does not, so index 0 is the number). It probes each configured dir for `US-<num>.json`, `continue`-ing past misses and returning `empty` (with `found: false`) if none exist — a missing briefing is a normal, non-fatal case. The real point is the **trimming on the way out**: `summary` is capped at 600 chars, criteria to 10, rules to 8, and each array element is flattened to a string (`a.description || String(a)` tolerates both object and plain-string shapes). Only this bounded slice is ever handed to the model — the raw file never leaves disk, which both controls token cost and limits what's exposed.",
+      "code": "function loadStoryIntelligence(bug: RawBug): StoryIntelligence {\n  const empty: StoryIntelligence = { storyId: '', storyTitle: '', summary: '', found: false /* ... */ };\n\n  // Try the title's captured group first, then fall back to storyRef (bare \\d has no group -> [0])\n  const storyNumMatch = bug.title.match(/US[_\\s]?(\\d{4,6})/i) || bug.storyRef.match(/\\d{4,6}/);\n  if (!storyNumMatch) return empty;\n  const storyNum = storyNumMatch[1] || storyNumMatch[0];\n\n  for (const [, storyDir] of Object.entries(INTELLIGENCE_DIRS)) {\n    const candidate = path.join(storyDir, `US-${storyNum}.json`);\n    if (!fs.existsSync(candidate)) continue; // missing briefing is normal — try the next dir\n\n    const raw = JSON.parse(fs.readFileSync(candidate, 'utf-8'));\n    return {\n      storyId: String(raw.storyId || storyNum),\n      storyTitle: raw.storyTitle || raw.title || '',\n      summary: (raw.summary || '').slice(0, 600), // bound tokens + exposure — never the whole file\n      // Flatten each element (object OR plain string) then cap the list length\n      acceptanceCriteria: (raw.acceptanceCriteria || []).map((a: any) => a.description || String(a)).slice(0, 10),\n      businessRules: (raw.businessRules || []).map((r: any) => r.description || String(r)).slice(0, 8),\n      found: true,\n    };\n  }\n  return empty; // no briefing found -> found:false, agent proceeds without grounding\n}"
+    },
+    {
+      "step": "Extracts up to four screenshots from the bug HTML — inline data URIs and ADO attachments — as base64.",
+      "fn": "extractScreenshots()",
+      "explain": "The multimodal input prep — it harvests images from both HTML fields (`descriptionHtml + reproStepsHtml`) so a screenshot pasted in either place is caught. The `while` loop condition ANDs the regex `exec` with `screenshots.length < MAX_IMAGES`, so the walk **stops early** once four images are collected rather than parsing the whole doc — a real cap on request size and token cost. It handles the two ways ADO embeds images differently: `data:image` URIs are already inline base64, split off after the comma, with a `base64.length > 100` guard that discards tracking pixels or truncated/garbage `src`s; `dev.azure.com` attachment URLs must instead be **fetched with the auth header** (they're access-controlled) and the `arrayBuffer` re-encoded to base64. Inline sources parse their real mime from the URI, while fetched attachments assume `image/png`. Each entry is tagged with its `source` so the prompt can label it.",
+      "code": "async function extractScreenshots(bug: RawBug): Promise<BugScreenshot[]> {\n  const screenshots: BugScreenshot[] = [];\n  const combinedHtml = (bug.descriptionHtml || '') + (bug.reproStepsHtml || ''); // catch imgs in EITHER field\n  const imgRegex = /<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>/gi;\n  const MAX_IMAGES = 4;\n  let match: RegExpExecArray | null;\n\n  // Loop stops as soon as 4 are collected — bounds request size, doesn't parse the whole doc\n  while ((match = imgRegex.exec(combinedHtml)) !== null && screenshots.length < MAX_IMAGES) {\n    const src = match[1];\n    if (src.startsWith('data:image')) {\n      const mimeType = src.match(/data:(image\\/\\w+);base64,/)?.[1] || 'image/png'; // real mime from the URI\n      const base64 = src.split(',')[1]; // everything after the comma is the payload\n      // >100 guard drops tracking pixels / truncated or garbage srcs\n      if (base64 && base64.length > 100) screenshots.push({ mimeType, base64, source: 'inline' });\n    } else if (src.includes('dev.azure.com')) {\n      // Attachment URLs are access-controlled — must fetch WITH auth, then re-encode\n      const resp = await fetch(src, { headers: { Authorization: authHeader } });\n      const base64 = Buffer.from(await resp.arrayBuffer()).toString('base64');\n      screenshots.push({ mimeType: 'image/png', base64, source: 'attachment' }); // assume png for fetched\n    }\n  }\n  return screenshots;\n}"
+    },
+    {
+      "step": "Sends the prompt plus each screenshot to Gemini 2.0 Flash multimodal to draft the numbered test.",
+      "fn": "callGeminiMultimodal()",
+      "explain": "The one network call to the model, built to Gemini's `generateContent` shape. The `parts` array interleaves modalities in a single content block: the combined system+user text first, then for each image an `inlineData` part (base64 + mime) **followed by** a text marker like `[Screenshot attached above — inline image]` — that trailing caption is what lets the model reason about *which* screenshot is which instead of seeing anonymous blobs. Two `generationConfig` choices are load-bearing: `temperature: 0.2` keeps the draft near-deterministic (test steps should be stable, not creative), and `maxOutputTokens: 8192` leaves room for a long numbered test with per-step expected results without truncation. The response is dug out defensively — `data.candidates?.[0]?.content?.parts?.[0]?.text || ''` returns `''` rather than throwing if Gemini blocks the response or returns no candidate, which is exactly the empty string the caller's parse-or-fallback path is written to handle.",
+      "code": "async function callGeminiMultimodal(systemText: string, userText: string, images: BugScreenshot[]) {\n  const parts: any[] = [{ text: systemText + '\\n\\n' + userText }]; // text first...\n\n  for (const img of images) {\n    parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } }); // ...then image bytes...\n    parts.push({ text: `[Screenshot attached above — ${img.source} image]` }); // ...then a label so the model can tell them apart\n  }\n\n  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`;\n  const response = await fetch(url, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    // temp 0.2 = near-deterministic steps; 8192 tokens = room for a full numbered test\n    body: JSON.stringify({ contents: [{ parts }], generationConfig: { maxOutputTokens: 8192, temperature: 0.2 } }),\n  });\n\n  const data = await response.json();\n  // Defensive dig: '' (not a throw) if blocked/no candidate — caller falls back on empty\n  const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';\n  return { answer, timeMs: Date.now(), model: 'gemini-2.0-flash' };\n}"
+    },
+    {
+      "step": "Assembles the final test case, guaranteeing a sign-in first step and falling back to a skeleton if the LLM is unavailable.",
+      "fn": "generateTestCase()",
+      "explain": "The orchestrator that ties context-gathering, the model call, and normalization together — and it's built so the agent **always** produces a usable test, never nothing. The LLM path is guarded twice: `GOOGLE_API_KEY` gates whether Gemini is even called (no key → straight to `buildFallbackTestCase`), and the second `if (!llmOutput)` catches the case where the key exists but `parseLLMJson` fails on malformed model output — both collapse to the same rule-based skeleton. Screenshots are only extracted when `input.includeScreenshots` is set (the `--no-screenshots` escape hatch). The post-processing is the invariant that makes every emitted test runnable: if the first step's `action` doesn't mention `navigate`, it `unshift`s a canonical sign-in step and then **renumbers the whole array** so `stepNumber` stays 1..N contiguous — a tester can't run step 3 without first being logged in. `qualityAssessment` defaults to `'poor'` so a rating is never absent.",
+      "code": "private async generateTestCase(bug: RawBug, input: AgentInput): Promise<GeneratedTestCase> {\n  const intel = loadStoryIntelligence(bug);\n  const systemPrompt = buildSystemPrompt(input.appUrl);\n  const userPrompt = buildUserPrompt(bug, intel);\n\n  let screenshots: BugScreenshot[] = [];\n  if (input.includeScreenshots) screenshots = await extractScreenshots(bug); // --no-screenshots skips this\n\n  // Guard 1: no API key -> skip Gemini entirely, use the rule-based skeleton\n  let llmOutput = GOOGLE_API_KEY\n    ? parseLLMJson<LLMTestCaseOutput>((await callGeminiMultimodal(systemPrompt, userPrompt, screenshots)).answer)\n    : buildFallbackTestCase(bug, input.appUrl);\n\n  if (!llmOutput) llmOutput = buildFallbackTestCase(bug, input.appUrl); // Guard 2: key present but parse failed\n\n  const steps = (llmOutput.steps || []).map(s => ({ ...s })); // clone so renumbering doesn't mutate source\n\n  // Invariant: step 1 is ALWAYS sign-in — insert + renumber if the model forgot\n  if (steps.length === 0 || !steps[0].action.toLowerCase().includes('navigate')) {\n    steps.unshift({\n      stepNumber: 1,\n      action: `Navigate to ${input.appUrl} and sign in with your organization's SSO credentials.`,\n      expectedResult: 'The app home page loads with the main navigation visible.',\n    });\n    steps.forEach((s, idx) => { s.stepNumber = idx + 1; }); // keep numbering 1..N contiguous\n  }\n\n  return { bugId: bug.id, title: llmOutput.title, steps, qualityAssessment: llmOutput.qualityAssessment || 'poor' } as GeneratedTestCase;\n}"
+    },
+    {
+      "step": "Aggregates the good/partial/poor ratings per reporter into a scored, ranked leaderboard.",
+      "fn": "buildPersonSummary()",
+      "explain": "The leaderboard builder — it turns the per-bug `qualityAssessment` ratings into a per-reporter quality score. The bucketing exploits the fact that `qualityAssessment` is exactly one of `good`/`partial`/`poor`, so `map.get(name)![tc.qualityAssessment]++` uses the rating string **as the object key** to increment the right counter in one line, with `reportedBy || 'Unknown'` catching unattributed tickets. The score is a weighted average where `partial` counts as **half** a good report (`counts.good + counts.partial * 0.5`) over `total`, scaled to a 0–100 percentage — so someone with all-`good` reports scores 100 and all-`poor` scores 0. The `total > 0` guard is defensive against an empty bucket. The final sort is descending by `score`, with `b.total - a.total` as the tiebreak so that among equal scores the higher-volume reporter ranks first — rewarding a sustained track record over a lucky one-off.",
+      "code": "private buildPersonSummary(testCases: GeneratedTestCase[]) {\n  const map = new Map<string, { good: number; partial: number; poor: number }>();\n\n  for (const tc of testCases) {\n    const name = tc.reportedBy || 'Unknown'; // attribute unlabeled tickets somewhere\n    if (!map.has(name)) map.set(name, { good: 0, partial: 0, poor: 0 });\n    // qualityAssessment is 'good'|'partial'|'poor' — use it directly as the counter key\n    map.get(name)![tc.qualityAssessment]++;\n  }\n\n  return Array.from(map.entries())\n    .map(([name, counts]) => {\n      const total = counts.good + counts.partial + counts.poor;\n      // Score: good=100%, partial=50%, poor=0% — weighted average (partial = half a good)\n      const score = total > 0 ? Math.round(((counts.good + counts.partial * 0.5) / total) * 100) : 0;\n      return { name, total, ...counts, score };\n    })\n    // Rank by score desc; higher volume breaks ties so a track record beats a one-off\n    .sort((a, b) => b.score - a.score || b.total - a.total);\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "One-line bug, zero steps → real test",
+      "input": "Bug #204 `Summary button does nothing`, no repro steps, one screenshot.",
+      "output": "Test `Verify the Summary button produces a summary`: step 1 sign-in, steps to open a session and click Summary, each with an expected result — rated `poor` (no original steps). The screenshot fed the multimodal draft."
+    },
+    {
+      "caption": "Well-written bug, faithful turnaround",
+      "input": "Bug #318 with clear numbered steps and an error-state screenshot.",
+      "output": "A step-by-step test mirroring the reporter's steps and confirming correct behavior, rated `good`, plus a tracker-upload `.xlsx` row."
+    },
+    {
+      "caption": "Reporter-quality leaderboard",
+      "input": "`--bug-ids` with ten tickets from several reporters.",
+      "output": "Ten generated tests plus a ranked table of each reporter's good/partial/poor mix and weighted score — a data-backed nudge on report quality."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Fetch the bug from ADO",
+      "whenRuns": "First, per bug ID.",
+      "input": "A bug ID.",
+      "output": "Title, description, repro steps, priority, severity, reporter — via the REST API with `$expand=all`."
+    },
+    {
+      "heading": "Load local story briefing",
+      "whenRuns": "Right after fetch.",
+      "input": "The bug's linked user story number.",
+      "output": "A trimmed local `US-<num>.json` — summary, flows, rules, acceptance criteria — for gap-filling, never sent wholesale to the model."
+    },
+    {
+      "heading": "Extract screenshots",
+      "whenRuns": "Unless `--no-screenshots`.",
+      "input": "Images embedded in or attached to the bug.",
+      "output": "Up to four base64 images (inline or attachment), ready to attach to the request."
+    },
+    {
+      "heading": "Draft with the multimodal LLM",
+      "whenRuns": "Once context is assembled.",
+      "input": "Bug text, screenshots, story summary.",
+      "output": "A structured test case — title, numbered steps with expected results, repro-quality rating — from Gemini 2.0 Flash (or the rule-based fallback)."
+    },
+    {
+      "heading": "Serialize the batch",
+      "whenRuns": "Last, over the whole batch.",
+      "input": "Every generated test case.",
+      "output": "Markdown, a tracker-upload `.xlsx`, optionally `.docx` — plus the weighted reporter-quality leaderboard."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "An Azure DevOps org/project and a **PAT** with work-item read scope.",
+      "One or more bug IDs — already-filed tickets with at least a title and, ideally, a description or screenshots.",
+      "A **Google Gemini API key** — bug text and screenshots are sent to the multimodal model to draft the test; without a key it drops to a rule-based skeleton."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript on Node. One-time per machine.",
+        "firstRun": "First time only, on a new machine."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the ADO client, the Gemini client, and the `xlsx`/Word writers into `node_modules`.",
+        "firstRun": "Full install, a minute or two.",
+        "rerun": "No-op once installed, unless the dependency list changed."
+      },
+      {
+        "label": "Export the ADO target and the Gemini key (environment variables).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token\nexport GOOGLE_API_KEY=your-gemini-key",
+        "why": "Read at startup to resolve the board and the drafting model. Leave `GOOGLE_API_KEY` unset and it still runs on the rule-based fallback."
+      },
+      {
+        "label": "Dry-run to fetch the bugs — no LLM call.",
+        "cmd": "npm run bug:tc -- --bug-ids \"4397,4262,4488\" --dry-run",
+        "why": "`--dry-run` fetches and reads the bugs only — no Gemini call, no files — a quick check that the IDs and access resolve."
+      },
+      {
+        "label": "Generate the real test cases.",
+        "cmd": "npm run bug:tc -- --bug-ids \"4397,4262,4488\"\n# skip sending screenshots to the AI:\nnpm run bug:tc -- --bug-ids \"4397\" --no-screenshots\n# also produce a Word document:\nnpm run bug:tc:word -- --bug-ids \"4397\"",
+        "why": "The real run — one LLM-drafted test per bug ID, each starting with sign-in and ending with the fix confirmed.",
+        "rerun": "No caching — the same IDs re-fetch and re-draft from scratch, so an improved bug description flows through on the next run."
+      },
+      {
+        "label": "Open the generated tests.",
+        "cmd": "open ./outputs/reports/bug-tc/BugTC_<timestamp>.md\nopen ./outputs/reports/bug-tc/BugTC_ADO_Upload_<timestamp>.xlsx",
+        "why": "The `.md` is the readable draft; the `.xlsx` is pre-shaped for bulk upload into the tracker as real test cases."
+      }
+    ],
+    "inputs": [
+      { "name": "--bug-ids <ids>", "desc": "Comma-separated bug IDs to generate tests for (required)." },
+      { "name": "--app-url <url>", "desc": "Environment URL the generated test's sign-in step points at." },
+      { "name": "--no-screenshots", "desc": "Skip extracting and sending screenshots — text-only draft." },
+      { "name": "--word", "desc": "Also serialize a `.docx`." },
+      { "name": "--dry-run", "desc": "Fetch bugs only — skip the LLM generation step." },
+      { "name": "environment variables", "desc": "Org/project target, the PAT, and the Gemini key." }
+    ],
+    "outputs": [
+      { "name": "BugTC_<timestamp>.json", "desc": "Full structured test cases — title, steps, expected results, repro-quality rating per bug." },
+      { "name": "BugTC_<timestamp>.md", "desc": "The same tests rendered to read and follow." },
+      { "name": "BugTC_ADO_Upload_<timestamp>.xlsx", "desc": "Tracker-shaped sheet for bulk-uploading the tests as real test cases." },
+      { "name": "BugTC_<timestamp>.docx", "desc": "Shareable Word version, only with `--word`." }
+    ],
+    "rerun": "No caching — the same bug ID re-fetches the ticket and re-drafts from scratch, so an improved description or a newly-added screenshot flows through automatically on re-run.",
+    "integrate": "Trigger it the moment a bug flips to Resolved (an ADO webhook or state-change hook) with that bug's ID, then hand the `.xlsx` to your bulk test-case importer — 'fixed' becomes 'has a permanent regression test' with no manual writing in between."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 2-3 minute screen recording: a messy bug report becomes a numbered, ready-to-run test via multimodal LLM.",
+    "script": [
+      "Open a terminal beside the bug ticket in the browser so viewers can compare the two.",
+      "Say: 'This agent reads a bug report — even a messy one — and writes the test that proves it's really fixed. Watch.'",
+      "Show the bug ticket: a short title, thin description, one screenshot.",
+      "Run `node -v` and `npm install` (or note it's already done); one line each on what they do.",
+      "Show the `export ADO_ORGANIZATION / ADO_PROJECT / ADO_PAT / GOOGLE_API_KEY` lines; note the AI key is what lets it read the screenshot too.",
+      "Run the command with `--dry-run` first; point out it just confirms the bug was fetched.",
+      "Run it for real; narrate as it calls the AI model with the bug text and screenshot together.",
+      "Open the produced `.md`; read out step 1 (always sign-in), the numbered steps, and the expected result on each.",
+      "Point out the repro-quality rating it gave the original report — 'poor,' in this case — and explain why.",
+      "Close: 'That test now lives in the tracker forever — the next regression won't get past it.'"
+    ]
+  }
+}

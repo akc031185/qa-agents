@@ -1,0 +1,175 @@
+{
+  "slug": "the-share-tester",
+  "plate": 27,
+  "name": "The Share Tester",
+  "techName": "conversation-share-agent.ts",
+  "category": "probe",
+  "oneLiner": "Exercises the create-answer-share flow end to end via API: creates a conversation, sends a prompt, then shares it with the exact recipients you name — repeatably, in batch.",
+  "lead": "Drives the app's ask-then-share path through its HTTP API. For each prompt it POSTs a new conversation, sends the prompt, reads the assistant's answer, then shares that conversation with the recipients you list — read-only or edit. Runs a whole prompt batch in one invocation.",
+  "chore": "Testing sharing by hand means: open the app, start a conversation, type a prompt, wait for the answer, open the share panel, search each recipient by name, pick the right person out of the directory, set their permission, confirm — then repeat for every prompt and every recipient. Slow, and easy to share with the wrong 'John' or skip a step.",
+  "instead": "Give it a prompt list and a name list once. It creates and shares every conversation, resolves each recipient against the directory (exact match, fuzzy fallback), records who it shared with and whether the call succeeded, and returns a clean summary with every conversation ID.",
+  "whyItMatters": "Sharing puts one person's work in someone else's hands — quietly sharing with the wrong person, or failing to share at all, is exactly the bug you want caught before real users hit it.",
+  "howItWorks": [
+    {
+      "step": "Resolves each recipient name against the directory, requiring an exact display-name match with a contains fallback, so it shares with the right account.",
+      "fn": "searchUser()",
+      "explain": "Because a mis-share is exactly the bug this agent exists to catch, resolution is **exact-match-first**: the full candidate list is scanned for a display-name that equals the typed name before the fuzzy pass ever runs, so the right account always wins over a near-namesake. The directory *query* is intentionally broader than the *match* — it sends only the token before the first comma (`split(',')[0]`) with `top: 50`, so a 'Last, First' input still pulls candidates from a last-name-indexed directory, then the strict equality re-filters them. The second loop's case-insensitive **contains** match is a deliberate fallback, not the primary path. Every field access is chained (`displayName || userName || name`, `mail || userEmail || email`) to absorb directory-payload variation, and it returns `null` on no match so the caller can drop that recipient rather than share with a wrong guess.",
+      "code": "async function searchUser(baseUrl: string, token: string, name: string): Promise<UserInfo | null> {\n  // Query on last name only (before the first comma) so a 'Last, First' input\n  // still returns candidates; top:50 widens the pool for the strict re-filter below.\n  const searchTerm = name.split(',')[0].trim();\n  const result = await apiRequest(baseUrl, token, 'POST', '/api/v1/entrausers/search', {\n    term: searchTerm,\n    top: 50,\n  });\n  // Normalize the payload shape: bare array, or a .value/.users wrapper.\n  const users = Array.isArray(result) ? result : (result.value || result.users || []);\n\n  // PASS 1 — exact display-name equality, so the right account beats a near-namesake.\n  for (const u of users) {\n    const displayName = u.displayName || u.userName || u.name || '';   // field varies by directory\n    if (displayName === name) {\n      return { userId: u.id || u.userId || '', userName: displayName, userEmail: u.mail || u.userEmail || u.email || '' };\n    }\n  }\n  // PASS 2 — only if no exact hit: case-insensitive contains, as a fallback.\n  for (const u of users) {\n    const displayName = u.displayName || u.userName || u.name || '';\n    if (displayName.toLowerCase().includes(name.toLowerCase())) {\n      return { userId: u.id || u.userId || '', userName: displayName, userEmail: u.mail || u.userEmail || u.email || '' };\n    }\n  }\n  return null;   // no match -> null, so the caller drops the recipient instead of guessing\n}"
+    },
+    {
+      "step": "Every call — create conversation, send prompt, share — goes through one HTTPS helper that carries the bearer token and parses the JSON response.",
+      "fn": "apiRequest()",
+      "explain": "One hand-rolled `https.request` helper backs **every** call (create, ask, share), Promise-wrapped so the async agent can `await` it. The stream is accumulated chunk-by-chunk (`res.on('data')` → `res.on('end')`) because Node's raw HTTP delivers the body in pieces — you can't read it in one shot. Success is defined strictly as a **2xx** status, and the `try/catch` around `JSON.parse` **tolerates a non-JSON 2xx body** by resolving the raw string instead of throwing, so an endpoint that returns plain text on success doesn't fail the run. Any non-2xx **rejects** with the status code plus a 200-char slice of the body — enough to diagnose a 401 or 400 without dumping a full error page into the log. `Content-Length` is computed with `Buffer.byteLength` (byte count, not string length) so multibyte prompt text sends a correct header.",
+      "code": "function apiRequest(baseUrl: string, token: string, method: string, apiPath: string, body?: any): Promise<any> {\n  return new Promise((resolve, reject) => {\n    const u = new URL(baseUrl + apiPath);\n    const data = body ? JSON.stringify(body) : '';\n    const req = https.request({\n      hostname: u.hostname,\n      path: u.pathname,\n      method,\n      headers: {\n        'Authorization': `Bearer ${token}`,   // bearer token on every call\n        'Content-Type': 'application/json',\n        // byteLength (not string .length) so multibyte prompt text sends a correct header\n        'Content-Length': Buffer.byteLength(data),\n      },\n    }, res => {\n      let d = '';\n      res.on('data', (c) => d += c);        // raw HTTP arrives in chunks — accumulate\n      res.on('end', () => {                 // ...then process the whole body\n        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {\n          // Tolerate a non-JSON 2xx body: resolve the raw string instead of throwing.\n          try { resolve(JSON.parse(d)); } catch { resolve(d); }\n        } else {\n          // Non-2xx rejects with status + a 200-char slice — enough to diagnose, not a full error page.\n          reject(new Error(`API ${res.statusCode}: ${d.slice(0, 200)}`));\n        }\n      });\n    });\n    if (data) req.write(data);   // only write a body when there is one\n    req.end();\n  });\n}"
+    },
+    {
+      "step": "Per prompt: POSTs a new conversation, sends the prompt, reads the full answer, then POSTs a share request carrying every resolved recipient at the chosen role.",
+      "fn": "main()",
+      "explain": "This is the **strictly-ordered create → ask → share** chain, and each `await` is a real dependency, not just style: the share URL is built from `conversationId`, which only exists after the create call returns, so the steps physically cannot run out of order. The conversation name is stamped with `Date.now()` to keep every run's conversations **uniquely named** — a deliberate non-idempotency that suits repeated regression sweeps. `answer.match(/\\S+/g) || []` counts words defensively so an empty answer records `0` rather than throwing on a null match. The share payload is assembled from the **already-resolved** recipients (id + email + role), so the risky name→account step happened earlier and this call only transmits verified accounts — every recipient carries the same run-level `args.role`.",
+      "code": "// Create conversation — Date.now() in the name keeps each run's conversations\n// uniquely identifiable (intentionally non-idempotent, good for regression sweeps).\nconst conv = await apiRequest(baseUrl, token, 'POST', '/api/v1/conversations', { name: `Share-${Date.now()}` });\nconst conversationId = conv.id;   // downstream URLs depend on this — enforces create-before-share ordering\n\n// Send the prompt into that conversation and wait for the assistant's answer.\nconst msg = await apiRequest(baseUrl, token, 'POST', `/api/v1/conversations/${conversationId}`, {\n  question: prompt,\n  limit: 5,\n  service: args.model,\n});\nconst answer = msg.answer || '';\nconst wordCount = (answer.match(/\\S+/g) || []).length;   // || [] -> empty answer counts as 0, never throws\n\n// Share with EVERY already-resolved recipient — name->account happened earlier,\n// so this only transmits verified accounts, each at the same run-level role.\nconst sharePayload = {\n  users: resolvedUsers.map(u => ({ userId: u.userId, userName: u.userName, userEmail: u.userEmail, role: args.role })),\n};\nawait apiRequest(baseUrl, token, 'POST', `/api/v1/conversations/${conversationId}/shares`, sharePayload);"
+    },
+    {
+      "step": "Records each share as success or failure, then prints a summary and writes everything — including conversation IDs — to a JSON report.",
+      "fn": "main()",
+      "explain": "One report per run, and the filename is engineered to be **collision-free and filesystem-safe**: `toISOString()` is stripped of `:` and `.` (illegal or awkward in filenames on some OSes) and sliced to second precision, then tagged with `env` — so parallel runs against different environments never overwrite each other. `mkdirSync(..., { recursive: true })` builds the whole `outputs/reports/...` tree idempotently on a fresh checkout. The numeric role is **decoded back to human-readable** `'read-only'`/`'edit'` in the record so a reader doesn't have to remember that 0 means read-only, while the raw per-conversation `results` (ids, answers, share success flags) are written verbatim for the paper trail.",
+      "code": "const outDir = path.resolve(__dirname, '..', 'outputs', 'reports', 'conversation-shares');\nfs.mkdirSync(outDir, { recursive: true });   // build the whole report tree idempotently\n// Strip ':' and '.' (illegal/awkward in filenames) and keep second precision;\n// tagging with env means parallel runs never clobber each other's report.\nconst ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);\nconst outPath = path.join(outDir, `ConvShare_${args.env}_${ts}.json`);\nfs.writeFileSync(outPath, JSON.stringify({\n  env: args.env,\n  model: args.model,\n  role: args.role === 0 ? 'read-only' : 'edit',   // decode numeric role back to human-readable\n  timestamp: new Date().toISOString(),\n  results,   // raw per-conversation record: ids, answers, share success flags\n}, null, 2));"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "One prompt, one recipient, read-only",
+      "input": "Prompt 'Summarize our aviation portfolio' and one recipient, 'Okafor, Ada'.",
+      "output": "A conversation is created and answered, Ada Okafor is resolved in the directory, the conversation is shared read-only, and the run reports '1 created, 1 shared' with the conversation ID."
+    },
+    {
+      "caption": "A prompt file, edit rights",
+      "input": "A text file of ten prompts, two recipients, role `edit`.",
+      "output": "Ten conversations created and answered in turn, each shared with both recipients as editors; the summary shows how many succeeded and lists every conversation ID next to its prompt."
+    },
+    {
+      "caption": "A recipient that resolves to nobody",
+      "input": "A prompt plus a misspelled name matching no directory entry.",
+      "output": "That name is reported 'not found', and if no valid recipients remain the run aborts rather than creating an un-shareable conversation."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Resolves every recipient first",
+      "whenRuns": "Before any conversation is created.",
+      "input": "The list of names you typed.",
+      "output": "Each name matched to a real directory entry — exact match first, contains fallback — or reported 'not found'."
+    },
+    {
+      "heading": "Creates a fresh conversation",
+      "whenRuns": "Once per prompt.",
+      "input": "A generated placeholder name.",
+      "output": "A new conversation ID from the app's API, ready to receive the prompt."
+    },
+    {
+      "heading": "Sends the prompt and reads the answer",
+      "whenRuns": "Right after the conversation is created.",
+      "input": "Your prompt text.",
+      "output": "The assistant's full answer, with its word count logged."
+    },
+    {
+      "heading": "Shares with the resolved recipients",
+      "whenRuns": "After the answer returns.",
+      "input": "The resolved recipients and the chosen role — read-only (0) or edit (1).",
+      "output": "A share request per recipient; each recorded as succeeded or failed."
+    },
+    {
+      "heading": "Writes the report",
+      "whenRuns": "After every prompt in the batch is done.",
+      "input": "Every conversation, its answer, and its share outcomes.",
+      "output": "One timestamped JSON file listing every conversation ID and each share's success flag."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "A reachable instance of the app's API for the target environment, plus a bearer token for it.",
+      "Directory search must be reachable through that same API, since every recipient is resolved by exact name.",
+      "(Optional) a plain text file of prompts, one per line, to run a batch instead of a single prompt."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime the agent runs on.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program; Node executes it. Install once per machine.",
+        "firstRun": "Only needed on a fresh machine."
+      },
+      {
+        "label": "Clone the agent code and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the agent's dependencies — the API client and the env-config loader — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op once installed, unless the dependency list changed."
+      },
+      {
+        "label": "Set the target environment (environment variables).",
+        "cmd": "export APP_API_URL_DEV=https://dev.your-app.example.com\nexport APP_API_TOKEN_DEV=your-bearer-token\nexport APP_MODEL=gpt5   # optional, this is the default",
+        "why": "The URL and token select the environment's API and authorize it. Swap them and the identical run targets a different environment."
+      },
+      {
+        "label": "Run a prompt and a recipient.",
+        "cmd": "npx ts-node agents/conversation-share-agent.ts \\\n  --env dev \\\n  --prompt \"Summarize our aviation portfolio\" \\\n  --share-with \"Okafor, Ada\" \\\n  --role read-only\n\n# batch mode, reading prompts from a file:\nnpx ts-node agents/conversation-share-agent.ts \\\n  --env dev --input prompts.txt --share-with \"Okafor, Ada\"",
+        "why": "Per prompt it creates a conversation, sends the prompt, reads the full answer, then shares with every resolved recipient at the chosen role.",
+        "firstRun": "Resolves every recipient against the directory first, then runs the create-answer-share sequence for every prompt.",
+        "rerun": "Identical sequence again — new conversations are created and shared each time, nothing is skipped or deduplicated."
+      },
+      {
+        "label": "Open the report.",
+        "cmd": "open ./outputs/reports/conversation-shares/ConvShare_dev_<timestamp>.json",
+        "why": "Lists every conversation created, its full answer, and each recipient's share outcome — the permanent record of the run."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--prompt \"...\" (repeatable) or --input <file>",
+        "desc": "One or more prompts to send, typed directly or read one-per-line from a text file."
+      },
+      {
+        "name": "--share-with \"Last, First\" (repeatable)",
+        "desc": "The exact display name of each recipient to share with."
+      },
+      {
+        "name": "--role read-only|edit",
+        "desc": "The permission level to share at (defaults to read-only)."
+      },
+      {
+        "name": "--env, environment variables",
+        "desc": "Which environment to target, plus the URL and token that authorize it."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console log",
+        "desc": "Per prompt: the conversation created, the answer's word count, and each share's success or failure."
+      },
+      {
+        "name": "ConvShare_<env>_<timestamp>.json",
+        "desc": "Every conversation ID, its full answer, and each recipient's share outcome, timestamped for the record."
+      }
+    ],
+    "rerun": "Not idempotent — each run creates new conversations and re-fires share requests; running the same command twice doubles the conversations. That makes it well suited to a repeated regression sweep, not a one-time share you only want to happen once.",
+    "integrate": "Drop it into a nightly regression job with a fixed prompt list and a couple of test-account names — it becomes a standing check that the create-answer-share chain still works end to end, and the saved conversation IDs give you a paper trail to open by hand if something looks off."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-minute screen recording: one prompt and one name in, a shared conversation out.",
+    "script": [
+      "Open a terminal and say: 'This agent creates a conversation, gets an answer, and shares it with the person you name. Watch.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's already done); explain it's grabbing the API and directory-search helpers.",
+      "Show the two `export` lines for the URL and token; say 'this is the only environment-specific part.'",
+      "Type the run command with a real prompt and one recipient name, read-only permission.",
+      "Narrate as it resolves the recipient against the company directory before doing anything else.",
+      "Watch the conversation get created, the prompt sent, and the answer's word count print.",
+      "Point out the share step firing and the 'shared successfully' line.",
+      "Open the saved `.json`; show the conversation ID and the recipient's success flag.",
+      "Close: 'Do this for ten prompts and five people, and it's the same one command.'"
+    ]
+  }
+}

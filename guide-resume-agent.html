@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A résumé-builder agent — Field Guide to Software QA Agents</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  /* guide-specific bits only — everything else comes from site.css */
+  .fig{margin:18px 0 26px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-1);padding:22px 20px 14px;text-align:center;}
+  .fig--tint{background:var(--tint);}
+  .fig svg{width:100%;max-width:660px;height:auto;display:inline-block;}
+  .fig figcaption{margin-top:8px;color:var(--ink-soft);font-weight:700;font-size:.85rem;}
+  .fig svg text{font-family:var(--font);}
+  .fig svg .hand{stroke-linecap:round;stroke-linejoin:round;fill:none;}
+  .guide-hero{display:grid;grid-template-columns:1.15fr 1fr;gap:28px;align-items:center;padding:44px 0 10px;}
+  .guide-hero h1.display{margin:16px 0 14px;}
+  .guide-hero .fig{margin:0;}
+  .backlink{display:inline-block;margin-top:20px;font-weight:800;font-size:.9rem;color:var(--ink-soft);text-decoration:none;}
+  .backlink:hover{color:var(--ink);}
+  @media (max-width:760px){.guide-hero{grid-template-columns:1fr;padding-top:30px;}}
+</style>
+</head>
+<body>
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="index.html">Contents</a>
+    <a href="toolkit.html">Toolkit</a>
+    <a href="guides.html">Guides</a>
+    <a href="deck.html">Slides</a>
+  </nav>
+</div></header>
+
+<main class="wrap wrap--article"><article class="plate">
+
+  <a class="backlink" href="guides.html">← All guides</a>
+
+  <!-- ============ Hero ============ -->
+  <section class="s2">
+    <div class="guide-hero">
+      <div>
+        <span class="eyebrow">A guide · a non-QA example</span>
+        <h1 class="display">A résumé-builder agent</h1>
+        <p class="lead">Nothing here is QA-specific. It's a small Claude Code agent that keeps a résumé in Markdown, tailors it to a job description, scores it for ATS, and renders a polished Word document — the "build your own agent" pattern applied to something everyone needs.</p>
+      </div>
+      <figure class="fig fig--tint">
+        <svg viewBox="0 0 560 300" role="img" aria-label="A Markdown résumé flows through a spark of processing into a clean, styled Word document">
+          <defs>
+            <marker id="ah-hero" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+            </marker>
+          </defs>
+          <!-- markdown doc -->
+          <g transform="rotate(-3 118 150)">
+            <rect x="48" y="62" width="140" height="176" rx="16" fill="#fff" stroke="var(--deep)" stroke-width="4"/>
+            <rect x="66" y="82" width="58" height="20" rx="7" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+            <text x="95" y="97" text-anchor="middle" font-size="12" font-weight="800" fill="var(--deep)" font-family="ui-monospace,monospace">.md</text>
+            <text x="66" y="128" font-size="13" font-weight="800" fill="var(--deep)" font-family="ui-monospace,monospace"># Your Name</text>
+            <rect x="66" y="140" width="104" height="8" rx="4" fill="var(--ac)" opacity=".35"/>
+            <rect x="66" y="156" width="86" height="8" rx="4" fill="var(--ac)" opacity=".25"/>
+            <text x="66" y="184" font-size="13" font-weight="800" fill="var(--deep)" font-family="ui-monospace,monospace">## Summary</text>
+            <rect x="66" y="196" width="96" height="8" rx="4" fill="var(--ac)" opacity=".3"/>
+            <rect x="66" y="212" width="72" height="8" rx="4" fill="var(--ac)" opacity=".2"/>
+          </g>
+          <text x="118" y="270" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">résumé.md</text>
+          <!-- spark / gear in the middle -->
+          <path class="hand" d="M196 150 L232 150" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-hero)"/>
+          <g transform="rotate(6 280 150)">
+            <circle cx="280" cy="150" r="34" fill="var(--tint)" stroke="var(--deep)" stroke-width="4"/>
+            <path class="hand" d="M280 106 v14 M280 180 v14 M236 150 h14 M310 150 h14 M249 119 l10 10 M311 181 l10 10 M311 119 l-10 10 M249 181 l10-10" stroke="var(--deep)" stroke-width="4.5"/>
+            <path class="hand" d="M270 152 l7 8 14-18" stroke="var(--ac)" stroke-width="5"/>
+          </g>
+          <path class="hand" d="M330 150 L366 150" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-hero)"/>
+          <!-- word doc -->
+          <g transform="rotate(3 442 150)">
+            <rect x="372" y="62" width="140" height="176" rx="16" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+            <rect x="372" y="62" width="140" height="34" rx="16" fill="var(--ac)"/>
+            <rect x="372" y="80" width="140" height="16" fill="var(--ac)"/>
+            <text x="442" y="86" text-anchor="middle" font-size="13" font-weight="800" fill="#FFFDF8">Your Name</text>
+            <rect x="390" y="112" width="70" height="9" rx="4" fill="var(--deep)"/>
+            <rect x="390" y="129" width="104" height="5" rx="2.5" fill="var(--ac)"/>
+            <rect x="390" y="144" width="96" height="7" rx="3.5" fill="var(--line)"/>
+            <rect x="390" y="158" width="84" height="7" rx="3.5" fill="var(--line)"/>
+            <rect x="390" y="180" width="56" height="9" rx="4" fill="var(--deep)"/>
+            <rect x="390" y="197" width="104" height="5" rx="2.5" fill="var(--ac)"/>
+            <rect x="390" y="210" width="90" height="7" rx="3.5" fill="var(--line)"/>
+          </g>
+          <text x="442" y="270" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)">résumé.docx</text>
+          <!-- confetti -->
+          <path class="hand" d="M292 52 v16 M284 60 h16" stroke="#FFB020" stroke-width="4.5"/>
+          <circle cx="530" cy="58" r="6" fill="#2EC4A0"/>
+          <path class="hand" d="M240 256 v13 M233.5 262.5 h13" stroke="#FF6B6B" stroke-width="4"/>
+        </svg>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ What it is ============ -->
+  <section class="s2">
+    <h2 class="display">What it is: three small parts</h2>
+    <p>The whole agent is a tiny Claude Code project — no servers, no framework. Three files carry all of it:</p>
+    <dl class="rb__list">
+      <dt>.claude/CLAUDE.md</dt>
+      <dd>The rules. It encodes the résumé's format (sections, order, bullet style, length) and an <strong>ATS scoring rubric</strong> Claude uses to grade every draft. Claude reads this file automatically at the start of each session.</dd>
+      <dt>résumé.md</dt>
+      <dd>The Markdown résumé — the version-controlled <strong>source of truth</strong>. Every tailored variant is a diff you can review, revert, or branch, exactly like code.</dd>
+      <dt>generate-docx.js</dt>
+      <dd>The renderer. A small Node script that turns the Markdown into a styled <code>.docx</code> using the <code>docx</code> npm library — headings, accent rules, a skills table, clickable links.</dd>
+    </dl>
+    <figure class="fig">
+      <svg viewBox="0 0 660 210" role="img" aria-label="résumé.md and CLAUDE.md rules both feed into Claude, which produces résumé.docx and PDF">
+        <defs>
+          <marker id="ah-parts" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+          </marker>
+        </defs>
+        <!-- inputs -->
+        <g transform="rotate(-2 116 66)">
+          <rect x="30" y="38" width="172" height="52" rx="15" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+          <text x="116" y="61" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)" font-family="ui-monospace,monospace">résumé.md</text>
+          <text x="116" y="79" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink-soft)">source of truth</text>
+        </g>
+        <g transform="rotate(1.5 116 152)">
+          <rect x="30" y="124" width="172" height="52" rx="15" fill="var(--tint)" stroke="var(--deep)" stroke-width="4"/>
+          <text x="116" y="147" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)" font-family="ui-monospace,monospace">CLAUDE.md</text>
+          <text x="116" y="165" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink-soft)">format rules + ATS rubric</text>
+        </g>
+        <path class="hand" d="M208 66 Q246 76 268 96" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-parts)"/>
+        <path class="hand" d="M208 148 Q246 138 268 118" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-parts)"/>
+        <!-- claude -->
+        <g transform="rotate(-1.5 340 106)">
+          <rect x="280" y="70" width="120" height="72" rx="18" fill="#38322F" stroke="var(--deep)" stroke-width="4"/>
+          <circle cx="322" cy="99" r="7" fill="var(--ac)"/>
+          <circle cx="358" cy="99" r="7" fill="var(--ac)"/>
+          <path class="hand" d="M322 120 Q340 130 358 120" stroke="var(--ac)" stroke-width="4.5"/>
+          <text x="340" y="162" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)">Claude</text>
+        </g>
+        <path class="hand" d="M406 106 L448 106" stroke="var(--deep)" stroke-width="4.5" marker-end="url(#ah-parts)"/>
+        <!-- output -->
+        <g transform="rotate(2 548 106)">
+          <rect x="466" y="72" width="164" height="68" rx="16" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+          <rect x="466" y="72" width="164" height="22" rx="11" fill="var(--ac)" opacity=".9"/>
+          <text x="548" y="118" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)" font-family="ui-monospace,monospace">résumé.docx / .pdf</text>
+        </g>
+        <path class="hand" d="M430 40 v14 M423 47 h14" stroke="#FFB020" stroke-width="4"/>
+        <circle cx="632" cy="46" r="5.5" fill="#2EC4A0"/>
+      </svg>
+      <figcaption>Rules + source in, styled document out. Claude does the tailoring and scoring; the script does the rendering.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ The rules ============ -->
+  <section class="s3">
+    <h2 class="display">The rules (<code>.claude/CLAUDE.md</code>)</h2>
+    <p>There's no configuration language and no plugin API — the agent's entire behavior is <strong>just a context file</strong>. Claude Code reads <code>CLAUDE.md</code> automatically every session, so whatever you write there becomes the standing instructions for every tailoring pass and every score. Here's a generic version:</p>
+    <pre class="rb__cmd"><code># Résumé project context
+
+## Owner
+- Name: Your Name
+- Email: you@example.com
+- Location: City, ST
+
+## Format rules
+- Source of truth: Markdown (.md), version-controlled; render to DOCX/PDF
+- Length: 2–3 pages max
+- Sections, in order: Summary, Selected Highlights (5 bullets),
+  Core Skills (table), Professional Experience, Education &amp; Certifications
+- Bullets: start with a strong action verb; quantify impact; 1–2 lines each
+- No objective statement, no references section</code></pre>
+    <h3 class="display">The ATS scoring rubric</h3>
+    <p>The same file defines how drafts get graded. When you ask "score this against the rubric," Claude walks these five weighted checks and reports a percentage with concrete gaps:</p>
+    <dl class="rb__list">
+      <dt>Keyword match — 40%</dt>
+      <dd>Are the job description's keywords actually present in the résumé — tools, titles, and domain terms the applicant tracking system will scan for?</dd>
+      <dt>Format compliance — 15%</dt>
+      <dd>No tables, images, or odd headers that ATS parsers choke on. Markdown as the source keeps the structure clean by construction.</dd>
+      <dt>Section headers — 10%</dt>
+      <dd>Standard names ATS software recognizes: Summary, Experience, Skills, Education — not clever synonyms.</dd>
+      <dt>Quantified achievements — 15%</dt>
+      <dd>Numbers and percentages in the bullets — measurable impact rather than lists of duties.</dd>
+      <dt>Relevance — 20%</dt>
+      <dd>Do the bullets actually align to this job description, or is it the same generic résumé every posting gets?</dd>
+    </dl>
+  </section>
+
+  <!-- ============ The workflow ============ -->
+  <section class="s6">
+    <h2 class="display">The workflow: tailor → score → render</h2>
+    <p>One session, three moves. Everything happens in the terminal, and every change lands as an editable diff to <code>résumé.md</code>.</p>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Tailor to the job description</div>
+        <pre class="rb__cmd"><code>&gt; Tailor résumé.md to this JD, keep it truthful, then score it
+  against the ATS rubric.
+
+  [paste the job description]</code></pre>
+        <span class="rb__why"><span>Why</span>Claude rewrites the Markdown to surface your most relevant experience and mirror the JD's language — reordering highlights, swapping which skills lead — while staying strictly truthful. Nothing is invented; the raw material is your existing résumé.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Score ATS readiness</div>
+        <span class="rb__why"><span>Why</span>Claude grades the tailored draft against the five weighted rubric checks in <code>CLAUDE.md</code> and lists <strong>concrete gaps to close</strong> — "the JD says 'stakeholder management' four times and your draft never does", "the certifications section header won't be recognized". You fix, it re-scores.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Render the Word document</div>
+        <pre class="rb__cmd"><code>node generate-docx.js</code></pre>
+        <span class="rb__why"><span>Why</span>The script reads the final Markdown and emits a styled <code>.docx</code> ready to attach to an application. The pretty file is disposable output; the Markdown stays the source of truth.</span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============ The renderer ============ -->
+  <section class="s8">
+    <h2 class="display">The renderer (<code>generate-docx.js</code>)</h2>
+    <p>The renderer is deliberately boring: a single Node script that uses the <a class="doclink" href="https://www.npmjs.com/package/docx" target="_blank" rel="noopener">docx</a> npm library to build a Word document from the Markdown — section headings with an accent rule beneath them, a Core-Skills table, bullet lists, and clickable email and portfolio links. No LLM involved in this step; rendering is deterministic, so the same Markdown always yields the same document.</p>
+    <pre class="rb__cmd"><code>npm install docx
+node generate-docx.js</code></pre>
+    <p>Conceptually it's just the library's building blocks stacked up:</p>
+    <pre class="rb__cmd"><code>const doc = new Document({
+  sections: [{ children: [
+    new Paragraph({ text: "Your Name", heading: HeadingLevel.TITLE }),
+    new Paragraph({ text: "Summary", heading: HeadingLevel.HEADING_1 }),
+    // …bullets from the Markdown…
+    new Table({ rows: skillRows }),   // Core Skills
+  ]}],
+});</code></pre>
+    <p>Claude Code wrote this script in the first place — describe the styling you want, approve the steps, and keep the code like any other file in the repo.</p>
+    <div class="rb__note rb__note--wire"><strong>A ready-to-run copy ships with this repo.</strong> A complete, generic version of this agent lives at <code>docs/site/_examples/resume-agent/</code> — <code>resume.md</code>, <code>.claude/CLAUDE.md</code> (rules + ATS rubric), and <code>generate-docx.js</code>. Clone the repo, then <code>cd docs/site/_examples/resume-agent &amp;&amp; npm install &amp;&amp; node generate-docx.js</code> to render a sample <code>resume.docx</code>. Everything in it is a placeholder — replace it with your own.</div>
+  </section>
+
+  <!-- ============ Make it your own ============ -->
+  <section class="s5">
+    <h2 class="display">Make it your own</h2>
+    <div class="rb__note"><strong>This is just a Claude Code project.</strong> A <code>.claude/CLAUDE.md</code> with your format and rubric, a Markdown résumé, and a render script — that's the entire agent. Swap the rules for your own style (different sections, a stricter length cap, a different rubric weighting) and you have your own résumé agent. The pattern is the same one behind every agent in this catalog: encode the rules in context, keep the source in version control, let a small script handle the deterministic part.</div>
+    <p>Want the general recipe first? Read <a class="doclink" href="guide-build-agent.html">Guide: Build your own agent</a>, and the <a class="doclink" href="https://code.claude.com/docs" target="_blank" rel="noopener">Claude Code docs</a> for <code>CLAUDE.md</code>, sessions, and everything else the CLI can do.</p>
+  </section>
+
+</article></main>
+
+<footer class="footer"><div class="wrap">
+  A résumé-builder agent · part of the <strong>Field Guide to Software QA Agents</strong> · rules in Markdown, judgment from Claude, rendering in code.
+</div></footer>
+</body>
+</html>

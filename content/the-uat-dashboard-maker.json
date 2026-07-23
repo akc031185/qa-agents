@@ -1,0 +1,181 @@
+{
+  "slug": "the-uat-dashboard-maker",
+  "plate": 33,
+  "name": "The UAT Dashboard Maker",
+  "techName": "uat-dashboard-agent.ts",
+  "category": "report",
+  "oneLiner": "Parses the returned UAT spreadsheet — even a wide-format sheet several testers filled side by side — and emits a one-slide dashboard, an HTML page, and raw JSON with the go/no-go call computed.",
+  "lead": "The last gate before launch is UAT: real users exercise the app and log pass/fail plus comments into an `.xlsx` workbook. This agent parses that workbook — detecting when multiple testers shared one sheet in wide format — aggregates pass/fail counts, classifies failures into buckets, computes coverage and pass rate, evaluates them against exit criteria, and renders a single PowerPoint slide plus a self-contained HTML dashboard showing coverage, pass rate, the issue list, and launch readiness.",
+  "chore": "The manual path: open the returned workbook, count prompts tried, passed, and failed, bucket the failures, compute the pass rate, check it against exit criteria, then hand-build a summary slide for the go/no-go meeting. Error-prone counting plus hours of slide work, redone every time a fresh workbook comes back.",
+  "instead": "Point the agent at the workbook (or the folder it lands in) and get back a finished dashboard slide, a matching HTML page, and the raw JSON — counting, classification, and exit-criteria evaluation all done.",
+  "whyItMatters": "The go/no-go launch decision rests on these numbers, so counting them correctly and rendering them unambiguously is exactly what a room of decision-makers needs.",
+  "howItWorks": [
+    {
+      "step": "Resolves the input path: a file is used directly; a directory is scanned for `.xlsx` files (skipping `~$` temp locks and dotfiles) and the newest by mtime is picked.",
+      "fn": "resolveInputFile()",
+      "explain": "Accepts **either a file or a drop-folder** so testers can dump workbooks somewhere shared without renaming anything. The `~$` filter is the load-bearing quirk — Excel writes a `~$whatever.xlsx` **lock file whenever a workbook is open in the app**, and handing that placeholder to the parser throws, so it's excluded alongside dotfiles. When a directory is given it picks the **newest by `mtimeMs`** (filenames aren't reliably sortable), and both the missing-path and empty-folder cases `process.exit(1)` — a **hard fail is preferred over silently parsing nothing** and emitting a bogus dashboard.",
+      "code": "function resolveInputFile(inputPath) {\n  const resolved = path.resolve(inputPath);\n  if (!fs.existsSync(resolved)) {\n    console.error(`Error: Path not found: ${resolved}`);\n    process.exit(1); // hard-fail on a bad path rather than continuing with nothing to parse\n  }\n  const stat = fs.statSync(resolved);\n  if (!stat.isDirectory()) return resolved; // it's a file, use directly\n\n  // Scan folder for .xlsx files (non-temp, non-hidden)\n  const files = fs.readdirSync(resolved)\n    .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$') && !f.startsWith('.')) // '~$' is Excel's lock file for a workbook still open in the app — parsing it would throw; dotfiles are hidden/OS cruft\n    .map(f => {\n      const full = path.join(resolved, f);\n      return { name: f, path: full, mtime: fs.statSync(full).mtimeMs }; // mtimeMs is the recency key — filenames aren't reliably ordered\n    })\n    .sort((a, b) => b.mtime - a.mtime); // newest first\n\n  if (files.length === 0) {\n    console.error(`Error: No .xlsx files found in ${resolved}`);\n    process.exit(1);\n  }\n  return files[0].path;\n}"
+    },
+    {
+      "step": "Auto-detects single- vs. multi-tester layout by matching repeating `Tester #N: Name` headers in the sheet's second row.",
+      "fn": "detectWideFormat()",
+      "explain": "Layout detection is **data-driven, not configured** — it reads row 2 (the note row) and counts how many cells match a `Tester #N: Name` banner. The regex is deliberately **forgiving** (`#` optional, flexible whitespace, case-insensitive) because testers hand-type those headers inconsistently, and `String(row2[c] || '')` coerces numeric/empty/`undefined` cells so `.match` never throws. The **`> 1` threshold is the real decision**: one banner (or none) is a normal single-tester sheet and returns `null`, while two or more means a shared wide-format workbook whose `colOffset`s tell the parser where each tester's column block begins. A blank name after the colon **falls back to `Tester #N`** so no block is left unlabeled.",
+      "code": "function detectWideFormat(rows) {\n  if (rows.length < 3) return null; // need header + note row + at least one data row; anything shorter can't be a real sheet\n  const row2 = rows[1]; // the NOTE row — where 'Tester #N: Name' banners live in a shared workbook\n  const testerBlocks = [];\n\n  for (let c = 0; c < (row2?.length || 0); c++) {\n    const val = String(row2[c] || '').trim(); // coerce: cells may be numbers, undefined, or missing — String()||'' guards all three before matching\n    const match = val.match(/^Tester\\s*#?\\s*(\\d+)\\s*:\\s*(.*)/i); // tolerant pattern: optional '#', flexible spacing, case-insensitive — testers type these headers inconsistently\n    if (match) {\n      const name = match[2].trim() || `Tester #${match[1]}`; // fall back to the numbered label when someone left the name blank after the colon\n      testerBlocks.push({ testerName: name, colOffset: c }); // colOffset marks where this tester's column block starts — used later to slice their answers out of the wide row\n    }\n  }\n  return testerBlocks.length > 1 ? testerBlocks : null; // >1 = genuinely wide/shared; 0 or 1 banner means a normal single-tester sheet, signalled by null\n}"
+    },
+    {
+      "step": "Aggregates pass/fail across the Sample Prompts and New Prompts sheets, computes coverage and combined pass rate, and evaluates each exit criterion (coverage, pass rate ≥ 80%, zero high-severity issues, formal sign-off).",
+      "fn": "aggregateMetrics()",
+      "explain": "Counts key off the **exact strings `'Pass'`/`'Fail'`**, so blank or untested rows fall through both filters and never inflate either tally — deliberate, since an unanswered prompt is neither a pass nor a fail. `passRate` guards divide-by-zero so an all-untested round reports **`0`, not `NaN`**. `testCoverage` is a **Set comparison** (`passedTestNums.size >= uniqueTestNums.size`): a prompt passed by any one of several testers counts once, and coverage is met only when every distinct test number has at least one pass. The exit bar is **fixed and strict** — `passRate >= 80`, `highIssues === 0` (zero, not 'few') — and `formalSignOff` is **hardcoded `false`** so the numbers can never auto-satisfy what is a human sign-off.",
+      "code": "function aggregateMetrics(results, inputFile, numTesters) {\n  const sampleResults = results.filter(r => r.sheet === 'Sample Prompts');\n  const samplePassed = sampleResults.filter(r => r.passFail === 'Pass'); // exact 'Pass' only — blank/untested rows fall through both buckets and don't inflate either count\n  const sampleFailed = sampleResults.filter(r => r.passFail === 'Fail');\n  // ... same tally repeated for the New Prompts sheet, then combined ...\n\n  const passRate = totalTested > 0 ? (totalPassed / totalTested) * 100 : 0; // guard divide-by-zero: an all-untested round reports 0%, not NaN\n\n  const exitCriteria = {\n    // coverage passes only if every unique test number was passed by at least one tester — a Set comparison, so a prompt tried by 3 testers still counts once\n    testCoverage: uniqueTestNums.size > 0 && passedTestNums.size >= uniqueTestNums.size,\n    passRate: passRate >= 80, // fixed 80% launch bar\n    criticalIssues: highIssues === 0, // zero high-severity issues, not 'few'\n    formalSignOff: false, // always pending — a human decision, never auto-satisfied by the numbers\n  };\n\n  return { totalPrompts, totalTested, coveragePct, passRate, exitCriteria /* ...more */ };\n}"
+    },
+    {
+      "step": "Classifies each failed result into a named bucket, retaining feature area, classification, and the tester's comment (falling back to the actual result when no comment was left).",
+      "fn": "classifyIssues()",
+      "explain": "A pure **shape-narrowing map** — no filtering, so every failed result becomes exactly one issue record and nothing is dropped. The two `||` cascades are the real logic: `classification` falls back through the tester's explicit bucket, then the **feature area as a coarse bucket**, then `'Other'`, guaranteeing no failure is left uncategorized on the dashboard. `comment` prefers the tester's own note but **falls back to the machine-observed `actualResults`** when they left the comment blank, and finally a `'(no comment)'` placeholder so the rendered issue row never shows an empty cell.",
+      "code": "function classifyIssues(failedResults) {\n  return failedResults.map(r => ({\n    testNum: r.testNum,\n    feature: r.feature,\n    classification: r.classification || r.feature || 'Other', // cascade: explicit bucket, else group by feature area, else 'Other' — every failure lands in some named bucket\n    comment: r.testerComments || r.actualResults || '(no comment)', // prefer the tester's own note; fall back to the observed result; last resort a placeholder so the field is never empty\n    tester: r.tester,\n  }));\n}"
+    },
+    {
+      "step": "Renders a one-slide `LAYOUT_WIDE` PowerPoint via `pptxgenjs` — header bar, coverage/pass-rate rings, metric cards, and issue bars — plus a matching HTML dashboard and a JSON dump, unless `--dry-run` was passed.",
+      "fn": "generatePptx()",
+      "explain": "`pptxgenjs` is pulled in via **dynamic `import()`**, not a top-level require, so a `--dry-run` (which never calls this function) doesn't pay to load the heavy slide library. `LAYOUT_WIDE` fixes the canvas at **13.33×7.5in — 16:9**, the projector ratio for the go/no-go meeting, and every coordinate thereafter is in **inches**, with `w: '100%'` spanning the header band the full slide width. The title uses a **single `addText` with two runs** so the bold 'UAT Summary' and the lighter date sit on one baseline in one text box rather than two overlapping shapes. The whole function is `async` and `writeFile` is awaited so the caller is guaranteed the `.pptx` is **fully flushed to disk** before it moves on to the HTML and JSON deliverables.",
+      "code": "async function generatePptx(metrics, outputPath, linkedFiles) {\n  const PptxGenJS = (await import('pptxgenjs')).default; // dynamic import: the heavy slide lib loads only when actually rendering, so --dry-run never pays for it\n  const pptx = new PptxGenJS();\n  pptx.layout = 'LAYOUT_WIDE'; // 13.33 x 7.5 inches — 16:9, the projector aspect ratio for the go/no-go room\n\n  const slide = pptx.addSlide();\n  slide.addShape('rect', { x: 0, y: 0, w: '100%', h: 0.55, fill: { color: TEAL } }); // header band; coordinates are in INCHES, w:'100%' spans the full slide width\n  slide.addText([\n    // one addText with two runs so 'UAT Summary' is bold and the date is lighter within a single text box, kept on one baseline\n    { text: 'UAT Summary', options: { fontSize: 14, bold: true, color: WHITE } },\n    { text: `  |  ${dateStr}`, options: { fontSize: 11, color: WHITE } },\n  ], { x: 0.3, y: 0.1, w: 9, h: 0.35 });\n\n  // ... draws the coverage/pass-rate rings, the sample/new prompt\n  // metric cards, the issue bars, and the exit-criteria bar ...\n\n  await pptx.writeFile({ fileName: outputPath }); // async write — the whole function is awaited so callers know the .pptx is flushed before continuing\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Three testers, one wide-format workbook",
+      "input": "A workbook where three testers each filled their own column block against the same prompt list.",
+      "output": "`detectWideFormat()` resolves three tester blocks, their results combine into one pass rate, and coverage plus issues render across all three on a single slide."
+    },
+    {
+      "caption": "Dry-run before writing files",
+      "input": "The same workbook, run with `--dry-run`.",
+      "output": "A plain-text summary to stdout — coverage, pass rate, issue counts, and each exit criterion marked met/not — with no `.pptx`, `.html`, or `.json` written."
+    },
+    {
+      "caption": "Exit criteria clear the bar",
+      "input": "A completed round at 84% pass rate, every prompt passed by at least one tester, and zero high-severity issues.",
+      "output": "A dashboard with green rings, the first three exit criteria marked met, and the fourth — `formalSignOff` — marked pending, since that boolean is hardcoded to a human decision."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Resolve the workbook",
+      "whenRuns": "First, on the input path you pass.",
+      "input": "A file path, or a directory where testers drop filled-in workbooks.",
+      "output": "One resolved `.xlsx` path — the newest by mtime when a directory is given (via `resolveInputFile()`)."
+    },
+    {
+      "heading": "Parse the workbook",
+      "whenRuns": "Immediately after the file is resolved.",
+      "input": "The 'Sample Prompts', 'New Prompts', and 'Testers' sheets in the workbook.",
+      "output": "Every row parsed into structured records via the `xlsx` library."
+    },
+    {
+      "heading": "Detect tester layout",
+      "whenRuns": "As each sheet is parsed.",
+      "input": "The header row and the row below it.",
+      "output": "Either a single-tester layout, or — via repeating `Tester #N` column blocks every six columns — a multi-tester layout with each tester's columns mapped correctly (via `detectWideFormat()`)."
+    },
+    {
+      "heading": "Aggregate metrics",
+      "whenRuns": "After every row from every sheet is parsed.",
+      "input": "The full list of per-test results — pass, fail, or untested — across all testers.",
+      "output": "Coverage, pass/fail counts, and pass rate for the Sample and New prompt sheets, combined into one set of totals (via `aggregateMetrics()`)."
+    },
+    {
+      "heading": "Classify failures and evaluate exit criteria",
+      "whenRuns": "Once the totals are known.",
+      "input": "Every failed result and its comment.",
+      "output": "Issue counts per named bucket, plus a met/not-met/pending evaluation of the four exit criteria: coverage, pass rate ≥ 80%, zero high-severity issues, and formal sign-off (via `classifyIssues()`)."
+    },
+    {
+      "heading": "Render the deliverables",
+      "whenRuns": "Last, unless `--dry-run` was passed.",
+      "input": "The finished metrics object.",
+      "output": "A one-slide PowerPoint (ring and bar charts via `pptxgenjs`), a matching self-contained HTML dashboard, and a JSON dump of every number, ready for the go/no-go meeting (via `generatePptx()`)."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "The filled-in UAT workbook (the final round where real users exercise the app before launch) as an `.xlsx` file, or a directory where those get dropped."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program; Node executes it. One-time per machine.",
+        "firstRun": "Needed only the first time on a new machine."
+      },
+      {
+        "label": "Clone the agents and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the agent's dependencies — `xlsx` for parsing and `pptxgenjs` for the slide — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op unless the dependency list changed."
+      },
+      {
+        "label": "No env vars needed — just know where the workbook lives.",
+        "cmd": "# example: a single returned workbook\n./returned-uat-results.xlsx\n\n# or a shared folder several testers dropped their copies into\n./uat-results/",
+        "why": "Unlike agents that hit a work board or an LLM, this one only reads a local `.xlsx` — there's nothing else to configure."
+      },
+      {
+        "label": "Dry-run first, writing no files.",
+        "cmd": "npm run uat:dashboard -- --input ./returned-uat-results.xlsx --dry-run",
+        "why": "`--dry-run` prints the aggregated numbers — coverage, pass rate, issues, exit criteria — to stdout, so you can verify the sheet parsed correctly before rendering the slide."
+      },
+      {
+        "label": "Run for real and open the dashboard.",
+        "cmd": "npm run uat:dashboard -- --input ./returned-uat-results.xlsx\n\nopen outputs/reports/uat/UAT_Dashboard_<timestamp>.pptx\nopen outputs/reports/uat/UAT_Dashboard_<timestamp>.html",
+        "why": "Without `--dry-run`, it writes all three deliverables: a one-slide PowerPoint with ring and bar charts, a self-contained HTML page, and the raw JSON — ready to drop into the go/no-go meeting.",
+        "firstRun": "Parses every row, detects the tester layout, and builds all three files fresh.",
+        "rerun": "Point `--input` at the folder instead of one file and it always picks the newest `.xlsx` by mtime — handy once a newer round of results comes back."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--input <path>",
+        "desc": "A single `.xlsx` workbook, or a directory — in which case the newest `.xlsx` by mtime is used."
+      },
+      {
+        "name": "--dry-run",
+        "desc": "Print the aggregated summary to stdout only; skip writing the `.pptx`, `.html`, and `.json`."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "UAT_Dashboard_<timestamp>.pptx",
+        "desc": "A one-slide PowerPoint with coverage and pass-rate ring charts, issue bar charts, and the four exit-criteria checks."
+      },
+      {
+        "name": "UAT_Dashboard_<timestamp>.html",
+        "desc": "A self-contained HTML dashboard of the same metrics, shareable without opening PowerPoint."
+      },
+      {
+        "name": "UAT_Dashboard_<timestamp>.json",
+        "desc": "Every aggregated number in raw form — coverage, pass rate, issues by bucket, and the exit-criteria checklist."
+      }
+    ],
+    "rerun": "Re-run whenever a fresh workbook comes back from a new tester round — point `--input` at the shared drop folder and it always picks the newest file by mtime, so the dashboard never goes stale. Nothing needs clearing between runs; each writes a new timestamped set of files.",
+    "integrate": "Drop the completed workbook into the shared folder as the last step of a UAT round, then run this agent as the trigger for the go/no-go meeting — the `.pptx` is what gets projected, the `.json` is what gets archived alongside the decision."
+  },
+  "video": {
+    "url": "",
+    "caption": "2-min screen recording: point the agent at a filled-in UAT `.xlsx` and watch the dashboard slide render.",
+    "script": [
+      "Open a terminal next to the returned UAT spreadsheet so viewers see both.",
+      "Say: 'This agent turns the messy spreadsheet real users fill in during their final try-out into one clean dashboard slide.'",
+      "Open the spreadsheet briefly — show the Pass/Fail column and a tester's comment on a failed row.",
+      "Run `node -v` to confirm Node is installed; say one line about what Node is.",
+      "Run `npm install` (or note it's already done); explain it's grabbing the spreadsheet-reading and slide-building libraries.",
+      "Run the `--dry-run` command; point out the printed coverage, pass rate, and exit-criteria lines in the terminal.",
+      "Run the same command without `--dry-run`; narrate that it's now writing the actual slide and web page.",
+      "Open the `.pptx`; point at the coverage ring, the pass-rate ring, and the issue bar chart.",
+      "Point out the fourth exit criterion — formal sign-off — always shown as pending, since that's a human decision.",
+      "Close: 'The go/no-go call rests on these numbers — this is what a room full of decision-makers actually needs.'"
+    ]
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "slug": "the-test-plan-author",
+  "plate": 6,
+  "name": "The Test-Plan Author",
+  "techName": "test-plan-generator.ts",
+  "category": "plan",
+  "oneLiner": "Drafts executable test cases from ADO user stories and, for stories too thin to test, emits a gap report naming the missing fields and their owners.",
+  "lead": "Generates the test-case suite for a feature straight from its ADO work items — steps, expected results, priority — so testers stop hand-authoring checklists. In the same pass it detects stories that lack the detail to test (no description, no acceptance criteria, no design link) and produces a gap report with each blocker assigned to the person who owns the fix.",
+  "chore": "Hand-authoring test cases per ticket — steps, test data, expected result — is slow and repetitive. Worse, a large fraction of tickets are untestable as written: no design references, no acceptance criteria. The tester either guesses at intent or blocks to chase the developer, one ticket at a time, and the questions trickle out over days.",
+  "instead": "The agent reads each story and drafts its test cases. For stories that aren't ready, it emits a gap report keyed by story: missing/short description, no acceptance criteria, no design reference — each tagged with the assignee — so the whole batch of questions goes back to the team in one round trip instead of one at a time.",
+  "whyItMatters": "Testers spend their time executing, not transcribing checklists. Blocked stories surface at draft time, before they stall execution late in the sprint.",
+  "howItWorks": [
+    {
+      "step": "Pulls the target user stories from Azure DevOps — scoped by sprint, by feature, or by an explicit ID list.",
+      "fn": "fetchUserStoriesBySprint()",
+      "explain": "Two-phase fetch, because WIQL and the work-item API do different jobs. The `wiql` query selects only `[System.Id]` for every `User Story` whose `IterationPath` is `UNDER` the sprint — `UNDER` matches the whole iteration subtree, not just an exact node, so nested iterations are included — and the `areaPath` ternary appends an `AND [System.AreaPath] UNDER ...` clause only when a component filter was passed. WIQL deliberately returns **IDs only**, so `workItemIds` is just a reference list; the real field data is hydrated in a second pass batched at 200 (ADO's per-call cap). During hydration each story's HTML fields are cleaned to text and its acceptance criteria is content-hashed, which is what later lets the agent detect drift and stay idempotent.",
+      "code": "async function fetchUserStoriesBySprint(sprint, areaPath, checkLinks = true) {\n  // WIQL is ADO's SQL-ish work-item query language, POSTed to the /wiql endpoint\n  const wiql = {\n    query: `\n      SELECT [System.Id] FROM WorkItems\n      WHERE [System.WorkItemType] = 'User Story'\n        AND [System.IterationPath] UNDER 'MyProject\\\\${sprint}'\n        ${areaPath ? `AND [System.AreaPath] UNDER '${areaPath}'` : ''}\n      ORDER BY [System.Id]\n    `,\n  };\n  const queryResult = await fetchFromADO('/wit/wiql?api-version=7.0', 'POST', wiql);\n  const workItemIds = (queryResult.workItems || []).map(wi => wi.id); // WIQL returns IDs only (a reference list), never field data — hence the hydrate step next\n\n  // Hydrate in batches of 200 — ADO's work-items batch endpoint caps at 200 IDs per call, so larger\n  // sprints must be chunked. Each item's HTML fields are stripped to text, the acceptance criteria is\n  // content-hashed (for later drift detection), and if checkLinks, existing 'TestedBy' test cases are fetched.\n  return stories;\n}"
+    },
+    {
+      "step": "Reads each story's existing test-case links so drafting is idempotent — no duplicates.",
+      "fn": "fetchLinkedTestCases()",
+      "explain": "Idempotency starts here — before drafting anything the agent needs to know what tests already exist. It re-fetches the work item with `$expand=relations` (mandatory; the default representation omits links entirely), then filters `result.relations` to just `Microsoft.VSTS.Common.TestedBy-Forward` — the story→test-case direction, ignoring parent/child and reverse links. ADO exposes a relation only as a `rel.url`, so the numeric id is recovered with `rel.url.split('/').pop()` and a second call hydrates each test case. `AutomationStatus` is defaulted to `'Not Automated'` because the field is simply absent on manually created tests rather than empty, which would otherwise surface as `undefined`.",
+      "code": "async function fetchLinkedTestCases(workItemId) {\n  // $expand=relations is required — without it the work item comes back with no link data at all\n  const result = await fetchFromADO(\n    `/wit/workitems/${workItemId}?api-version=7.0&$expand=relations`\n  );\n  const testCases = [];\n  for (const rel of result.relations || []) {\n    if (rel.rel === 'Microsoft.VSTS.Common.TestedBy-Forward') { // only the story->test 'TestedBy' forward link; ignores parents, children, other relation types\n      const testCaseId = parseInt(rel.url.split('/').pop()); // relations carry only a URL, so the numeric ID is parsed off the tail of the path\n      const tc = await fetchFromADO(`/wit/workitems/${testCaseId}?api-version=7.0`);\n      testCases.push({\n        id: tc.id,\n        title: tc.fields['System.Title'],\n        state: tc.fields['System.State'],\n        automationStatus: tc.fields['Microsoft.VSTS.TCM.AutomationStatus'] || 'Not Automated', // field is absent on manual tests, so default it rather than leaving undefined\n      });\n    }\n  }\n  return testCases;\n}"
+    },
+    {
+      "step": "For stories with sufficient detail, drafts test cases — steps, expected results, priority — via the LLM, in plain or Given/When/Then form.",
+      "fn": "generateTestCasesWithLLM()",
+      "explain": "The prompt is assembled from the strongest available evidence, not just the ticket. `context` always carries the story id and its `acceptanceCriteria`, and when a prior briefing (`intel`) exists it folds in that feature's `businessRules` and `edgeCases` — each pre-formatted with its `priority` — so the model drafts against known behavior rather than guessing. It calls Gemini Flash at `temperature: 0.3`, deliberately low so the steps come out concrete and reproducible instead of inventive, with `maxTokens: 8192` to fit a whole suite. `parseLLMJson` tolerates the markdown fences models wrap arrays in, and every returned case is passed through `buildBlueprint`, which stamps it with the source hash and the chosen `mode`/`outputFormat` (plain or Given/When/Then) — the metadata that makes later drift-detection and idempotency possible.",
+      "code": "async function generateTestCasesWithLLM(story, intel, contextDocs, mode, outputFormat) {\n  let context = `STORY: US-${story.id} — ${story.title}\\n`;\n  context += `ACCEPTANCE CRITERIA:\\n${story.acceptanceCriteria}\\n`;\n  if (intel) { // intel is the prior Test-Scout briefing; when present it enriches the prompt with rules + edge cases\n    context += `\\nBUSINESS RULES:\\n${intel.businessRules.map(r => `- ${r.name}: ${r.description}`).join('\\n')}\\n`;\n    context += `\\nEDGE CASES:\\n${intel.edgeCases.map(e => `- [${e.priority}] ${e.scenario}`).join('\\n')}\\n`;\n  }\n\n  const prompt = `You are a senior QA engineer generating detailed,\nexecutable test cases.\n${context}\nGenerate test cases for each acceptance criterion,\nwith concrete steps and expected results. Respond as a JSON array.`;\n\n  const response = await callGeminiFlash(prompt, { temperature: 0.3, maxTokens: 8192 }); // temp 0.3: low, so cases stay concrete/repeatable rather than creative; 8k out for a full suite\n  const llmCases = parseLLMJson(response.answer); // tolerant JSON parse — strips fences the model may wrap the array in\n  return llmCases.map((tc, index) => buildBlueprint(story, tc, index, intel, mode, outputFormat)); // each raw case -> a blueprint carrying the source hash + mode (plain / Given-When-Then)\n}"
+    },
+    {
+      "step": "For under-specified stories, records the exact missing fields (short description, no acceptance criteria, no design link) and the assignee.",
+      "fn": "analyzeForUIDetails()",
+      "explain": "Deterministic under-specification check — thresholds, not judgment, so a story grades the same every run. `description.length < 50` treats a near-empty description as missing; `ac.length < 30` flags absent acceptance criteria but **exempts** `workItemType === 'Bug'`, since bugs legitimately carry no AC and shouldn't be penalized. The design-reference test fails only when none of `figma`/`design`/`wireframe`/`mockup` appears anywhere in the combined text, catching UI work with no mockup to test against. The key policy is `missingElements.length < 2`: one gap is tolerated, but two or more sets `hasUIDetails` false — that's the line between 'draft the tests' and 'send it back to the owner'.",
+      "code": "function analyzeForUIDetails(title, description, ac, workItemType) {\n  const combinedText = `${title} ${description} ${ac}`.toLowerCase();\n  const missingElements = [];\n\n  if (description.length < 50) missingElements.push('Missing/short description'); // <50 chars = effectively no description; a real spec is longer\n  if (ac.length < 30 && workItemType !== 'Bug') missingElements.push('Missing acceptance criteria'); // bugs are exempt — they legitimately have no AC, so don't flag them\n\n  // A testable UI story should reference a design somewhere; none of these keywords => no design link\n  if (!combinedText.includes('figma') && !combinedText.includes('design') &&\n      !combinedText.includes('wireframe') && !combinedText.includes('mockup')) {\n    missingElements.push('No design reference (Figma/wireframe)');\n  }\n  if (title.toLowerCase().includes('qa test') && description.length < 30 && ac.length < 30) {\n    missingElements.push('QA Test task has no test case details');\n  }\n\n  const hasUIDetails = missingElements.length < 2; // tolerate ONE gap: 2+ missing elements means the story is too thin to test\n  return { hasUIDetails, missingElements };\n}"
+    },
+    {
+      "step": "Detects acceptance-criteria drift since tests were last drafted and flags the linked tests as potentially stale.",
+      "fn": "detectContentChanges()",
+      "explain": "Cheap, exact drift detection via content hashing rather than text diffing. It first locates the story's prior blueprints by `bp.source.workItemId === story.id` and bails with `null` if none exist — no prior draft means nothing to compare. Otherwise it compares the stored `acceptanceCriteriaHash` against the story's current one; equal hashes mean the wording is byte-identical, so it returns `null` (no drift). On a mismatch the recommendation is state-aware: if any linked test is still in `'Design'` (not yet executed) it returns `update_tests` — safe to regenerate — but if the tests have moved past design it returns `review_tests`, deferring to a human before disturbing tests that may already have results attached.",
+      "code": "function detectContentChanges(story, existingBlueprints) {\n  const storyBlueprints = Array.from(existingBlueprints.values())\n    .filter(bp => bp.source.workItemId === story.id);\n  if (storyBlueprints.length === 0) return null; // no prior draft for this story => nothing to compare, so no drift to report\n\n  const latest = storyBlueprints[0];\n  // Compare stored vs live AC content hash — a cheap exact-equality test, no diffing needed\n  if (latest.source.acceptanceCriteriaHash === story.acceptanceCriteriaHash) {\n    return null; // no changes\n  }\n\n  // Drift confirmed. If any linked test is still in 'Design' (not yet executed) it's safe to auto-update;\n  // otherwise recommend a human review before touching tests that may already have run\n  const recommendAction = story.linkedTestCases.some(tc => tc.state === 'Design')\n    ? 'update_tests'\n    : 'review_tests';\n\n  return {\n    storyId: story.id, storyTitle: story.title,\n    previousHash: latest.source.acceptanceCriteriaHash,\n    currentHash: story.acceptanceCriteriaHash,\n    recommendAction, linkedTestCases: story.linkedTestCases,\n  };\n}"
+    },
+    {
+      "step": "Emits a coverage-and-gap report: per-feature coverage percentage and the blockers holding back the rest.",
+      "fn": "generateFeatureReportMarkdown()",
+      "explain": "A pure string-builder — no model, so the report is fully reproducible from the computed data. The headline metric is `Math.round((storiesWithTests / totalUserStories) * 100)`, an integer coverage percentage; note it counts **stories that have any linked test**, not test-case pass rates. `report.testCoverage.map(...)` renders one table row per story with a `tc.hasTests ? '✅' : '❌'` flag, and `report.gapAnalysis.map(...)` emits a `### US-<id>` heading only for the under-specified stories — so the gap section's length is itself a signal of how much of the feature is blocked. Both maps `.join('\\n')` into the surrounding Markdown so the whole document is one template literal.",
+      "code": "function generateFeatureReportMarkdown(report) {\n  // Whole report is one Markdown template literal; ${...} blocks interpolate live data inline.\n  // Coverage % = storiesWithTests / totalUserStories (Math.round to a whole number); the per-row\n  // checkmark flags whether that story has any linked test; the gap section lists only thin stories.\n  return `# Feature Test Coverage & Gap Analysis Report\n**Feature:** ${report.feature.title} (ID: ${report.feature.id})\n**Test Coverage:** ${Math.round(\n    (report.summary.storiesWithTests / report.summary.totalUserStories) * 100\n  )}%\n\n## Test Coverage by User Story\n| Story ID | Title | State | Test Cases | Coverage |\n${report.testCoverage.map(tc =>\n  `| US-${tc.storyId} | ${tc.storyTitle} | ${tc.state} | ${tc.linkedTestCases.length} | ${tc.hasTests ? '✅' : '❌'} |`\n).join('\\n')}\n\n## Gap Analysis — Items Needing Developer Input\n${report.gapAnalysis.map(gap => `### US-${gap.storyId}: ${gap.storyTitle}`).join('\\n')}\n`;\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "A feature that's mostly ready",
+      "input": "A feature with 8 user stories: 6 well-specified, 2 one-liners with no design reference.",
+      "output": "Drafted test cases for the 6 ready stories, plus a report: 'Coverage 75%. 2 stories blocked — #204 (no acceptance criteria, assigned to A. Rivera), #211 (no design reference, assigned to J. Okoro).'"
+    },
+    {
+      "caption": "A story whose acceptance criteria drifted",
+      "input": "A story with existing test cases whose acceptance criteria were reworded last week.",
+      "output": "A content-hash mismatch flag: 'Story #188 changed since its 4 test cases were drafted — review recommended before the next run.'"
+    },
+    {
+      "caption": "A blocked test-authoring task",
+      "input": "A ticket titled 'QA test creation for login screen' whose parent tasks carry no UI/design detail.",
+      "output": "A high-priority action item: 'Test creation cannot proceed — parent tasks lack UI/design details. Developer input needed,' with a paste-ready comment template requesting the missing fields."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Queries Azure DevOps",
+      "whenRuns": "First — once per sprint, feature, or ID list you scope it to.",
+      "input": "A sprint name, a feature ID, or a list of story IDs.",
+      "output": "Every matching user story with description, acceptance criteria, and existing linked test cases, via the ADO REST API."
+    },
+    {
+      "heading": "Reads existing coverage",
+      "whenRuns": "Per story, before drafting anything.",
+      "input": "A story ID and its `TestedBy` relations.",
+      "output": "The set of test cases already linked to that story, so drafting stays idempotent."
+    },
+    {
+      "heading": "Drafts test cases via the LLM",
+      "whenRuns": "For every story with enough detail to test.",
+      "input": "The story's acceptance criteria, plus business rules and edge cases from a prior feature briefing if present.",
+      "output": "Concrete steps, expected results, and priority — plain and, optionally, Given/When/Then form, via Gemini Flash."
+    },
+    {
+      "heading": "Flags gaps and drift",
+      "whenRuns": "For every child work item, and every story with previously drafted tests.",
+      "input": "A ticket's title/description/acceptance-criteria text, and the content hash stored on its last test cases.",
+      "output": "A typed list of missing elements (no design reference, no acceptance criteria) and a content-hash drift flag where the wording has moved on."
+    },
+    {
+      "heading": "Emits the coverage and gap report",
+      "whenRuns": "Once, at end of run.",
+      "input": "All processed stories, their linked tests, and the detected gaps.",
+      "output": "Markdown, JSON, and Excel reports with a coverage percentage and prioritized action items, each assigned to the owner of the fix."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Read access to Azure DevOps and a **personal access token** (`ADO_PAT`) with work-item read scope.",
+      "A Google Gemini API key to draft the actual test steps; without it the agent runs in no-LLM mode and produces the gap report only.",
+      "Optional: a folder of context documents — designs, prompts, screenshots — to ground the drafted cases."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program executed under Node. One-time install per machine.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone the code and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` resolves the agent's dependencies — the ADO REST client, the xlsx writer, and the Gemini client — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op unless the dependency set changed."
+      },
+      {
+        "label": "Set the environment variables.",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token\nexport GOOGLE_API_KEY=your-gemini-key   # optional",
+        "why": "Read at startup: the ADO org/project to query, the PAT that authorizes it, and the Gemini key. Nothing is hard-coded — repoint these to target a different project."
+      },
+      {
+        "label": "Draft test cases for a sprint.",
+        "cmd": "npx ts-node agents/test-plan-generator.ts \\\n  --sprint \"Sprint-12\" \\\n  --mode create",
+        "why": "The real run. `--sprint` scopes the iteration; `--mode create` drafts only for stories with no existing test cases — never duplicating linked work.",
+        "firstRun": "Reads every story in the sprint, drafts cases for the testable ones, and emits a gap report for the rest.",
+        "rerun": "Idempotent — skips stories that already have test cases and touches only new or changed ones."
+      },
+      {
+        "label": "Or run a coverage-and-gap report over a whole feature.",
+        "cmd": "npx ts-node agents/test-plan-generator.ts \\\n  --mode report \\\n  --feature-id 5001",
+        "why": "`--mode report` skips drafting and reports coverage percentage plus the exact tickets blocking the rest — a pre-release gate."
+      },
+      {
+        "label": "Open the results.",
+        "cmd": "open ./outputs/reports/test-plans/\n# or, for a report run:\nopen ./outputs/reports/feature-reports/",
+        "why": "Outputs land as Markdown, JSON, and Excel — Markdown for reading, Excel for testers, JSON for the next stage in the pipeline."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--sprint <name> | --feature-id <id> | --stories <ids>",
+        "desc": "Scope selector — by sprint iteration, by feature, or by an explicit ID list."
+      },
+      {
+        "name": "--mode create|update|report|full",
+        "desc": "create = new stories only; update = re-draft where the content hash changed; report = coverage/gap only; full = both."
+      },
+      {
+        "name": "--context <folder>",
+        "desc": "Optional folder of design docs, prompts, and screenshots used to ground the drafted cases."
+      },
+      {
+        "name": "environment variables",
+        "desc": "`ADO_ORGANIZATION`, `ADO_PROJECT`, `ADO_PAT`, and optionally `GOOGLE_API_KEY`."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "test plan (Markdown / JSON / Excel)",
+        "desc": "Drafted test cases — steps, expected results, priority — per story, ready to push into ADO."
+      },
+      {
+        "name": "feature report (Markdown / JSON)",
+        "desc": "Coverage percentage plus a gap-analysis table naming which tickets are under-specified and who owns them."
+      }
+    ],
+    "rerun": "Re-run whenever the sprint's stories change. `--mode create` skips stories that already have test cases; `--mode update` re-drafts only those whose acceptance-criteria hash changed and flags the rest as 'may be stale — review recommended.'",
+    "integrate": "Pipe its output into the **Test Scheduler** — once test cases exist and are counted, the scheduler balances who tests what and by when. Wire the `--mode create` step into sprint-kickoff automation so drafts are waiting on day one."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: scope the agent to a sprint and watch drafted test cases and a gap report land on disk.",
+    "script": [
+      "Open a terminal next to the work board in a browser tab.",
+      "Say: 'This agent writes the test-case checklist for you, and tells you which tickets are too vague to test yet.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's done); explain it grabs the helper libraries.",
+      "Show the three `export` lines; say this is the only client-specific part.",
+      "Run the `--sprint ... --mode create` command; narrate as it fetches stories and checks for existing tests.",
+      "Open the produced Excel file; scroll through a few drafted test cases.",
+      "Open the gap report; point at one blocked story and read its missing-elements list.",
+      "Re-run the same command; show it skips the stories it already handled.",
+      "Run the `--mode report --feature-id ...` variant; show the coverage percentage.",
+      "Close: 'Test cases are ready — next, the Test Scheduler decides who runs them and when.'"
+    ]
+  }
+}

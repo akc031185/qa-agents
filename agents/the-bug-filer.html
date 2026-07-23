@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Bug Filer — Agent 01</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s1">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">01<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Finding &amp; reporting problems</span></div>
+        <h1>The Bug Filer</h1>
+        <p class="lead">Files a typed, deduplicated ADO Bug work item per test failure — title, repro steps, severity, screenshot, parent link — in one pass.</p>
+        <p class="kicker">Source file: ado-bug-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Consumes a <code>TestFailure[]</code> from your runner and files each failure as a fully-populated Azure DevOps Bug via the REST API. Every field is set — title, description table, <code>Microsoft.VSTS.TCM.ReproSteps</code>, severity, priority, tags — the screenshot is attached, and the bug is linked under its parent user story. Idempotent: it searches for an existing open bug before creating.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Manual triage means opening the tracker and hand-keying each failure into a new ticket: title, error, repro steps, severity, browser, screenshot, parent link. Across a dozen failures it&#39;s slow, and fatigue produces vague titles, missing screenshots, and duplicate filings.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One consistently-structured Bug work item per failure, filed the moment it lands — identical field layout every time, no duplicates, no blank fields. Severity and priority are assigned by deterministic keyword rules, so the same failure always grades the same way.</p></div>
+    </div>
+    <p>A clearly-written bug filed instantly gets fixed sooner. A vague or forgotten one regresses to production. Deterministic filing removes the human variance that lets that happen.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Iterates the <code>TestFailure[]</code> and, per failure, branches to create, update, or skip — then returns a tallied <code>AgentResponse</code>.</span>
+          <span class="fc-node__fn">createBugsFromFailures()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Runs a WIQL query for an open Bug whose title already contains this test case and browser — the dedup gate.</span>
+          <span class="fc-node__fn">findExistingBug()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Grades severity from keywords in the test case and error text — deterministic, no LLM.</span>
+          <span class="fc-node__fn">determineSeverity()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Assembles the typed <code>BugDetails</code> — title, description, repro steps, severity, priority, area/iteration path, tags.</span>
+          <span class="fc-node__fn">buildBugDetails()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">POSTs the JSON-Patch document to create the <code>$Bug</code>, then links the parent story and attaches the screenshot.</span>
+          <span class="fc-node__fn">createBug()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">On a dedup hit with <code>updateExisting</code>, POSTs a timestamped comment to the existing bug instead of filing a duplicate.</span>
+          <span class="fc-node__fn">updateBug()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"createBugsFromFailures()","explain":"The orchestrator. Failures are processed sequentially, not in parallel, so the dedup gate stays consistent — two failures of the same test in one batch can't race and both file a bug. For each, `findExistingBug` runs first; a match routes to `updateBug` (append a recurrence note) or a plain skip based on `updateExisting`, and the `continue` guarantees it never also creates. Only a genuine miss reaches `createBug`. `dryRun` is the safety valve: the full decide path runs, the write doesn't — so CI can preview the exact create/update/skip breakdown before anything touches the board.","code":"async createBugsFromFailures(\n  failures: TestFailure[],\n  options: { userStoryId?: string; dryRun?: boolean; updateExisting?: boolean } = {}\n): Promise\u003cAgentResponse> {\n  const results: CreatedBug[] = [];\n\n  for (const failure of failures) {\n    // Dedup gate first — never file blind. One WIQL round-trip per failure.\n    const existingBug = await this.findExistingBug(failure);\n\n    if (existingBug) {\n      // Known failure: append a recurrence comment, or skip entirely.\n      if (options.updateExisting) {\n        await this.updateBug(existingBug.id, failure);\n        results.push({ ...existingBug, action: 'updated' });\n      } else {\n        results.push({ ...existingBug, action: 'skipped-existing' });\n      }\n      continue; // never fall through to create\n    }\n\n    // New failure. dryRun runs the full decide path but suppresses the POST,\n    // so you can preview exactly what would be filed with zero side effects.\n    if (!options.dryRun) {\n      const bug = await this.createBug(failure, options.userStoryId);\n      results.push(bug);\n    }\n  }\n  // ...tally created / updated / skipped for the AgentResponse summary\n  return { success: true, bugs: results } as AgentResponse;\n}"},{"fn":"findExistingBug()","explain":"The dedup gate, written in WIQL — ADO's SQL-like work-item query language, available only over POST `/wit/wiql`. The dedup key is deliberately `testCase` **and** `browser`: the same test failing on two browsers files two bugs, because the repro differs. The `\u003c> 'Closed'` / `\u003c> 'Resolved'` clauses are the load-bearing part — an already-fixed bug is invisible to this query, so a **regression** files a fresh ticket instead of reopening stale history. WIQL returns ids only, so a hit costs a second `getBug` call to hydrate the title and URL. One caveat it exposes: `failure.testCase` is interpolated straight into the query, so titles are normalized upstream — an unescaped quote would break the WIQL.","code":"private async findExistingBug(failure: TestFailure) {\n  // Dedup key = test case + browser. Both must be in the title so the same\n  // test failing on Chrome vs Firefox stays two separate bugs (distinct repros).\n  const wiql = `\n    SELECT [System.Id], [System.Title], [System.State]\n    FROM WorkItems\n    WHERE [System.WorkItemType] = 'Bug'\n      AND [System.State] \u003c> 'Closed'      -- ignore already-fixed bugs, so a\n      AND [System.State] \u003c> 'Resolved'    -- regression opens a fresh ticket\n      AND [System.Title] CONTAINS '${failure.testCase}'\n      AND [System.Title] CONTAINS '${failure.browser}'\n  `;\n\n  // WIQL is POST-only and returns work-item IDs, never fields.\n  const response = await fetch(`${this.baseUrl}/wit/wiql?api-version=7.0`, {\n    method: 'POST',\n    headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n    body: JSON.stringify({ query: wiql }),\n  });\n\n  const result = await response.json();\n  if (result.workItems?.length > 0) {\n    // Hit → hydrate the first match (getBug = GET /wit/workitems/{id}) so the\n    // caller gets a usable { id, url, title } instead of a bare id.\n    const bugId = result.workItems[0].id;\n    const bugDetails = await this.getBug(bugId);\n    return { id: bugId, url: bugDetails._links.html.href, title: bugDetails.fields['System.Title'] };\n  }\n  return null; // Miss → caller proceeds to createBug.\n}"},{"fn":"determineSeverity()","explain":"Deterministic severity mapping — no LLM, no heuristics that drift. It lowercases the test name and error, then checks keyword tiers in priority order and returns on the first match: `smoke`/`critical` in the test name short-circuits to `1 - Critical` (a smoke failure blocks everything downstream); a `navigate`/`login`/`auth` test or a `timeout` error → `2 - High`; `regression` → `3 - Medium`; everything else falls through to `4 - Low`. Order matters — first match wins, so a 'critical login smoke' test grades Critical, not High. Because it's pure keyword matching, the same failure grades identically across runs and machines, which is what makes the filed severities auditable.","code":"private determineSeverity(failure: TestFailure): BugDetails['severity'] {\n  const testCase = failure.testCase.toLowerCase();\n  const error = failure.error.toLowerCase();\n\n  // Tiers are checked top-down; the FIRST match wins, so order = precedence.\n\n  // Critical: smoke or explicitly-critical tests — these gate the whole suite.\n  if (testCase.includes('critical') || testCase.includes('smoke')) {\n    return '1 - Critical';\n  }\n\n  // High: auth/navigation core paths, or any timeout (usually a real hang).\n  if (\n    testCase.includes('navigate') ||\n    testCase.includes('login') ||\n    testCase.includes('auth') ||\n    error.includes('timeout')\n  ) {\n    return '2 - High';\n  }\n\n  // Medium: regression coverage — important, not blocking.\n  if (testCase.includes('regression')) {\n    return '3 - Medium';\n  }\n\n  // Low: everything else (UI validation, formatting, cosmetic).\n  return '4 - Low';\n}"},{"fn":"buildBugDetails()","explain":"Assembles the entire work-item payload as one typed `BugDetails` object before any network call — so the create step is a straight serialize-and-POST with nothing computed inline. The title template is load-bearing: it's the exact string the dedup gate greps for, so it must stay stable — change it and `findExistingBug` stops matching and you get duplicates. `areaPath` routes the bug onto the right team's backlog; it prefers `ADO_AREA_PATH` and falls back to a `\u003cproject>\\\\MyTeam` default, so the same code drops into any project by setting one env var. Severity and priority come from the deterministic keyword graders, not from the caller — so a bug can't be accidentally mis-graded.","code":"private buildBugDetails(failure: TestFailure, parentStoryId?: string): BugDetails {\n  // Grades computed up front so the payload is fully deterministic.\n  const severity = this.determineSeverity(failure);\n  const priority = this.determinePriority(failure);\n\n  return {\n    // Title IS the dedup key (see findExistingBug) — keep this template stable.\n    title: `[Automation] ${failure.testCase} failed on ${failure.browser}`,\n    description: this.formatDescription(failure),   // HTML, human-readable\n    reproSteps: this.formatReproSteps(failure),     // HTML, numbered steps\n    severity,\n    priority,\n    // areaPath routes the bug to a team's backlog; env override → project default.\n    areaPath: process.env.ADO_AREA_PATH || `${this.project}\\\\MyTeam`,\n    iterationPath: process.env.ADO_ITERATION_PATH,  // optional sprint assignment\n    tags: this.buildTags(failure),\n  };\n}"},{"fn":"createBug()","explain":"The write. ADO work-item creation isn't a plain JSON POST — it's a JSON-Patch document (`application/json-patch+json`), an array of `add` ops keyed by field reference name (`System.Title`, `Microsoft.VSTS.TCM.ReproSteps`, `Microsoft.VSTS.Common.Severity`…), sent to the `$Bug` work-item-type endpoint. Tags are joined with `; ` because that's ADO's on-the-wire delimiter. The bug is created in one call; the parent link and screenshot are two follow-up calls that only fire when there's a story id or an attachment — so a failure with no screenshot still files cleanly. The screenshot is what turns 'the test failed' into a triageable bug, which is the entire reason to do this automatically.","code":"private async createBug(failure: TestFailure, parentStoryId?: string): Promise\u003cCreatedBug> {\n  const bugDetails = this.buildBugDetails(failure, parentStoryId);\n\n  // ADO create = JSON-Patch: an array of add-ops, one per field.\n  const patchDocument = [\n    { op: 'add', path: '/fields/System.Title', value: bugDetails.title },\n    { op: 'add', path: '/fields/System.Description', value: bugDetails.description },\n    { op: 'add', path: '/fields/Microsoft.VSTS.TCM.ReproSteps', value: bugDetails.reproSteps },\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Severity', value: bugDetails.severity },\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: bugDetails.priority },\n    { op: 'add', path: '/fields/System.Tags', value: bugDetails.tags?.join('; ') || '' },\n  ];\n\n  // Note the content-type (json-patch+json) and the $Bug work-item-type in the path.\n  const response = await fetch(`${this.baseUrl}/wit/workitems/$Bug?api-version=7.0`, {\n    method: 'POST',\n    headers: { Authorization: this.authHeader, 'Content-Type': 'application/json-patch+json' },\n    body: JSON.stringify(patchDocument),\n  });\n\n  const bug = await response.json();\n\n  // Two best-effort follow-ups, only after the bug exists:\n  if (parentStoryId || failure.userStoryId) {\n    await this.linkToUserStory(bug.id, parentStoryId || failure.userStoryId!); // parent link\n  }\n  if (failure.screenshot) {\n    await this.addAttachment(bug.id, failure.screenshot, 'screenshot.png');    // attach evidence\n  }\n\n  return { id: bug.id, url: bug._links.html.href, title: bugDetails.title, action: 'created' };\n}"},{"fn":"updateBug()","explain":"The 'seen it again' path. Instead of filing a duplicate, it POSTs an HTML comment to the matched bug's `comments` endpoint, stamping the recurrence with an ISO timestamp, the browser, and the error. The error runs through `escapeHtml` first — failure messages are untrusted text that routinely contain `\u003c`/`>` from selectors or markup, and unescaped they'd corrupt the comment HTML. Keeping every recurrence on one work item is what makes 'this bug has failed 14 times since Tuesday' answerable — fragmenting it across duplicates destroys that signal. The `comments` API is still `-preview`, so the version is pinned deliberately.","code":"private async updateBug(bugId: number, failure: TestFailure): Promise\u003cvoid> {\n  // Recurrence note, not a new bug: append an HTML comment to the existing one\n  // so every repeat of this failure stays on a single work item.\n  const comment = `\n\u003ch3>Test Failed Again\u003c/h3>\n\u003cp>\u003cstrong>Timestamp:\u003c/strong> ${new Date().toISOString()}\u003c/p>\n\u003cp>\u003cstrong>Browser:\u003c/strong> ${failure.browser}\u003c/p>\n\u003cp>\u003cstrong>Error:\u003c/strong>\u003c/p>\n\u003cpre>${this.escapeHtml(failure.error)}\u003c/pre>\n  `; // error is escaped — failure text is untrusted and often contains \u003c >\n\n  // comments is a -preview endpoint, so the api-version is pinned to it.\n  await fetch(`${this.baseUrl}/wit/workitems/${bugId}/comments?api-version=7.0-preview`, {\n    method: 'POST',\n    headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n    body: JSON.stringify({ text: comment }),\n  });\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Smoke test times out on mobile Safari</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>`TestFailure`: testCase `mobile-login-smoke`, browser `mobile Safari`, error `Timed out waiting for the Sign In button`, plus a screenshot path.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>New Bug `[Automation] mobile-login-smoke failed on mobile Safari`, graded `1 - Critical` (the `smoke` keyword), tagged `mobile`, screenshot attached, linked under the Login story.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Same failure recurs mid-sprint</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A repeat of a test that already has an open bug from Monday, run with `--update-existing`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>WIQL dedup hits the existing bug; instead of a duplicate it POSTs a timestamped comment — browser, error, ISO time — appending to the recurrence history on that one work item.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Low-severity CSS regression</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>`TestFailure`: testCase `profile-page-spacing`, error `Expected 16px margin, got 8px`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>New Bug graded `4 - Low` (no critical/high/regression keywords) with repro steps, linked under the Profile story — filed without inflating the priority queue.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>An <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> org/project and a <strong>PAT</strong> with work-item write (create Bug) scope.</li><li>A <code>TestFailure[]</code> JSON array from your runner — <code>testCase</code>, <code>browser</code>, <code>error</code>, optional <code>screenshot</code> path.</li><li>No LLM key — severity and priority are deterministic keyword rules, not a model.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript on Node. One-time per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time only, on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the ADO client and helpers into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Full install, a minute or two.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Export the ADO target (environment variables).</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token
+export ADO_AREA_PATH=&quot;My Project\\MyTeam&quot;   # optional</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup to resolve the org/project and authenticate. Swap them to retarget a different project.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Dry-run to preview the create/skip decisions.</div>
+        <pre class="rb__cmd"><code>npm run ado:bugs -- \
+  --story 4001 \
+  --failures &#39;[{&quot;testCase&quot;:&quot;login-smoke&quot;,&quot;browser&quot;:&quot;chromium&quot;,&quot;error&quot;:&quot;Timed out waiting for the Sign In button&quot;}]&#39; \
+  --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--dry-run</code> runs the full WIQL-search and decide flow but suppresses the write — validates your <code>--failures</code> JSON shape first.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run for real.</div>
+        <pre class="rb__cmd"><code>npm run ado:bugs -- \
+  --story 4001 \
+  --failures &#39;[{&quot;testCase&quot;:&quot;login-smoke&quot;,&quot;browser&quot;:&quot;chromium&quot;,&quot;error&quot;:&quot;Timed out waiting for the Sign In button&quot;}]&#39;</code></pre>
+        <div class="rb__why"><span>Why</span> Drops <code>--dry-run</code> and files one Bug per failure, severity/priority auto-graded.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Files a net-new Bug for every failure with no matching open bug.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Same failure hits the WIQL dedup gate: skipped, or — with <code>--update-existing</code> — a timestamped comment instead of a duplicate.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the filed bug.</div>
+        <pre class="rb__cmd"><code># the agent prints each ticket&#39;s link to the console, e.g.:
+# Created: #6002  https://dev.azure.com/my-org/My%20Project/_workitems/edit/6002</code></pre>
+        <div class="rb__why"><span>Why</span> No local artifact — the Bug work item on ADO is the output; the console prints its url.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--failures &lt;json&gt;</dt><dd><code>TestFailure[]</code> JSON — testCase, browser, error, optional screenshot path.</dd><dt>--story &lt;id&gt;</dt><dd>Parent user story ID to hierarchy-link every new bug under.</dd><dt>--dry-run</dt><dd>Run the search/decide flow but suppress the write.</dd><dt>--update-existing</dt><dd>Comment on a dedup match instead of skipping it.</dd><dt>environment variables</dt><dd>Org/project target and the PAT.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>Bug work items</dt><dd>Created (or commented-on) directly in ADO — no local files written.</dd><dt>console summary</dt><dd>created / updated / skipped / errored counts, plus each new bug&#39;s url.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Idempotent by construction: each failure hits the WIQL dedup gate (open Bug whose title CONTAINS the test case and browser) before any write, so a repeat failure never becomes a duplicate — it&#39;s skipped, or appended as a comment under <code>--update-existing</code>.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Wire it as the terminal step of a CI test job: emit the runner&#39;s failures as JSON, pipe into <code>--failures</code>, set <code>--story</code> from the build&#39;s linked feature. Add <code>--update-existing</code> on nightly/regression runs so a flaky failure accretes history on one bug instead of piling up duplicates.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 2-3 minute screen recording: a <code>TestFailure</code> becomes a filed, linked ADO Bug, live.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 4</div>
+        <h3 class="display">Authenticates to the ADO REST API</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>On every invocation, per failure.</dd>
+          <dt>Takes in</dt><dd>The <code>TestFailure</code> — test case, browser, error, optional screenshot.</dd>
+          <dt>Shows out</dt><dd>PAT-authenticated calls to the Azure DevOps work-item REST API (v7.0).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 4</div>
+        <h3 class="display">WIQL dedup gate</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Before any write, per failure.</dd>
+          <dt>Takes in</dt><dd>Test case + browser.</dd>
+          <dt>Shows out</dt><dd>An existing open Bug (title <code>CONTAINS</code> both terms) or null — the branch that prevents double-filing.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 4</div>
+        <h3 class="display">Keyword severity/priority grading</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>While assembling <code>BugDetails</code>.</dd>
+          <dt>Takes in</dt><dd>Lowercased test case and error text.</dd>
+          <dt>Shows out</dt><dd>One of four severity/priority tiers, assigned deterministically — no LLM, no run-to-run drift.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 4</div>
+        <h3 class="display">JSON-Patch create + link + attach</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per net-new failure.</dd>
+          <dt>Takes in</dt><dd>The assembled <code>BugDetails</code>.</dd>
+          <dt>Shows out</dt><dd>A new Bug work item, hierarchy-linked to its parent story, with the screenshot attached.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="../index.html">← Contents</a>
+      <a href="the-bug-analyst.html">The Bug Analyst →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

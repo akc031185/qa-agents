@@ -1,0 +1,185 @@
+{
+  "slug": "the-results-poster",
+  "plate": 13,
+  "name": "The Results Poster",
+  "techName": "ado-test-results-agent.ts",
+  "category": "tracker",
+  "oneLiner": "Derives each test case's Passed/Failed outcome from the story's ADO state — QA task closure and bug links — then posts the results to a test run.",
+  "lead": "After execution, someone has to record Passed/Failed on every test point. This agent infers the outcome from signals already in ADO — whether the QA execution Task is Closed and whether bugs are linked to specific test cases — then posts the verdicts automatically via a test run.",
+  "chore": "A tester finishes a feature, then updates the tracker one test point at a time: open each, decide pass or fail, recall which bug maps to which test case, and click through several screens to record it. Across dozens of test cases and many features it's an afternoon of clicking — and easy to mismark or skip a few.",
+  "instead": "The agent reads each story and applies three deterministic rules. QA task Closed with no bugs → every test case Passed. Bugs linked to specific test cases → exactly those Failed, the rest Passed. QA task not Closed → skip and leave a reminder comment instead of guessing. It then posts all outcomes to a single test run.",
+  "whyItMatters": "An accurate results board is what signals a feature is genuinely shippable — a rushed or wrong outcome can green-light something that isn't.",
+  "howItWorks": [
+    {
+      "step": "For each story it reads relations to find the QA execution Task, child Bugs, and the test cases tracked via `TestedBy-Forward` links.",
+      "fn": "analyzeStory()",
+      "explain": "This reads a story's structure from **two different relation types in one pass**: `Hierarchy-Forward` gives the child work items (the QA Task and Bugs live under the story), while `TestedBy-Forward` gives the test cases the story is verified by — test cases are *not* children, they're a separate link type, so both must be pulled. The QA Task is identified by a title-contains match on `qa test execution` (lowercased for safety), and its `System.State` is captured because the whole pass/fail decision downstream hinges on whether it's `Closed`. Bugs are collected with an empty `linkedTcIds`, then a second loop calls `findBugTcLinks` per bug — a deliberate second round-trip, because a bug's own relations (not the story's) are what tie it to specific test cases.",
+      "code": "private async analyzeStory(storyId: number): Promise<StoryAnalysis> {\n  const wi = await this.client.getWorkItemWithRelations(storyId);\n  const relations = wi.relations || [];\n  // Two DIFFERENT link types off the same story:\n  const childIds = this.client.extractRelationIds(relations, 'System.LinkTypes.Hierarchy-Forward');      // QA Task + Bugs are children\n  const testCaseIds = this.client.extractRelationIds(relations, 'Microsoft.VSTS.Common.TestedBy-Forward'); // test cases are a separate link, not children\n\n  let qaTask: StoryAnalysis['qaTask'] = null;\n  const childBugs: StoryAnalysis['bugs'] = [];\n\n  const children = await this.client.getWorkItemsBatch(childIds);\n  for (const child of children) {\n    const type = child.fields?.['System.WorkItemType'];\n    const title = child.fields?.['System.Title'] || '';\n    // Identify the QA Task by title-contains (lowercased); its System.State drives the whole verdict downstream.\n    if (type === 'Task' && title.toLowerCase().includes('qa test execution')) {\n      qaTask = { id: child.id, title, state: child.fields['System.State'],\n                 assignedTo: this.client.extractDisplayName(child.fields['System.AssignedTo']) };\n    }\n    if (type === 'Bug') childBugs.push({ id: child.id, title, state: child.fields['System.State'], linkedTcIds: [] } as any);\n  }\n  // Second round-trip per bug: a bug's OWN relations (not the story's) tell us which test cases it maps to.\n  for (const bug of childBugs) bug.linkedTcIds = await this.findBugTcLinks(bug.id);\n  return { storyId, storyTitle: wi.fields?.['System.Title'], qaTask, testCaseIds, bugs: childBugs };\n}"
+    },
+    {
+      "step": "It applies the rules: QA task Closed with no bugs → all Passed; bugs linked to test cases → those Failed (rest Passed); task not Closed → skip and queue a reminder comment.",
+      "fn": "resolveOutcomes()",
+      "explain": "This is the deterministic verdict engine — two **fail-safe guards** come first: no QA Task at all skips silently, and a QA Task not in state `closed` (compared lowercased, since ADO state casing varies) refuses to guess — it queues a reminder comment and skips every test case rather than mark anything Passed on an unfinished run. Only past those guards does it grade: it builds `failedTcIds` from bugs, but critically only counts a bug's `linkedTcIds` that are **also in this story's `testCaseIds`** — a bug pointing at a test case outside this story is ignored, so cross-story noise can't fail the wrong case. Then the second loop marks every remaining, non-failed test case Passed. The `Set` guarantees a case failed by multiple bugs is recorded once, and a test case never lands in both buckets.",
+      "code": "private async resolveOutcomes(analysis: StoryAnalysis) {\n  const results: PendingResult[] = [];\n  const comments: PendingComment[] = [];\n\n  // Guard 1: no QA Task -> nothing to grade, skip silently.\n  if (!analysis.qaTask) {\n    return { results: [], comments: [], skipped: analysis.testCaseIds.length };\n  }\n  // Guard 2: QA Task not Closed (lowercased - ADO state casing varies) -> refuse to guess.\n  // Queue a reminder and skip rather than mark anything Passed on an unfinished run.\n  if (analysis.qaTask.state.toLowerCase() !== 'closed') {\n    comments.push({ workItemId: analysis.qaTask.id,\n      comment: 'QA Test Execution pending. Please complete and close this task so results can be recorded.' });\n    return { results: [], comments, skipped: analysis.testCaseIds.length };\n  }\n\n  const failedTcIds = new Set<number>();\n  for (const bug of analysis.bugs) {\n    for (const tcId of bug.linkedTcIds) {\n      // Only fail cases that belong to THIS story; a bug linked to a foreign test case is ignored.\n      if (analysis.testCaseIds.includes(tcId)) {\n        failedTcIds.add(tcId); // Set -> a case hit by multiple bugs is recorded once\n        results.push({ testCaseId: tcId, outcome: 'Failed', comment: `Bug #${bug.id}: ${bug.title}` });\n      }\n    }\n  }\n  // Everything not explicitly failed passes - the two buckets never overlap.\n  for (const tcId of analysis.testCaseIds) {\n    if (!failedTcIds.has(tcId)) results.push({ testCaseId: tcId, outcome: 'Passed', comment: 'Auto-resolved: no linked bugs' });\n  }\n  return { results, comments, skipped: 0 };\n}"
+    },
+    {
+      "step": "If a bug links to no test case, it queues a comment asking someone to link it, so no defect goes unaccounted for.",
+      "fn": "findBugTcLinks()",
+      "explain": "A bug can be tied to a test case by any of three link types, so this accepts all of them — `TestedBy-Forward`, `TestedBy-Reverse`, and plain `Related` — because teams link inconsistently and being strict about direction here would miss real associations. ADO relations don't carry the target ID as a field; it's embedded in `rel.url` (e.g. `.../workItems/1234`), so the ID is pulled with the regex `/workItems\\/(\\d+)/i` and `parseInt`. Note this returns *every* linked work item ID from those relation types without checking the target is actually a Test Case — the caller (`resolveOutcomes`) does that narrowing by intersecting against the story's `testCaseIds`.",
+      "code": "private async findBugTcLinks(bugId: number): Promise<number[]> {\n  const bug = await this.client.getWorkItemWithRelations(bugId);\n  const relations = bug.relations || [];\n  const tcIds: number[] = [];\n\n  for (const rel of relations) {\n    // Accept all three link types - teams link bugs to test cases inconsistently,\n    // and being strict about direction would miss real associations.\n    if (\n      rel.rel === 'Microsoft.VSTS.Common.TestedBy-Forward' ||\n      rel.rel === 'Microsoft.VSTS.Common.TestedBy-Reverse' ||\n      rel.rel === 'System.LinkTypes.Related'\n    ) {\n      // ADO relations carry the target ID only inside rel.url (.../workItems/1234), not as a field.\n      const match = rel.url?.match(/workItems\\/(\\d+)/i);\n      // Returns EVERY linked ID; resolveOutcomes narrows these to real test cases via the story's testCaseIds.\n      if (match) tcIds.push(parseInt(match[1], 10));\n    }\n  }\n  return tcIds;\n}"
+    },
+    {
+      "step": "It creates a test run, writes each Passed/Failed outcome with a reason comment, and completes the run.",
+      "fn": "postResults()",
+      "explain": "You can't post an outcome against a test case directly in ADO — results attach to a **test run**, and a run is created over **test point** IDs, so step 1's `tcToPoint` map is the essential bridge (a test point is the intersection of a test case with a suite/config). Results are then filtered to only cases that actually have a point in this suite, so a stray ID can't break the run. The non-obvious ordering is steps 2→3: creating the run **auto-generates** one empty result per point, and those carry the result IDs you must have to update them — hence the immediate `getTestRunResults` fetch, then a re-match of each auto-created result back to its pending outcome by `testCase.id` before the PATCH. `completeTestRun` at the end is what flips the run from in-progress to a finished, reportable state; skip it and the results exist but the run reads as still running. The `dryRun` return sits after the mapping so a preview still validates the point coverage without creating anything.",
+      "code": "private async postResults(planId: number, suiteId: number, results: PendingResult[], runName: string, dryRun: boolean): Promise<number | null> {\n  // Step 1: results attach to test POINTS, not test cases directly - build the TC id -> point id bridge.\n  // A test point = a test case intersected with this suite/config.\n  const testPoints = await this.client.getTestPoints(suiteId, planId);\n  const tcToPoint = new Map<number, number>();\n  for (const tp of testPoints) tcToPoint.set(tp.testCaseReference.id, tp.id);\n\n  // Drop any result whose case has no point in THIS suite, so a stray id can't break the run.\n  const validResults = results.filter(r => tcToPoint.has(r.testCaseId));\n  const pointIds = validResults.map(r => tcToPoint.get(r.testCaseId)!);\n  if (dryRun) return null; // preview still validated point coverage above, but writes nothing\n\n  // Step 2: create the run over those point IDs.\n  const run = await this.client.createTestRun(runName, pointIds);\n  // Step 3: creating the run AUTO-generates one empty result per point; we need those result IDs to update them.\n  const runResults = await this.client.getTestRunResults(run.id);\n  // Step 4: re-match each auto-created result back to its pending outcome by testCase.id, then PATCH.\n  const updates = runResults\n    .map(rr => ({ rr, pending: validResults.find(r => r.testCaseId === rr.testCase?.id) }))\n    .filter(x => x.pending)\n    .map(x => ({ id: x.rr.id, outcome: x.pending!.outcome, comment: x.pending!.comment }));\n  await this.client.updateTestRunResults(run.id, updates);\n  // Step 5: complete the run - flips it from in-progress to finished/reportable; skip it and results read as still running.\n  await this.client.completeTestRun(run.id);\n  return run.id;\n}"
+    },
+    {
+      "step": "A `status` mode tallies the current outcomes read-only, writing nothing.",
+      "fn": "showStatus()",
+      "explain": "A pure read: it fetches the suite's test points and tallies each point's `results.lastResultOutcome` — the outcome of that point's **most recent** run, which is why this reflects live state without re-deriving anything from bugs or QA tasks. Points never executed have no such field, so the `|| 'Unspecified'` fallback buckets them explicitly rather than dropping them — that count is itself the signal of how much testing remains. The optional chaining (`?.`) matters because `results` is absent on a fresh point, not just empty. Nothing is written, so this is safe to call any time as an 'are we there yet' check.",
+      "code": "private async showStatus(planId: number, suiteId: number): Promise<void> {\n  const points = await this.client.getTestPoints(suiteId, planId);\n  const outcomes: Record<string, number> = {};\n\n  for (const tp of points) {\n    // lastResultOutcome = the point's MOST RECENT run result; ?. because a never-run point has no 'results' at all.\n    // 'Unspecified' bucket = not-yet-executed points, which is itself useful signal.\n    const outcome = (tp as any).results?.lastResultOutcome || 'Unspecified';\n    outcomes[outcome] = (outcomes[outcome] || 0) + 1;\n  }\n  console.log('Summary:', outcomes);\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "A closed story with one linked bug",
+      "input": "Post results for story #204 (QA task Closed; bug #970 linked to one test case).",
+      "output": "5 test cases resolved: the one linked to bug #970 → Failed, the other 4 → Passed. Posted to a new test run and completed it."
+    },
+    {
+      "caption": "QA task not yet closed",
+      "input": "Post results for story #205.",
+      "output": "QA execution Task isn't Closed. Queued a reminder comment — 'please complete and close so results can be recorded' — and skipped its 6 test cases instead of guessing."
+    },
+    {
+      "caption": "Manual override of one test case",
+      "input": "Mark test case #430 as Passed manually.",
+      "output": "Posted test case #430 as Passed in a one-off run labeled with today's date."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Analyzing the story",
+      "whenRuns": "For each story you pass it.",
+      "input": "A story ID.",
+      "output": "Its QA execution Task, child/related Bugs, and the test cases tracked via `TestedBy` links."
+    },
+    {
+      "heading": "Resolving outcomes",
+      "whenRuns": "Once a story's analysis is done.",
+      "input": "The QA Task's `state` and any bugs found.",
+      "output": "An outcome per test case — Passed, Failed, or skipped with a queued reminder."
+    },
+    {
+      "heading": "Resolving bug-to-test links",
+      "whenRuns": "For every bug found under a story.",
+      "input": "A bug's own relations in ADO.",
+      "output": "The test case IDs it links to, or — if none — a queued comment asking someone to link it."
+    },
+    {
+      "heading": "Posting the test run",
+      "whenRuns": "Once all stories are analyzed and it isn't a dry run.",
+      "input": "Every outcome collected across all stories.",
+      "output": "A new ADO test run, PATCHed result-by-result, then completed."
+    },
+    {
+      "heading": "Read-only status",
+      "whenRuns": "When you request current status instead of posting results.",
+      "input": "The suite's current test points.",
+      "output": "A read-only tally of test points per outcome, from each point's `lastResultOutcome`."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Azure DevOps Test Plans access and a **PAT** scoped to write test results.",
+      "The stories under test must have their QA execution Task Closed, and any bugs filed must be `TestedBy`-linked to the test case they came from — otherwise the agent skips and queues a reminder instead of guessing."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the engine that runs the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript run under Node — a one-time per-machine install.",
+        "firstRun": "One-time setup per machine."
+      },
+      {
+        "label": "Clone the agent and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the ADO client and xlsx reader into `node_modules`.",
+        "firstRun": "Cold install — a minute or two.",
+        "rerun": "No-op unless `package.json` changed."
+      },
+      {
+        "label": "Set the target org, project, and PAT (env vars).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token",
+        "why": "Read at startup: which ADO org/project to hit and the PAT that authorizes writing results."
+      },
+      {
+        "label": "Preview outcomes with --dry-run.",
+        "cmd": "npm run ado:results:update -- --plan-id 12345 --suite-id 67890 --stories 3101,3102 --dry-run",
+        "why": "`--dry-run` runs the same analysis and prints exactly what it would post — Passed/Failed/skipped, story by story — without creating a run. Review before writing.",
+        "firstRun": "Analyzes each story fresh."
+      },
+      {
+        "label": "Post the outcomes for real.",
+        "cmd": "npm run ado:results:update -- --plan-id 12345 --suite-id 67890 --stories 3101,3102",
+        "why": "Same analysis, but now it creates a test run, PATCHes every result, and completes the run.",
+        "rerun": "Non-idempotent — each invocation creates a new test run, so re-running the same stories posts a second, redundant run. Re-run only once the underlying bug links or QA task state actually changed."
+      },
+      {
+        "label": "Check current status any time, read-only.",
+        "cmd": "npm run ado:results:status -- --plan-id 12345 --suite-id 67890",
+        "why": "Never writes — tallies each test point's `lastResultOutcome`, handy for a quick 'are we there yet' check."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--plan-id <id> --suite-id <id>",
+        "desc": "Which Test Plan and suite to post results into."
+      },
+      {
+        "name": "--stories <ids> / --feature-id <id> / --from-excel <path>",
+        "desc": "Which stories to analyze — explicit list, parent feature, or a spreadsheet column."
+      },
+      {
+        "name": "--test-case <id> --outcome <value>",
+        "desc": "Manual override to set a single test case's outcome directly."
+      },
+      {
+        "name": "--status",
+        "desc": "Read-only: print the current outcome tally without posting."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "a new test run in ADO",
+        "desc": "Created, PATCHed result-by-result with Passed/Failed plus a reason comment, then completed — nothing saved locally."
+      },
+      {
+        "name": "reminder comments",
+        "desc": "Posted on the QA task (if not Closed) or on a bug (if not linked to a test case), so nothing silently falls through."
+      }
+    ],
+    "rerun": "Non-idempotent by design — every successful post creates a fresh test run, so re-running against unchanged data yields a second, redundant run. Re-run only after the QA task state or a bug's links actually changed.",
+    "integrate": "Trigger this right after the QA execution Task is Closed so the results board updates automatically the moment execution is done, instead of waiting for someone to click through it by hand."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-minute screen recording: preview outcomes, then post them to a test run.",
+    "script": [
+      "Open a terminal beside the tracker's test-plan view in a browser.",
+      "Say: 'This agent works out pass/fail from the paperwork already in the tracker — watch.'",
+      "Run `node -v` and `npm install` (or note it's already done).",
+      "Show the `export ADO_...` lines — the only project-specific part.",
+      "Run the `--dry-run` command; read the printed per-story analysis out loud — QA task state, bugs, verdicts.",
+      "Point out one story whose testing task isn't closed yet, and the reminder comment queued for it.",
+      "Run the same command without `--dry-run`; watch it open, fill, and close a test run.",
+      "Switch to the browser and refresh the test plan — show the outcomes now show Passed/Failed.",
+      "Run the `--status` command to show the read-only tally.",
+      "Close: 'That's the whole afternoon of clicking, done in under a minute.'"
+    ]
+  }
+}

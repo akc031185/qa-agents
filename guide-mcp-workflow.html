@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflows on an MCP server — Field Guide to Software QA Agents</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  /* guide-specific bits only — everything else comes from site.css */
+  .fig{margin:18px 0 26px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-1);padding:22px 20px 14px;text-align:center;}
+  .fig--tint{background:var(--tint);}
+  .fig svg{width:100%;max-width:660px;height:auto;display:inline-block;}
+  .fig figcaption{margin-top:8px;color:var(--ink-soft);font-weight:700;font-size:.85rem;}
+  .fig svg text{font-family:var(--font);}
+  .fig svg .hand{stroke-linecap:round;stroke-linejoin:round;fill:none;}
+  .fig svg .mono{font-family:var(--mono);}
+  .guide-hero{display:grid;grid-template-columns:1.15fr 1fr;gap:28px;align-items:center;padding:44px 0 10px;}
+  .guide-hero h1.display{margin:16px 0 14px;}
+  .guide-hero .fig{margin:0;}
+  @media (max-width:760px){.guide-hero{grid-template-columns:1fr;padding-top:30px;}}
+</style>
+</head>
+<body>
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="index.html">Contents</a>
+    <a href="toolkit.html">Toolkit</a>
+    <a href="guides.html">Guides</a>
+    <a href="deck.html">Slides</a>
+  </nav>
+</div></header>
+
+<main class="wrap wrap--article"><article class="plate">
+
+  <!-- ============ Hero ============ -->
+  <section class="s6">
+    <div class="guide-hero">
+      <div>
+        <a href="guides.html">← All guides</a>
+        <div><span class="eyebrow">A guide · automate a workflow</span></div>
+        <h1 class="display">Workflows on an MCP server</h1>
+        <p class="lead">Stand up a free, local MCP server in ~60 lines of TypeScript, and let Claude monitor and execute a workflow through tools you control. Local files, stdio transport, nothing to pay for.</p>
+      </div>
+      <figure class="fig fig--tint">
+        <svg viewBox="0 0 560 280" role="img" aria-label="Claude, the client, connected by two arrows to your MCP server, which exposes a monitor tool and an execute tool">
+          <defs>
+            <marker id="ah-hero" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+            </marker>
+          </defs>
+          <!-- Claude client box -->
+          <g transform="rotate(-2 110 140)">
+            <rect x="36" y="92" width="150" height="96" rx="20" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+            <circle cx="111" cy="126" r="15" fill="var(--ac)"/>
+            <path class="hand" d="M104 126 l5 5 l9 -10" stroke="#fff" stroke-width="3.4"/>
+            <text x="111" y="168" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">Claude</text>
+          </g>
+          <text x="111" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">the client</text>
+          <!-- stdio arrows -->
+          <path class="hand" d="M196 116 Q262 96 328 112" stroke="var(--deep)" stroke-width="4.5" stroke-dasharray="1 9" marker-end="url(#ah-hero)"/>
+          <path class="hand" d="M328 166 Q262 186 196 168" stroke="var(--deep)" stroke-width="4.5" stroke-dasharray="1 9" marker-end="url(#ah-hero)"/>
+          <text x="262" y="86" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)">tool calls</text>
+          <text x="262" y="212" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)">results</text>
+          <!-- server box with two tool pills -->
+          <g transform="rotate(2 438 138)">
+            <rect x="336" y="62" width="204" height="152" rx="20" fill="#fff" stroke="var(--deep)" stroke-width="4.5"/>
+            <text x="438" y="94" text-anchor="middle" font-size="15" font-weight="800" fill="var(--deep)">your MCP server</text>
+            <rect x="356" y="108" width="164" height="32" rx="16" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+            <text x="438" y="130" text-anchor="middle" font-size="12.5" font-weight="800" fill="var(--deep)" class="mono">monitor_workflow</text>
+            <rect x="356" y="152" width="164" height="32" rx="16" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+            <text x="438" y="174" text-anchor="middle" font-size="12.5" font-weight="800" fill="var(--deep)" class="mono">execute_workflow</text>
+          </g>
+          <text x="438" y="248" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">runs on your machine · free</text>
+          <path class="hand" d="M306 42 v16 M298 50 h16" stroke="#FFB020" stroke-width="4"/>
+          <circle cx="42" cy="58" r="6" fill="#2EC4A0"/>
+        </svg>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ 1 · What MCP is ============ -->
+  <section class="s3">
+    <h2 class="display">What MCP is</h2>
+    <p><strong>Model Context Protocol (MCP)</strong> is an open-source standard for connecting AI applications to external systems. Think of it like a USB-C port for AI: just as USB-C provides a standardized connector, MCP provides a standardized way for AI clients (like Claude) to call <strong>tools</strong> (functions) and read <strong>resources</strong> (read-only data) exposed by <strong>servers</strong> you control.</p>
+    <p>With MCP, Claude can call custom tools you define (e.g., "check queue status" or "execute next workflow step"), access read-only resources you expose (workflow definitions, logs, config files), and do all of this securely, on your machine, with no cloud dependencies.</p>
+    <p>Two names to keep straight: the <strong>client</strong> is Claude Code (CLI) or the Claude Desktop app — it launches the server and makes tool calls. The <strong>server</strong> is a program you write that exposes tools and resources.</p>
+    <figure class="fig">
+      <svg viewBox="0 0 660 250" role="img" aria-label="Claude Code as the client, connected over a stdio pipe carrying JSON-RPC to your MCP server, which exposes two tools and resources">
+        <defs>
+          <marker id="ah-mcp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+          </marker>
+        </defs>
+        <!-- client -->
+        <g transform="rotate(-2 130 120)">
+          <rect x="42" y="62" width="176" height="118" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="4.5"/>
+          <rect x="58" y="78" width="144" height="60" rx="10" fill="var(--tint)"/>
+          <text x="70" y="102" font-size="13" font-weight="700" fill="var(--deep)" class="mono">$ claude</text>
+          <path class="hand" d="M70 118 h84" stroke="var(--ac)" stroke-width="5" opacity=".65"/>
+          <text x="130" y="166" text-anchor="middle" font-size="14.5" font-weight="800" fill="var(--deep)">Claude Code</text>
+        </g>
+        <text x="130" y="216" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">client — launches the server</text>
+        <!-- stdio pipe -->
+        <rect x="238" y="102" width="180" height="38" rx="19" fill="var(--tint)" stroke="var(--ac)" stroke-width="3.5"/>
+        <text x="328" y="127" text-anchor="middle" font-size="13.5" font-weight="800" fill="var(--deep)">stdio · JSON-RPC</text>
+        <path class="hand" d="M246 88 Q328 74 410 88" stroke="var(--deep)" stroke-width="4" stroke-dasharray="1 8" marker-end="url(#ah-mcp)"/>
+        <path class="hand" d="M410 156 Q328 170 246 156" stroke="var(--deep)" stroke-width="4" stroke-dasharray="1 8" marker-end="url(#ah-mcp)"/>
+        <text x="328" y="60" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink-soft)">stdin → tool call</text>
+        <text x="328" y="192" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink-soft)">stdout → result</text>
+        <!-- server -->
+        <g transform="rotate(2 534 120)">
+          <rect x="436" y="52" width="196" height="140" rx="18" fill="#fff" stroke="var(--deep)" stroke-width="4.5"/>
+          <text x="534" y="82" text-anchor="middle" font-size="14.5" font-weight="800" fill="var(--deep)">your MCP server</text>
+          <rect x="452" y="96" width="164" height="28" rx="14" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+          <text x="534" y="115" text-anchor="middle" font-size="11.5" font-weight="800" fill="var(--deep)" class="mono">monitor_workflow</text>
+          <rect x="452" y="132" width="164" height="28" rx="14" fill="var(--tint)" stroke="var(--ac)" stroke-width="3"/>
+          <text x="534" y="151" text-anchor="middle" font-size="11.5" font-weight="800" fill="var(--deep)" class="mono">execute_workflow</text>
+          <text x="534" y="180" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink-soft)">+ resources (read-only data)</text>
+        </g>
+        <text x="534" y="226" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">a subprocess on your machine</text>
+      </svg>
+      <figcaption>Client and server talk JSON-RPC over stdin/stdout — no network involved.</figcaption>
+    </figure>
+    <h3 class="display">Transport: stdio (local) vs HTTP (remote)</h3>
+    <p>MCP servers communicate via <strong>transports</strong>, and the choice decides your bill.</p>
+    <div class="beforeafter">
+      <div class="ba"><div class="ba__label">HTTP / SSE — remote</div><p>The server is hosted on a URL. Cost depends on hosting; setup requires a server, a domain, possibly a cloud bill. Right for shared, remote services — overkill for today.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">Stdio — local (this guide)</div><p>Your machine launches the server as a child process and talks to it over stdin/stdout using JSON-RPC. Free, minimal setup, command line only. No network, no cloud bill, entirely local.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 2 · The plan ============ -->
+  <section class="s2">
+    <h2 class="display">The plan: a workflow monitor + executor</h2>
+    <p>We'll build a minimal local MCP server with exactly two tools, backed by nothing fancier than a <code>queue/</code> folder on disk:</p>
+    <dl class="rb__list">
+      <div><dt>monitor_workflow</dt><dd>Reads a local queue directory (or status file) and returns the current workflow state — e.g., checks <code>./queue/pending/</code> and returns the list of pending jobs, their statuses, and the next action.</dd></div>
+      <div><dt>execute_workflow</dt><dd>Runs the next workflow step — e.g., moves the first file from <code>pending/</code> to <code>running/</code>, updates the status log, and returns confirmation of the action taken.</dd></div>
+    </dl>
+    <pre class="rb__cmd"><code>User: "Check the workflow queue and execute the next pending item"
+  ↓
+Claude calls: monitor_workflow()
+  ↓ (gets list of pending jobs)
+Claude calls: execute_workflow(job_id)
+  ↓ (moves file, updates log)
+Claude reports: "Started job XYZ, moved to running/"</code></pre>
+    <figure class="fig">
+      <svg viewBox="0 0 660 230" role="img" aria-label="A job file moving from the pending folder to the running folder, with a log entry appended">
+        <defs>
+          <marker id="ah-plan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--deep)"/>
+          </marker>
+        </defs>
+        <!-- pending folder -->
+        <g transform="rotate(-2 150 120)">
+          <rect x="66" y="52" width="76" height="26" rx="11" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+          <rect x="58" y="66" width="184" height="110" rx="18" fill="#fff" stroke="var(--ac)" stroke-width="4"/>
+          <text x="150" y="96" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)" class="mono">queue/pending/</text>
+          <rect x="80" y="110" width="140" height="22" rx="8" fill="var(--tint)" stroke="var(--ac)" stroke-width="2.5"/>
+          <text x="150" y="126" text-anchor="middle" font-size="11.5" font-weight="800" fill="var(--deep)" class="mono">job-001</text>
+          <rect x="80" y="140" width="140" height="22" rx="8" fill="var(--tint)" opacity=".55"/>
+          <text x="150" y="156" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--deep)" opacity=".7" class="mono">job-002</text>
+        </g>
+        <text x="150" y="206" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">waiting its turn</text>
+        <!-- moving file -->
+        <path class="hand" d="M252 118 Q330 78 408 114" stroke="var(--deep)" stroke-width="4.5" stroke-dasharray="1 9" marker-end="url(#ah-plan)"/>
+        <g transform="rotate(4 330 66)">
+          <rect x="288" y="52" width="84" height="26" rx="13" fill="var(--ac)"/>
+          <text x="330" y="70" text-anchor="middle" font-size="11.5" font-weight="800" fill="#FFFDF8" class="mono">job-001</text>
+        </g>
+        <text x="330" y="146" text-anchor="middle" font-size="13" font-weight="800" fill="var(--deep)">execute_workflow</text>
+        <!-- running folder -->
+        <g transform="rotate(2 510 120)">
+          <rect x="426" y="52" width="76" height="26" rx="11" fill="#fff" stroke="var(--deep)" stroke-width="4"/>
+          <rect x="418" y="66" width="184" height="110" rx="18" fill="var(--tint)" stroke="var(--deep)" stroke-width="4"/>
+          <text x="510" y="96" text-anchor="middle" font-size="14" font-weight="800" fill="var(--deep)" class="mono">queue/running/</text>
+          <rect x="440" y="110" width="140" height="22" rx="8" fill="#fff" stroke="var(--ac)" stroke-width="2.5"/>
+          <text x="510" y="126" text-anchor="middle" font-size="11.5" font-weight="800" fill="var(--deep)" class="mono">job-001 ✓</text>
+          <text x="510" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink-soft)" class="mono">.log — "[time] Started job-001"</text>
+        </g>
+        <text x="510" y="206" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink-soft)">moved + logged</text>
+        <path class="hand" d="M614 40 v16 M606 48 h16" stroke="#FF6B6B" stroke-width="4"/>
+        <circle cx="52" cy="36" r="6" fill="#6C7BFF"/>
+      </svg>
+      <figcaption>Execute = move the next job from pending to running, and append a log entry.</figcaption>
+    </figure>
+    <div class="rb__note"><strong>Why this design?</strong> It's <em>free</em> (runs on local files — no database, no API, no bill), <em>simple</em> (~50–60 lines of TypeScript server code), <em>real</em> (models actual workflow automation: monitor state, trigger actions), and <em>extensible</em> (easy to replace the file system with a database, HTTP call, or shell command).</div>
+  </section>
+
+  <!-- ============ 3 · Build the server ============ -->
+  <section class="s8">
+    <h2 class="display">Build the server</h2>
+    <p>All you need: <strong>Node.js 18+</strong> (Bun or Deno work too, but Node is standard), <strong>npm</strong> or your preferred package manager, and a terminal.</p>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Create the project structure</div>
+        <pre class="rb__cmd"><code>mkdir workflow-mcp-server
+cd workflow-mcp-server
+npm init -y</code></pre>
+        <span class="rb__why"><span>Why</span>A fresh folder with a default <code>package.json</code> — the usual Node starting point.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install dependencies</div>
+        <pre class="rb__cmd"><code>npm install @modelcontextprotocol/sdk zod
+npm install --save-dev typescript @types/node ts-node</code></pre>
+        <span class="rb__why"><span>Why</span><code>@modelcontextprotocol/sdk</code> is the official MCP SDK for TypeScript; <code>zod</code> handles schema validation for tool inputs (required peer dependency); <code>typescript</code>, <code>@types/node</code>, and <code>ts-node</code> are the TypeScript tooling.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Configure TypeScript — create <code>tsconfig.json</code></div>
+        <pre class="rb__cmd"><code>{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
+}</code></pre>
+        <span class="rb__why"><span>Why</span>Compiles everything in <code>src/</code> to plain JavaScript in <code>dist/</code>, in strict mode.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Create the server code — <code>src/server.ts</code></div>
+        <pre class="rb__cmd"><code>import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  Tool,
+} from "@modelcontextprotocol/sdk/types.js";
+import * as fs from "fs";
+import * as path from "path";
+import { z } from "zod";
+
+// Initialize the server
+const server = new Server({
+  name: "workflow-monitor",
+  version: "1.0.0",
+});
+
+// Define tool input schemas
+const MonitorSchema = z.object({
+  queue_dir: z.string().default("./queue/pending"),
+});
+
+const ExecuteSchema = z.object({
+  job_id: z.string(),
+});
+
+// Tool 1: Monitor workflow queue
+async function monitorWorkflow(
+  args: Record&lt;string, unknown&gt;
+): Promise&lt;string&gt; {
+  const { queue_dir } = MonitorSchema.parse(args);
+
+  if (!fs.existsSync(queue_dir)) {
+    fs.mkdirSync(queue_dir, { recursive: true });
+  }
+
+  const files = fs.readdirSync(queue_dir);
+  if (files.length === 0) {
+    return JSON.stringify({
+      status: "idle",
+      pending_jobs: [],
+      message: "No pending workflow items",
+    });
+  }
+
+  return JSON.stringify({
+    status: "has_jobs",
+    pending_jobs: files,
+    count: files.length,
+    message: `Found ${files.length} pending job(s). Next: ${files[0]}`,
+  });
+}
+
+// Tool 2: Execute workflow step
+async function executeWorkflow(
+  args: Record&lt;string, unknown&gt;
+): Promise&lt;string&gt; {
+  const { job_id } = ExecuteSchema.parse(args);
+
+  const pending_dir = "./queue/pending";
+  const running_dir = "./queue/running";
+  const job_file = path.join(pending_dir, job_id);
+
+  if (!fs.existsSync(job_file)) {
+    return JSON.stringify({
+      success: false,
+      error: `Job ${job_id} not found in pending queue`,
+    });
+  }
+
+  if (!fs.existsSync(running_dir)) {
+    fs.mkdirSync(running_dir, { recursive: true });
+  }
+
+  // Move file from pending to running
+  const dest = path.join(running_dir, job_id);
+  fs.renameSync(job_file, dest);
+
+  // Append log entry
+  const log_file = path.join(running_dir, ".log");
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(
+    log_file,
+    `[${timestamp}] Started job: ${job_id}\n`
+  );
+
+  return JSON.stringify({
+    success: true,
+    job_id,
+    moved_to: "queue/running",
+    timestamp,
+    message: `Job ${job_id} moved to running state`,
+  });
+}
+
+// Register tools with the server
+server.setRequestHandler(ListToolsRequestSchema, async () =&gt; {
+  return {
+    tools: [
+      {
+        name: "monitor_workflow",
+        description:
+          "Monitor the workflow queue and report pending jobs",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            queue_dir: {
+              type: "string",
+              description: "Path to the pending queue directory",
+            },
+          },
+          required: [],
+        },
+      } as Tool,
+      {
+        name: "execute_workflow",
+        description: "Execute the next pending workflow step",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            job_id: {
+              type: "string",
+              description: "ID of the job to execute",
+            },
+          },
+          required: ["job_id"],
+        },
+      } as Tool,
+    ],
+  };
+});
+
+// Handle tool calls
+server.setRequestHandler(CallToolRequestSchema, async (request) =&gt; {
+  const { name, arguments: args } = request.params;
+
+  try {
+    let result: string;
+    if (name === "monitor_workflow") {
+      result = await monitorWorkflow(args || {});
+    } else if (name === "execute_workflow") {
+      result = await executeWorkflow(args || {});
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Unknown tool: ${name}` }],
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: result }],
+    };
+  } catch (error) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ],
+    };
+  }
+});
+
+// Start the server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("Workflow MCP server running on stdio transport");
+}
+
+main().catch((error) =&gt; {
+  console.error("Server startup error:", error);
+  process.exit(1);
+});</code></pre>
+        <span class="rb__why"><span>Why</span>The whole server: two zod input schemas, two tool functions over the file system, a handler that lists the tools, a handler that routes calls to them, and a stdio transport to talk to Claude.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Build &amp; test the server</div>
+        <pre class="rb__cmd"><code>npx tsc
+node dist/server.js</code></pre>
+        <span class="rb__why"><span>Why</span>If you see <code>Workflow MCP server running on stdio transport</code> with no errors, it's working. Press <code>Ctrl+C</code> to stop.</span>
+      </li>
+    </ol>
+    <div class="rb__note"><strong>Note:</strong> The server stays running waiting for input. This is normal — it waits for Claude to send tool calls.</div>
+  </section>
+
+  <!-- ============ 4 · Connect it to Claude ============ -->
+  <section class="s4">
+    <h2 class="display">Connect it to Claude</h2>
+    <h3 class="display">Option A: using <code>claude mcp add</code> (recommended)</h3>
+    <p>From your project directory, run:</p>
+    <pre class="rb__cmd"><code>claude mcp add workflow-server -- node dist/server.js</code></pre>
+    <p>What this does: <code>claude mcp add</code> registers the server with Claude Code; <code>workflow-server</code> is the name you give the server (shows up in Claude's output); <code>--</code> separates the server name from the command; and <code>node dist/server.js</code> is the command Claude Code will run to start your server.</p>
+    <h3 class="display">Option B: edit <code>.mcp.json</code> manually</h3>
+    <p>Create (or edit) <code>.mcp.json</code> in your project root:</p>
+    <pre class="rb__cmd"><code>{
+  "mcpServers": {
+    "workflow-server": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/server.js"]
+    }
+  }
+}</code></pre>
+    <p>Then start Claude Code in the project:</p>
+    <pre class="rb__cmd"><code>claude</code></pre>
+    <h3 class="display">Verify the connection</h3>
+    <p>In your terminal (outside Claude), check the server list:</p>
+    <pre class="rb__cmd"><code>claude mcp list</code></pre>
+    <p>You should see:</p>
+    <pre class="rb__cmd"><code>✔ Connected · workflow-server</code></pre>
+    <p>Inside a Claude session, you can also run <code>/mcp</code> — it shows all connected servers and their tools.</p>
+    <div class="rb__note"><strong>Seeing ✘ Failed to connect?</strong> Troubleshoot in order: 1) ensure <code>dist/server.js</code> exists (<code>ls dist/server.js</code>); 2) try running it directly with <code>node dist/server.js</code> — it should output "Workflow MCP server running on stdio transport"; 3) check for typos in <code>.mcp.json</code> or the <code>claude mcp add</code> command.</div>
+  </section>
+
+  <!-- ============ 5 · Run the workflow ============ -->
+  <section class="s1">
+    <h2 class="display">Run the workflow</h2>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Set up test data</div>
+        <pre class="rb__cmd"><code>mkdir -p queue/pending queue/running
+echo "job-001-process-report" &gt; queue/pending/job-001
+echo "job-002-send-email" &gt; queue/pending/job-002</code></pre>
+        <span class="rb__why"><span>Why</span>Two fake jobs in the pending queue give Claude something real to monitor and execute.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Start Claude Code</div>
+        <pre class="rb__cmd"><code>claude</code></pre>
+        <span class="rb__why"><span>Why</span>Claude Code launches your MCP server as a subprocess and discovers its two tools.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Ask Claude to monitor &amp; execute</div>
+        <pre class="rb__cmd"><code>Check the workflow queue and execute the first job.</code></pre>
+        <span class="rb__why"><span>Why</span>What happens: 1) Claude calls <code>monitor_workflow()</code> and gets the list of pending jobs; 2) Claude calls <code>execute_workflow(job_id="job-001-process-report")</code>; 3) the server moves the file from <code>queue/pending/</code> to <code>queue/running/</code>; 4) Claude reports the result.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Check what happened</div>
+        <pre class="rb__cmd"><code>ls queue/running/  # Should see job-001-process-report
+cat queue/running/.log  # Should see execution timestamp</code></pre>
+        <span class="rb__why"><span>Why</span>The file system is the workflow state — you can always verify it directly, outside Claude.</span>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Automate a loop</div>
+        <pre class="rb__cmd"><code>Keep executing workflow jobs one at a time until the queue is empty.
+Report after each execution.</code></pre>
+        <span class="rb__why"><span>Why</span>Claude will loop, calling <code>monitor_workflow()</code> to check for more jobs, then <code>execute_workflow()</code> until the queue is empty.</span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============ 6 · What you built + next steps ============ -->
+  <section class="s5">
+    <h2 class="display">What you've built</h2>
+    <p><span class="chip">Free · local</span> <span class="chip">Two tools</span> <span class="chip">Stdio transport</span> <span class="chip">File-based state</span></p>
+    <p>A <strong>free, local MCP server</strong> (no cloud bill) with <strong>two tools</strong> exposed to Claude via the MCP protocol, running over <strong>stdio transport</strong> (local subprocess, secure, fast), with <strong>workflow state</strong> tracked via the local file system and <strong>Claude integration</strong> via <code>claude mcp add</code> or <code>.mcp.json</code>.</p>
+    <p>The pattern generalizes: replace the file system with database queries; add tools for sending emails, calling APIs, or running shell commands; monitor external systems (CI/CD status, deployment queues, bug trackers); execute remediation (auto-retry, escalate, notify).</p>
+    <h3 class="display">Extend the server</h3>
+    <dl class="rb__list">
+      <div><dt>complete_workflow()</dt><dd>Add a third tool that moves finished jobs to <code>queue/done/</code>.</dd></div>
+      <div><dt>resources</dt><dd>Expose the log file as a read-only MCP resource — Claude can fetch it with <code>@workflow-logs</code>.</dd></div>
+      <div><dt>validation</dt><dd>Require job metadata (owner, priority, deadline) in the queue items.</dd></div>
+      <div><dt>error recovery</dt><dd>Implement retry logic in <code>execute_workflow()</code>.</dd></div>
+    </dl>
+    <h3 class="display">Documentation</h3>
+    <p>
+      <a class="doclink" href="https://modelcontextprotocol.io" target="_blank" rel="noopener">MCP Protocol Overview</a> ·
+      <a class="doclink" href="https://ts.sdk.modelcontextprotocol.io" target="_blank" rel="noopener">TypeScript SDK Docs</a> ·
+      <a class="doclink" href="https://code.claude.com/docs/en/mcp-quickstart.md" target="_blank" rel="noopener">Claude Code MCP Guide</a> ·
+      <a class="doclink" href="https://modelcontextprotocol.io/docs/develop/build-server" target="_blank" rel="noopener">Build an MCP Server Tutorial</a>
+    </p>
+    <div class="rb__note rb__note--wire"><strong>Ready to go beyond your machine?</strong> The MCP server code stays the same; only the transport and deployment change. Migrate from stdio to <code>StreamableHTTPServerTransport</code> and host on a server (HTTP transport), or use Anthropic's hosting for agent deployments with built-in sandboxing (Managed Agents).</div>
+  </section>
+
+</article></main>
+
+<footer class="footer"><div class="wrap">
+  Workflows on an MCP server · part of the <strong>Field Guide to Software QA Agents</strong> · two tools, zero cloud bill.
+</div></footer>
+</body>
+</html>

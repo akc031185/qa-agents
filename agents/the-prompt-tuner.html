@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Prompt Tuner — Agent 24</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s5">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">24<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Grading the AI assistant&#39;s answers</span></div>
+        <h1>The Prompt Tuner</h1>
+        <p class="lead">A/B-tests draft system prompts over a shared prompt set and scores which one makes responses shorter, more on-point, and less pushy.</p>
+        <p class="kicker">Source file: response-optimization-agent.ts</p>
+      </div>
+    </div>
+
+    <p>The same assistant reads as rambling or crisp depending on its system prompt. This agent runs one fixed prompt set through several draft system prompts, scores each on a six-dimension rubric — length, relevance, follow-up quality, tone, and more — and ranks them against a no-prompt baseline. The baseline is the starting line every draft is measured against.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Tuning how an assistant talks is normally guesswork: tweak the instructions, eyeball a few replies, form a gut feeling. There&#39;s no consistent way to tell whether a new draft actually shortened responses, held relevance, cut the pushy &#39;would you like me to...&#39; follow-ups, or warmed the tone — and no way to prove the change helped rather than regressed.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Every draft is scored on the same rubric — word count, relevance, follow-up quality, tone, and more — against the no-prompt baseline, with a named winner and the exact per-dimension delta each draft moved.</p></div>
+    </div>
+    <p>Shorter, sharper, less pushy responses are the difference between an assistant people reach for and one they find exhausting.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Parses a spreadsheet of conversation prompts into a prompt bank, carrying each row&#39;s target response size (S/M/L/XL) and whether follow-ups are none, optional, or expected.</span>
+          <span class="fc-node__fn">convertRowsToPrompts()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">The platform&#39;s system-prompt layer isn&#39;t swappable, so each draft is prepended to the user message inside labeled <code>[SYSTEM CONTEXT]</code> / <code>[USER MESSAGE]</code> markers.</span>
+          <span class="fc-node__fn">runEvaluation() — message construction</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Counts response words and checks them against a complexity-tiered ceiling (simple/moderate/complex), flagging ok / warn / fail.</span>
+          <span class="fc-node__fn">checkWordCount()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Regex-detects follow-up suggestions in the reply, classifies each as action vs. question, and counts them against a recommended limit of 3.</span>
+          <span class="fc-node__fn">parseFollowUps()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Scores each reply with an LLM-as-judge on six dimensions — accuracy, relevance, conciseness, hallucination resistance, follow-up quality, tone — feeding the pre-computed word-count and follow-up analysis as context.</span>
+          <span class="fc-node__fn">evaluateOptDimensions()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">After a draft runs over the full prompt bank, aggregates verdict counts, per-dimension averages, and mean word/follow-up counts into one summary, ready to diff against baseline or another draft.</span>
+          <span class="fc-node__fn">buildOptSummary()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"convertRowsToPrompts()","explain":"Row normalization is **whitelist-validated, not trusting**: `responseSize` is only accepted if `responseSizeRaw.toUpperCase()` lands in `['S','M','L','XL']`, and `followUpExpected` likewise against `['none','optional','expected']` — any junk value becomes `undefined` rather than a bad enum that would corrupt the later complexity/limit logic. The `id` falls back to a synthetic `P-${i + 1}` when no `prompt_id` column exists (or a row's cell is blank), so every prompt is addressable in the report even for an id-less sheet. Note the deliberate asymmetry in defaults: `difficulty` defaults to `'medium'` (it's needed as the fallback complexity signal downstream), but `responseSize` and `followUpExpected` stay `undefined` when unspecified — signaling 'no explicit target' so the scoring can fall back to difficulty instead of assuming a size.","code":"prompts.push({\n  // Fall back to a synthetic P-N id when there's no prompt_id column (or the cell is blank) — every row stays addressable.\n  id: columnMap.prompt_id ? String(row[columnMap.prompt_id] || `P-${i + 1}`) : `P-${i + 1}`,\n  prompt: promptText.trim(),\n  category: columnMap.category ? String(row[columnMap.category] || '') : undefined,\n  // difficulty defaults to 'medium' — it's the fallback complexity signal the word-count check relies on.\n  difficulty: columnMap.difficulty ? (String(row[columnMap.difficulty] || 'medium') as 'easy'|'medium'|'hard') : 'medium',\n  // Whitelist-validate: only S/M/L/XL is accepted; any junk value becomes undefined (no explicit size target) rather than a bad enum.\n  responseSize: ['S','M','L','XL'].includes(responseSizeRaw.toUpperCase())\n    ? responseSizeRaw.toUpperCase() as 'S'|'M'|'L'|'XL' : undefined,\n  followUpExpected: ['none','optional','expected'].includes(followUpExpectedRaw.toLowerCase())\n    ? followUpExpectedRaw.toLowerCase() as 'none'|'optional'|'expected' : undefined,\n});"},{"fn":"runEvaluation() — message construction","explain":"This encodes a real **platform limitation as a methodology caveat**: the assistant's true system-prompt layer isn't swappable, so the draft is *prepended* to the user turn inside explicit `[SYSTEM CONTEXT]` / `[USER MESSAGE]` markers rather than installed as a genuine system prompt. The markers matter — they give the model a structural cue to treat the draft as standing instructions instead of part of the question, the closest available approximation. The `systemPromptText ? ... : prompt.prompt` ternary is what makes the **baseline** run honest: when no draft is supplied it sends the bare prompt with *no* wrapper at all, so baseline measures true no-instruction behavior rather than an empty-context artifact. The honest framing is that this measures instruction-following under prepended context, not true system-prompt control.","code":"// \\u26A0\\uFE0F  We cannot inject into the assistant's actual rulebook layer — that's platform-controlled.\n// Instead, the draft rulebook is PREPENDED to the user message inside explicit markers, which cue the\n// model to treat the draft as standing instructions — the closest approximation to a real system prompt:\nconst messageToApp = systemPromptText\n  ? `[SYSTEM CONTEXT]\\n${systemPromptText}\\n\\n[USER MESSAGE]\\n${prompt.prompt}`\n  : prompt.prompt; // Baseline: no draft => bare prompt with NO wrapper, so it measures true no-instruction behavior.\n\nconst response = await this.getAppResponse(messageToApp, input.model);"},{"fn":"checkWordCount()","explain":"This is a **deterministic length gate — no LLM** — so verbosity is measured identically every run. Word count is `split(/\\s+/).filter(Boolean)`, where the `filter(Boolean)` drops empty tokens from leading/multiple whitespace so padding can't inflate the count. The complexity ladder is **`responseSize`-first, `difficulty`-fallback**: an explicit `S`/`M` maps to simple/moderate, *any other* set `responseSize` (i.e. `L`/`XL`) collapses to `complex`, and only when `responseSize` is `undefined` does it read `difficulty` (easy/hard, else moderate) — honoring the per-row size target when given and degrading gracefully when not. Watch the flag boundaries carefully: `flag` is `ok` at `\u003c= target`, else `warn` up through **`t.fail`**, else `fail` — so the `t.warn` threshold in the table is not actually consulted here; the warn band is simply everything between `target` and `fail`.","code":"const WORD_COUNT_THRESHOLDS = {\n  simple:   { target: 80,  warn: 120, fail: 200 },\n  moderate: { target: 150, warn: 220, fail: 320 },\n  complex:  { target: 250, warn: 350, fail: 500 },\n};\n\nprivate checkWordCount(response: string, prompt: UserPrompt): WordCountCheck {\n  // filter(Boolean) drops empty tokens from leading/multiple whitespace so padding can't inflate the count.\n  const wordCount = response.split(/\\s+/).filter(Boolean).length;\n  // responseSize-first, difficulty-fallback: S/M -> simple/moderate, any OTHER set size (L/XL) -> complex,\n  // and only an UNDEFINED responseSize falls back to difficulty (easy/hard, else moderate).\n  const complexity = prompt.responseSize === 'S' ? 'simple'\n    : prompt.responseSize === 'M' ? 'moderate'\n    : prompt.responseSize ? 'complex'\n    : prompt.difficulty === 'easy' ? 'simple'\n    : prompt.difficulty === 'hard' ? 'complex' : 'moderate';\n\n  const t = WORD_COUNT_THRESHOLDS[complexity];\n  // ok at \u003c=target, else warn up through t.fail, else fail — note t.warn is NOT consulted; warn = target..fail band.\n  const flag = wordCount \u003c= t.target ? 'ok' : wordCount \u003c= t.fail ? 'warn' : 'fail';\n  return { wordCount, complexity, target: t.target, flag } as WordCountCheck;\n}"},{"fn":"parseFollowUps()","explain":"This is a **deterministic detector for the 'pushy follow-up' anti-pattern**, run before the judge so its findings can be fed in as context. It scans for three canned solicitation phrasings (`would you like`, `do you want`, `want me to`), and `match(pattern) || []` guards the null that `String.match` returns on no hit so the spread doesn't throw. Dedup via `Set` then `slice(0, 10)` caps the list — a reply that spams the same nudge is collapsed to one, and the cap bounds pathological cases. Each item is typed **question vs action** by a cheap heuristic (`endsWith('?')` or an interrogative-verb prefix), letting the report distinguish a genuine offer from a templated question. The bright line is `\u003c= 3`: `withinLimit` and the `note` both key off it, so anything beyond three recommended follow-ups is flagged as exceeding the limit.","code":"private parseFollowUps(response: string): FollowUpAnalysis {\n  const followUpPatterns = [/would you like\\s.+\\??/gi, /do you want\\s.+\\??/gi, /want me to\\s.+\\??/gi];\n  const items: string[] = [];\n  for (const pattern of followUpPatterns) {\n    // `|| []` guards the null String.match returns on no hit, so the spread never throws.\n    items.push(...(response.match(pattern) || []).map(m => m.trim()));\n  }\n  // Dedup (a repeated nudge collapses to one), then cap at 10 to bound pathological replies.\n  const unique = Array.from(new Set(items)).slice(0, 10);\n\n  // Cheap question-vs-action heuristic: a '?' ending or an interrogative-verb prefix reads as a question.\n  const types = unique.map(item =>\n    (item.endsWith('?') || /^(would|do|should|shall|can)\\b/i.test(item)) ? 'question' : 'action'\n  );\n  // Bright line at 3: both withinLimit and the note key off it — >3 follow-ups reads as pushy.\n  return { count: unique.length, items: unique, types, withinLimit: unique.length \u003c= 3,\n           note: unique.length \u003c= 3 ? 'within limit' : 'exceeds recommended limit of 3' };\n}"},{"fn":"evaluateOptDimensions()","explain":"This is the **hybrid deterministic-plus-LLM design**: rather than asking the judge to eyeball length or count nudges (which models do unreliably), the pre-computed `wordCountCheck.wordCount` and `followUpAnalysis.count` are injected into the prompt as **FOLLOW-UP CONTEXT** and **WORD COUNT CONTEXT**, grounding the model's `conciseness` and `follow_up_quality` scores in hard numbers it can't miscount. The rubrics are **explicit-breakpoint** (`follow_up_quality: '10 = none needed and none shown, ...'`) precisely to reduce inter-run judge variance — a common LLM-as-judge failure is drifting scales, and anchored breakpoints pin them. Output is parsed with the same defensive `match(/\\{[^}]+\\}/)` first-JSON-block extraction used elsewhere (guards a judge that wraps JSON in prose, flat objects only), then each 1-10 score is normalized to 0-1 and averaged across the six dimensions into the aggregate the ranking uses.","code":"const OPT_DIMENSION_RUBRICS = {\n  conciseness: 'Is the response length appropriate for the query complexity? ...',\n  // Explicit breakpoints pin the scale so the judge doesn't drift run-to-run (a classic LLM-as-judge failure).\n  follow_up_quality: 'Score follow-up suggestions using explicit breakpoints: 10 = none needed and none shown, ...',\n  conversational_tone: 'Is the tone natural and non-overwhelming? Penalise unneeded tables or heavy markdown ...',\n  // ...accuracy, response_relevance, hallucination_resistance\n};\n\nprivate async evaluateOptDimensions(prompt, response, followUpAnalysis, wordCountCheck, ...) {\n  // Inject the DETERMINISTIC counts as context so the judge grades conciseness/follow-ups against hard numbers,\n  // not its own unreliable eyeballing of length or nudge count.\n  const judgePrompt = `Score each dimension 1-10 using these rubrics:\\n` +\n    `1. accuracy — ...\\n2. response_relevance — ...\\n3. conciseness — ${OPT_DIMENSION_RUBRICS.conciseness}\\n` +\n    `...\\nFOLLOW-UP CONTEXT: ${followUpAnalysis.count} follow-up(s) detected...\\n` +\n    `WORD COUNT CONTEXT: ${wordCountCheck.wordCount} words, target \\u2264${wordCountCheck.target}...`;\n  // Same defensive first-{...}-block extraction as the other judges — guards prose-wrapped JSON (flat objects only).\n  const rawScores = JSON.parse((await judgeClient.chat(judgePrompt)).response.answer.match(/\\{[^}]+\\}/)[0]);\n  // ...normalize each 1-10 score to 0-1 and average across the 6 dimensions\n}"},{"fn":"buildOptSummary()","explain":"This collapses one draft's whole run into a **single comparable row** keyed by `systemPromptLabel`, which is what lets a bake-off line drafts up against each other and the baseline. The `dimAvg` helper is defensively written: `.find(...)?.normalizedScore ?? 0` treats a dimension the judge omitted as **0**, so a malformed judge reply drags that dimension's mean down rather than throwing or silently skewing it upward — a conservative choice that surfaces judge failures instead of hiding them. Carrying both the `verdictCounts` histogram and the continuous `averageScores` means a comparison can be read two ways: the discrete PASS/WARNING/FAIL mix, and the fine-grained per-dimension deltas (`conciseness`, `follow_up_quality`, `conversational_tone`, plus the `aggregate`) that show *where* one draft actually moved the needle versus baseline.","code":"private buildOptSummary(datasetId, model, systemPromptLabel, systemPromptPath, duration, results: PromptOptResult[]): OptRunSummary {\n  const verdictCounts = { PASS: 0, WARNING: 0, FAIL: 0 };\n  for (const r of results) verdictCounts[r.verdict]++;\n\n  // ?? 0: a dimension the judge omitted counts as 0 — a malformed reply drags the mean down, never skews it up or throws.\n  const dimAvg = (dim: OptDimension) => avg(\n    results.map(r => r.optScores.dimensions.find(d => d.dimension === dim)?.normalizedScore ?? 0)\n  );\n\n  // Keyed by systemPromptLabel so each draft's summary is one row that lines up directly against baseline/other drafts.\n  return {\n    systemPromptLabel,\n    totalPrompts: results.length,\n    verdictCounts, // discrete PASS/WARNING/FAIL histogram...\n    averageScores: {\n      // ...alongside continuous per-dimension means that show WHERE a draft moved the needle.\n      conciseness: dimAvg('conciseness'),\n      follow_up_quality: dimAvg('follow_up_quality'),\n      conversational_tone: dimAvg('conversational_tone'),\n      aggregate: avg(results.map(r => r.aggregateScore)),\n    },\n    avgWordCount: avg(results.map(r => r.wordCount)),\n    avgFollowUpCount: avg(results.map(r => r.followUpAnalysis.count)),\n  } as OptRunSummary;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Baseline vs. a &#39;be concise&#39; draft</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>30 conversation prompts, run first with no system prompt, then with a draft instructing the assistant to keep answers short.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The draft cut mean response length from 240 to 110 words, raised conciseness from 0.61 to 0.88, and moved the overall verdict from WARNING to PASS — a clear win over baseline.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Catching a pushy-follow-up regression</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A draft that makes the assistant end every reply with several &#39;Would you like me to explain further?&#39; questions.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A low follow_up_quality score with the note &#39;5 follow-ups — exceeds recommended limit of 3, mostly templated questions,&#39; flagging that the draft made the assistant read as scripted.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A three-way bake-off</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The baseline plus three draft system prompts, all run over the same 30 prompts.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A ranked table naming draft 2 the winner on the best brevity/tone blend, plus a delta table: draft 2 beat baseline by 12 points on pass rate while draft 3 regressed below baseline.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node &gt;= 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>A spreadsheet of conversation prompts — a prompt column, and ideally target-response-size and follow-up-expectation columns.</li><li>One or more draft system prompts saved as <code>.txt</code> files — the instruction variants you want to A/B-test.</li><li>The assistant API&#39;s base URL and access token.</li><li>The toolkit&#39;s local checker service running, for the privacy/safety half of the scoring.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed by Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Needed only the first time on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent code, install dependencies, and start the local checker service.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+# one-time: install the checker service&#39;s own dependencies
+npm run eval:service:install
+
+# then start it (leave this running in its own terminal tab)
+npm run eval:service:start</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the xlsx reader, the report writers, and the assistant client. The checker service runs the privacy/safety half of scoring — it must be up before evaluating.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Installs everything and starts the service listening locally.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Leave the service up across tuning runs — no restart per run.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Point it at the assistant (env vars).</div>
+        <pre class="rb__cmd"><code>export APP_API_URL=https://your-assistant-host.example.com
+export APP_API_TOKEN=your-access-token
+export APP_MODEL=gpt4o</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: which assistant to query and the token that authorizes it. Nothing is hard-coded — swap these to retarget environments.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Convert the spreadsheet into a prompt bank, then measure the no-prompt baseline.</div>
+        <pre class="rb__cmd"><code>npm run opt:convert -- --input path/to/conversation-questions.xlsx
+npm run opt:baseline</code></pre>
+        <div class="rb__why"><span>Why</span> <code>opt:convert</code> builds the prompt bank the run consumes. <code>opt:baseline</code> runs every prompt with no draft attached — the vanilla behavior every draft is measured against.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Parses the spreadsheet, then queries every prompt with no system prompt attached and scores each reply.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Re-measure the baseline whenever the underlying assistant itself changes, so the comparison point stays honest.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run one draft, or bake several off against each other.</div>
+        <pre class="rb__cmd"><code># one draft
+npm run opt:run -- --system-prompt inputs/system-prompts/draft-v1.txt --sp-label v1
+
+# several drafts, bake-off style
+npm run opt:compare -- --system-prompts draft-v1.txt,draft-v2.txt</code></pre>
+        <div class="rb__why"><span>Why</span> Each draft is prepended to every prompt before sending (the platform doesn&#39;t allow swapping the real system prompt — noted in the run so results are read correctly). <code>opt:compare</code> runs several drafts back to back and ranks them.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Runs the whole prompt bank once per draft and scores every reply on six dimensions.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Safe to re-run after tweaking a draft — each run gets its own labeled, timestamped report.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the comparison.</div>
+        <pre class="rb__cmd"><code>open outputs/response-opt/opt-run-&lt;label&gt;-&lt;timestamp&gt;.xlsx
+# a short plain-text summary anyone can paste into chat:
+open outputs/response-opt/opt-run-&lt;label&gt;-&lt;timestamp&gt;-SHAREABLE.txt</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.xlsx</code> has the full per-draft breakdown — word counts, follow-up counts, and all six dimensions — against baseline. The SHAREABLE.txt is the short form for a ticket or chat.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--system-prompt &lt;path&gt;</dt><dd>One draft system prompt (a .txt file) to test.</dd><dt>--sp-label &lt;name&gt;</dt><dd>A short label for that draft, e.g. v1, v2 — shown in every report.</dd><dt>--system-prompts &lt;a,b,c&gt;</dt><dd>Several draft system prompts to bake off against each other and the baseline in one run.</dd><dt>--limit &lt;n&gt;</dt><dd>Run only the first N prompts — a quick check before a full run.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>opt-run-&lt;label&gt;-&lt;timestamp&gt;.json / .md</dt><dd>The full run for one draft — word counts, follow-up counts, and the six-dimension scores.</dd><dt>opt-run-&lt;label&gt;-&lt;timestamp&gt;.xlsx</dt><dd>A formatted spreadsheet of the same run, color-coded by PASS / WARNING / FAIL.</dd><dt>opt-run-&lt;label&gt;-&lt;timestamp&gt;-SHAREABLE.txt</dt><dd>A short plain-text summary for pasting anywhere.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Re-measure the baseline only when the underlying assistant changes; drafts can be re-run freely after every tweak, since each run is independent and separately labeled — nothing is overwritten.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> This is how a team picks which draft system prompt ships — the ranked comparison against baseline is the evidence, not a gut feeling. Promote the winning <code>.txt</code> to the new baseline, and re-run the bake-off any time someone proposes another wording change.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>3-4 min screencast: bake off two draft system prompts against the no-prompt baseline.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 6</div>
+        <h3 class="display">Parses the prompt bank</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, before any draft is tested.</dd>
+          <dt>Takes in</dt><dd>A spreadsheet of conversation prompts.</dd>
+          <dt>Shows out</dt><dd>A prompt bank carrying each prompt&#39;s target response size and follow-up expectation.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 6</div>
+        <h3 class="display">Prepends the draft and queries the assistant</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per prompt, per draft (and once with no prompt, for baseline).</dd>
+          <dt>Takes in</dt><dd>One prompt, plus the draft system-prompt text (or nothing, for baseline).</dd>
+          <dt>Shows out</dt><dd>The assistant&#39;s real reply to the combined message.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 6</div>
+        <h3 class="display">Checks response length</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after each reply returns.</dd>
+          <dt>Takes in</dt><dd>The reply text and the prompt&#39;s complexity tier.</dd>
+          <dt>Shows out</dt><dd>A word count against the tiered ceiling, flagged ok / warn / fail.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 6</div>
+        <h3 class="display">Detects and classifies follow-ups</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Alongside the length check.</dd>
+          <dt>Takes in</dt><dd>The reply text.</dd>
+          <dt>Shows out</dt><dd>A follow-up count, each labeled action or question, against the limit of 3.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 6</div>
+        <h3 class="display">Scores with an LLM judge</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After the length and follow-up checks, using them as context.</dd>
+          <dt>Takes in</dt><dd>The reply, plus the pre-computed length and follow-up analysis.</dd>
+          <dt>Shows out</dt><dd>A 1-10 score on six dimensions: accuracy, relevance, conciseness, hallucination resistance, follow-up quality, tone.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="5">
+        <div class="uh-slide__no">6 / 6</div>
+        <h3 class="display">Aggregates and compares</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, once a draft has run over every prompt.</dd>
+          <dt>Takes in</dt><dd>Every scored reply for that draft.</dd>
+          <dt>Shows out</dt><dd>One summary of per-dimension means and word/follow-up counts — set against baseline and other drafts to name a winner.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button><button class="uh-dot" data-uh-dot="5" aria-label="Slide 6"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-rule-tester.html">← The Rule Tester</a>
+      <a href="the-data-questioner.html">The Data Questioner →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

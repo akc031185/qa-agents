@@ -1,0 +1,192 @@
+{
+  "slug": "the-model-judge",
+  "plate": 20,
+  "name": "The Model Judge",
+  "techName": "model-comparison-agent.ts",
+  "category": "grade",
+  "oneLiner": "Benchmarks multiple LLMs on one shared prompt set, scores each answer with an LLM-as-judge rubric, and ranks them to name a winner.",
+  "lead": "Any assistant can be backed by several candidate models, and they don't score equally. This agent runs one fixed prompt set through each model, scores every response on a shared rubric, and lays the results side by side so the model choice rests on evidence, not preference.",
+  "chore": "Benchmarking models by hand means opening each one, pasting the same prompt, copying the answer into a spreadsheet, and repeating that across dozens of prompts and five or six models — then eyeballing accuracy, clarity, and hallucination with no consistent scale. It takes days, and one tired reviewer is not a reproducible scoreboard.",
+  "instead": "Every model answers every prompt automatically, each response is scored on the same rubric, and you get a ranked scoreboard with a named winner, a pass rate, and a recommendation — in one run.",
+  "whyItMatters": "The backing model decides whether the assistant ships accurate answers or confident hallucinations, so the choice needs a benchmark, not a hunch.",
+  "howItWorks": [
+    {
+      "step": "Resolves the model set to benchmark: named in-house models from `APP_MODELS`, a default pair when none are named, plus enabled `EXTERNAL_MODELS` (Gemini, Claude) when `--include-external` is set. Throws below two.",
+      "fn": "resolveModels()",
+      "explain": "Resolution is **precedence-ordered**: an explicitly requested id is looked up in `APP_MODELS` first and only falls through to `EXTERNAL_MODELS` if it isn't an in-house model — and an external match is dropped unless `external.enabled`, so a disabled provider never enters the run. With no `input.models` it defaults to the `gpt4o`/`gpt4omini` pair; `--include-external` then appends every external that is enabled, not `onDemand`, and not already present (the dedupe guard stops a requested id being added twice). The real guard is **`models.length < 2`**: a comparison needs at least two contestants, so a typo'd single id or an all-disabled external set fails fast instead of producing a meaningless one-model ranking.",
+      "code": "private resolveModels(input: ComparisonInput): ModelDef[] {\n  let models: ModelDef[] = [];\n\n  if (input.models && input.models.length > 0) {\n    for (const modelId of input.models) {\n      // In-house registry is checked FIRST — a requested id is only treated as external if it isn't an app model.\n      const inHouse = APP_MODELS.find(m => m.id === modelId);\n      if (inHouse) { models.push(inHouse); continue; }\n      // Fall-through: accept an external id only if that provider is enabled; a disabled one is silently skipped.\n      const external = EXTERNAL_MODELS.find(m => m.id === modelId);\n      if (external && external.enabled) { models.push(external); continue; }\n    }\n  } else {\n    // Default: the two standard in-house brains\n    models = APP_MODELS.filter(m => ['gpt4o', 'gpt4omini'].includes(m.id));\n  }\n\n  if (input.includeExternal) {\n    for (const ext of EXTERNAL_MODELS) {\n      // Append benchmarks: enabled, not on-demand (pay-per-call), and not already present (dedupe guard).\n      if (ext.enabled && !ext.onDemand && !models.find(m => m.id === ext.id)) {\n        models.push(ext);\n      }\n    }\n  }\n  // Real guard: a comparison needs at least 2 contestants, so a typo'd id or all-disabled set fails fast.\n  if (models.length < 2) {\n    throw new Error('Need at least 2 models for comparison.');\n  }\n  return models;\n}"
+    },
+    {
+      "step": "Sends the identical prompt to each model and captures the response text plus latency, before any scoring runs.",
+      "fn": "evaluatePromptWithModel()",
+      "explain": "Provider-routed dispatch: `provider === 'app'` goes through the in-house chat client with a generous `timeout: 180000` (3 min) — a cold model shouldn't false-fail on latency alone, since a premature timeout would register as a failed answer rather than a slow one. The key design choice is that **latency is captured as a first-class result** (`responseTimeMs`) right beside the answer text and before any scoring runs, so a model that scores well but answers slowly stays visible in the ranking. The `gemini` and `claude` branches hit their own direct-API helpers that return the same `{answer, timeMs}` shape, keeping downstream scoring provider-agnostic; only these three providers ever arrive here because `resolveModels` already filtered the set.",
+      "code": "private async evaluatePromptWithModel(\n  promptId: string, prompt: string, model: ModelDef\n): Promise<PromptModelResult> {\n  let response: string;\n  let responseTimeMs: number;\n\n  if (model.provider === 'app') {\n    // In-house client — 180s timeout: a cold model shouldn't false-fail on latency alone.\n    const client = createAppClient({ model: model.id, timeout: 180000 });\n    const chatResult = await client.chat(prompt);\n    response = chatResult.response.answer;\n    // messageResponseTime is the model's real latency, captured as a first-class metric beside the answer.\n    responseTimeMs = chatResult.telemetry.messageResponseTime;\n  } else if (model.provider === 'gemini') {\n    // External providers: direct API helpers return the same {answer, timeMs} shape so scoring stays provider-agnostic.\n    const result = await this.callGeminiDirect(prompt);\n    response = result.answer; responseTimeMs = result.timeMs;\n  } else if (model.provider === 'claude') {\n    const result = await this.callClaudeDirect(prompt);\n    response = result.answer; responseTimeMs = result.timeMs;\n  }\n  // ... scoring happens next (see evaluateRubricDimensions)\n  return { promptId, model: model.id, response, responseTimeMs /* , ... */ } as PromptModelResult;\n}"
+    },
+    {
+      "step": "Scores each response with an LLM-as-judge (`gpt4omini`) on six rubric dimensions, 1-10 each, returned as strict JSON.",
+      "fn": "evaluateRubricDimensions()",
+      "explain": "This is the **LLM-as-judge** core: `gpt4omini` scores the answer 1-10 on six dimensions, and the prompt hard-requires JSON-only output so the reply can be parsed. `judgeAnswer.match(/\\{[^}]+\\}/)` extracts the first `{...}` block — a defensive guard against a judge that wraps its JSON in prose despite the instruction (a common LLM quirk), safe only because the flat rubric object has no nested braces for the non-greedy `[^}]+` to trip on. Each raw score is **clamped to 1-10** with `|| 5` filling any missing dimension with a neutral value, so a partial judge reply degrades rather than crashes; scores normalize to 0-1 and each is gated at `>= 0.70` — meaning `passed` is per-dimension, while `averageNormalized` is the single aggregate the ranking ultimately sorts on.",
+      "code": "private async evaluateRubricDimensions(prompt: string, response: string) {\n  // JSON-mode by instruction: the judge is told to respond with ONLY a JSON object so the reply is parseable.\n  const judgePrompt = `You are an evaluation judge. Score the following AI\nresponse on these 6 dimensions using a scale of 1-10.\n\nUSER PROMPT: ${prompt}\nAI RESPONSE: ${response}\n\n1. accuracy  2. completeness  3. clarity_structure\n4. handling_ambiguity  5. hallucination_resistance  6. formatting_fidelity\n\nRespond ONLY with a JSON object, no other text.`;\n\n  // A cheap, fixed judge model (gpt4omini) scores every answer — the SAME judge keeps scores comparable across models.\n  const judgeClient = createAppClient({ model: 'gpt4omini' });\n  const judgeAnswer = (await judgeClient.chat(judgePrompt)).response.answer;\n  // Extract the first {...} block — defends against a judge that wraps its JSON in prose (flat object only, no nesting).\n  const rawScores = JSON.parse(judgeAnswer.match(/\\{[^}]+\\}/)[0]);\n\n  const dimensionScores = dimensions.map(dim => {\n    // Clamp to 1-10 and default any missing dimension to 5 (neutral) — a partial judge reply degrades, never crashes.\n    const rawScore = Math.min(10, Math.max(1, rawScores[dim] || 5));\n    const normalizedScore = Math.round((rawScore / 10) * 1000) / 1000;\n    // Per-dimension PASS gate at 0.70; averageNormalized (below) is the aggregate the ranking actually sorts on.\n    return { dimension: dim, rawScore, normalizedScore, passed: normalizedScore >= 0.70 };\n  });\n  const averageNormalized = /* mean of the 6 normalizedScore values */ 0;\n  return { dimensions: dimensionScores, averageNormalized };\n}"
+    },
+    {
+      "step": "After the full matrix runs, aggregates per model: mean aggregate score, PASS count, pass rate, and mean latency.",
+      "fn": "buildModelSummaries()",
+      "explain": "Per-model roll-up over the full matrix, where the **`!r.error` filter is load-bearing**: errored responses are excluded from every average, so a model that timed out on three prompts isn't dragged down by counting those as zeros — they simply don't count toward `total`. `passCount` tallies the `verdict === 'PASS'` field (not the raw score), and both `avgAggregate` and `avgResponseTimeMs` are guarded by `total > 0` to dodge a divide-by-zero when every prompt for a model errored. `passRate` is rendered as a rounded percentage **string** (`'82%'`) purely for display, while `avgAggregate` stays a 3-decimal number — the ranking sorts on the number, never the string.",
+      "code": "private buildModelSummaries(models: ModelDef[], results: PromptModelResult[]): ModelSummary[] {\n  return models.map(model => {\n    // !r.error is load-bearing: errored responses are dropped from every average, not counted as zeros.\n    const modelResults = results.filter(r => r.model === model.id && !r.error);\n    const passCount = modelResults.filter(r => r.verdict === 'PASS').length;\n    const total = modelResults.length;\n\n    // total>0 guards divide-by-zero when every prompt for this model errored out.\n    const avgAggregate = total > 0\n      ? Math.round((modelResults.reduce((s, r) => s + r.aggregateScore, 0) / total) * 1000) / 1000\n      : 0;\n    const avgResponseTimeMs = total > 0\n      ? Math.round(modelResults.reduce((s, r) => s + r.responseTimeMs, 0) / total)\n      : 0;\n\n    // passRate is a display string (e.g. \"82%\"); the ranking sorts on avgAggregate (a number), not this.\n    return { model: model.id, provider: model.provider, totalPrompts: total,\n             passCount, avgAggregate, avgResponseTimeMs,\n             passRate: total > 0 ? `${Math.round((passCount / total) * 100)}%` : '0%' };\n  });\n}"
+    },
+    {
+      "step": "Ranks models by mean aggregate, names a winner, and writes a recommendation calibrated by the top-to-bottom score gap (< 0.05 is a tie, decide on latency and cost).",
+      "fn": "buildRecommendation()",
+      "explain": "The recommendation is calibrated by the **score gap**, not the raw winner: `sorted` arrives ranked by `avgAggregate` descending, so `sorted[0]` is best and `sorted[sorted.length - 1]` worst, and the gap between them is bucketed — **`< 0.05`** means effectively tied, flipping the advice to 'choose on latency and cost'; **`< 0.15`** is a moderate trade-off; anything larger is a clear win worth acting on. These thresholds exist because a rubric-scored aggregate carries noise, so a 0.02 lead is not a real difference. It then re-sorts a **copy** (`[...sorted]`) by `avgResponseTimeMs` and, if the fastest model isn't the winner, appends that fact — deliberately surfacing the quality-vs-speed tension rather than hiding it behind the top score.",
+      "code": "private buildRecommendation(sorted: ModelSummary[]): string {\n  // sorted is already ranked by avgAggregate desc: [0] is the best model, the last entry is the worst.\n  const best = sorted[0];\n  const worst = sorted[sorted.length - 1];\n\n  let rec = `Winner: ${best.model} (${best.provider}) with aggregate score ` +\n    `${best.avgAggregate.toFixed(3)} and ${best.passRate} pass rate.`;\n\n  if (sorted.length > 1) {\n    // Bucket the top-to-bottom gap: a rubric aggregate is noisy, so a tiny lead isn't a real difference.\n    const gap = best.avgAggregate - worst.avgAggregate;\n    if (gap < 0.05) rec += ' Models perform similarly — choose based on latency and cost.';\n    else if (gap < 0.15) rec += ' Moderate performance difference — consider the trade-off.';\n    else rec += ' Significant performance gap — strongly recommend the top model.';\n  }\n\n  // Re-sort a COPY by latency; if the fastest model isn't the winner, surface the quality-vs-speed trade-off.\n  const fastest = [...sorted].sort((a, b) => a.avgResponseTimeMs - b.avgResponseTimeMs)[0];\n  if (fastest.model !== best.model) rec += ` Fastest: ${fastest.model} (${fastest.avgResponseTimeMs}ms avg).`;\n  return rec;\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Two in-house models, head to head",
+      "input": "A 40-prompt support dataset and two in-house models, `Brain-Fast` and `Brain-Deep`.",
+      "output": "Scoreboard: Brain-Deep wins at `0.87` aggregate and an 82% pass rate versus Brain-Fast's `0.79`. Gap > 0.15, so the recommendation reads 'Significant gap — strongly recommend Brain-Deep,' with a per-prompt score sheet attached."
+    },
+    {
+      "caption": "Adding external models as a benchmark",
+      "input": "The same 40 prompts with `--include-external`, benchmarking the in-house model against two well-known external ones.",
+      "output": "A three-way ranking where the in-house model lands second, 0.03 behind the leader. Gap < 0.05 triggers 'Models perform similarly — choose based on latency and cost,' and the in-house model is flagged fastest at 2,100ms avg."
+    },
+    {
+      "caption": "A `--limit 5` pipeline smoke test",
+      "input": "First 5 prompts across three models to validate wiring before a full run.",
+      "output": "A fast mini-report confirming all three models answered, with early scores and latencies, so the dataset, API reachability, and scoring service are all verified before committing to the full 40-prompt run."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Resolves the model set",
+      "whenRuns": "First, before any prompt is sent.",
+      "input": "Requested model ids, plus the `--include-external` flag.",
+      "output": "A validated `ModelDef[]` of at least two models — in-house registry entries plus enabled external ones (Gemini, Claude) when requested."
+    },
+    {
+      "heading": "Runs the prompt matrix",
+      "whenRuns": "Once per prompt, per model.",
+      "input": "One shared prompt from the dataset.",
+      "output": "Response text and latency from each model, via the in-house `app` client or the external provider APIs."
+    },
+    {
+      "heading": "Dual-scores each response",
+      "whenRuns": "Immediately after each response returns.",
+      "input": "The prompt and the response.",
+      "output": "A privacy/safety gate result from the checker service, plus a 1-10 six-dimension rubric score from the LLM-as-judge."
+    },
+    {
+      "heading": "Combines into a verdict",
+      "whenRuns": "Once both scores exist.",
+      "input": "The gate result and the six rubric scores.",
+      "output": "One aggregate score and a PASS / WARNING / FAIL verdict for that response."
+    },
+    {
+      "heading": "Aggregates the scoreboard",
+      "whenRuns": "After the full matrix completes.",
+      "input": "Every scored response across all models.",
+      "output": "Per-model means, a ranking, and a gap-calibrated recommendation naming the winner."
+    },
+    {
+      "heading": "Writes the artifacts",
+      "whenRuns": "Last, once the scoreboard is final.",
+      "input": "The finished comparison.",
+      "output": "A multi-sheet `.xlsx`, a `.json` data file, and an optional `.docx` cover report."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node >= 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "The assistant API's base URL and access token, so the agent can issue real prompts.",
+      "A golden dataset JSON — the file The Answer Grader's convert step emits, or any dataset in that shape.",
+      "The toolkit's local scoring service running, so each response gets a privacy/safety and quality check.",
+      "(Optional) `GOOGLE_API_KEY` and/or `ANTHROPIC_API_KEY` to enable Gemini and Claude as external benchmarks."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program executed by Node. One-time install per machine.",
+        "firstRun": "Needed only the first time on a new machine."
+      },
+      {
+        "label": "Clone the agent code, install dependencies, and start the local scoring service.",
+        "cmd": "cd path/to/the-agents\nnpm install\n\n# one-time: install the scoring service's own dependencies\nnpm run eval:service:install\n\n# then start it (leave this running in its own terminal tab)\nnpm run eval:service:start",
+        "why": "`npm install` pulls the xlsx writer and the model clients. The scoring service is a separate process that runs the privacy/safety and quality checks — it must be listening before a comparison runs.",
+        "firstRun": "Installs everything and starts the service listening locally.",
+        "rerun": "Leave the service up across comparisons — no restart needed per run."
+      },
+      {
+        "label": "Point it at the assistant and, optionally, enable external benchmarks (env vars).",
+        "cmd": "export APP_API_URL=https://your-assistant-host.example.com\nexport APP_API_TOKEN=your-access-token\nexport APP_MODEL=gpt4o\nexport GOOGLE_API_KEY=your-gemini-key       # optional — enables Gemini as a benchmark\nexport ANTHROPIC_API_KEY=your-claude-key    # optional — enables Claude as a benchmark",
+        "why": "Read at startup: which assistant to call, the token that authorizes it, and which external providers are available. Nothing is hard-coded — swap these to retarget environments."
+      },
+      {
+        "label": "Run a `--limit 5` smoke test, then the full comparison.",
+        "cmd": "# quick check — 5 questions, no outside brains, to confirm the pipeline works\nnpm run eval:compare -- --limit 5\n\n# full run — the assistant's own brains plus Gemini and Claude as benchmarks\nnpm run eval:compare -- --include-external",
+        "why": "The limited run verifies the wiring — dataset found, assistant reachable, scoring service up — before spending time and API cost on the full set. `--include-external` adds Gemini and Claude to the matrix.",
+        "firstRun": "Runs the full prompt matrix, dual-scores each response, and ranks the models.",
+        "rerun": "Every run is independent — nothing carries over. Re-run any time you need a current scoreboard, e.g. after a model upgrade."
+      },
+      {
+        "label": "Open the scoreboard.",
+        "cmd": "open outputs/eval/comparisons/model-comparison-<timestamp>.xlsx\n# and the same data as JSON, for feeding into another tool:\nopen outputs/eval/comparisons/model-comparison-<timestamp>.json",
+        "why": "The `.xlsx` is the shareable artifact — Model Summary, per-prompt comparison, raw scores, and a latency sheet. The `.json` is the same data for programmatic consumption."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--models <list>",
+        "desc": "Comma-separated in-house model ids to include (default: the standard `gpt4o`/`gpt4omini` pair)."
+      },
+      {
+        "name": "--include-external",
+        "desc": "Adds enabled external models (Gemini, and Claude when requested by id) as benchmarks."
+      },
+      {
+        "name": "--limit <n>",
+        "desc": "Run only the first N prompts — a smoke test."
+      },
+      {
+        "name": "--dataset <path>",
+        "desc": "Which golden dataset to use; without it, the agent auto-selects the most recently generated one."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "model-comparison-<timestamp>.xlsx",
+        "desc": "A multi-sheet scoreboard — model summary, per-prompt comparison, raw dimension scores, and latencies."
+      },
+      {
+        "name": "model-comparison-<timestamp>.json",
+        "desc": "The same comparison, machine-readable."
+      },
+      {
+        "name": "model-comparison-<timestamp>.docx (optional)",
+        "desc": "A cover-page report naming the winner, for sharing outside the team."
+      }
+    ],
+    "rerun": "No incremental mode — every run is a fresh, timestamped comparison. Re-run whenever you need a current scoreboard, e.g. right after a model upgrade or when a new external model becomes available.",
+    "integrate": "The winner and recommendation are the evidence for choosing the backing model. Wire a nightly `--limit 5 --include-external` run into CI as a lightweight regression check that the chosen model hasn't silently degraded."
+  },
+  "video": {
+    "url": "",
+    "caption": "3-4 min screencast: run a head-to-head model comparison and watch the ranked scoreboard build.",
+    "script": [
+      "Open a terminal beside the outputs folder so viewers see both.",
+      "Say: 'This agent asks several AI brains the exact same questions, then scores and ranks their answers. Watch.'",
+      "Run `node -v` to confirm Node is installed; say one line about what Node is.",
+      "Run `npm install` and start the local scoring service; explain it's the thing that grades each answer.",
+      "Show the three `export` lines; say 'this is the only place the assistant-specific stuff lives — swap these and it points anywhere.'",
+      "Run the quick 5-question check first; narrate the log lines as each brain answers each question.",
+      "Run the full comparison with `--include-external`; point out the pause between calls that avoids rate limits.",
+      "Open the produced `.xlsx`; scroll to the Model Summary sheet and read out the winner and the pass rates.",
+      "Open the Prompt Comparison sheet; show one question where the two brains clearly disagreed.",
+      "Close: 'The recommendation line at the bottom is what tells you whether the gap is worth acting on.'"
+    ]
+  }
+}

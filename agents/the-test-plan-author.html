@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Test-Plan Author — Agent 06</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s2">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">06<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Deciding what to test</span></div>
+        <h1>The Test-Plan Author</h1>
+        <p class="lead">Drafts executable test cases from ADO user stories and, for stories too thin to test, emits a gap report naming the missing fields and their owners.</p>
+        <p class="kicker">Source file: test-plan-generator.ts</p>
+      </div>
+    </div>
+
+    <p>Generates the test-case suite for a feature straight from its ADO work items — steps, expected results, priority — so testers stop hand-authoring checklists. In the same pass it detects stories that lack the detail to test (no description, no acceptance criteria, no design link) and produces a gap report with each blocker assigned to the person who owns the fix.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Hand-authoring test cases per ticket — steps, test data, expected result — is slow and repetitive. Worse, a large fraction of tickets are untestable as written: no design references, no acceptance criteria. The tester either guesses at intent or blocks to chase the developer, one ticket at a time, and the questions trickle out over days.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent reads each story and drafts its test cases. For stories that aren&#39;t ready, it emits a gap report keyed by story: missing/short description, no acceptance criteria, no design reference — each tagged with the assignee — so the whole batch of questions goes back to the team in one round trip instead of one at a time.</p></div>
+    </div>
+    <p>Testers spend their time executing, not transcribing checklists. Blocked stories surface at draft time, before they stall execution late in the sprint.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Pulls the target user stories from Azure DevOps — scoped by sprint, by feature, or by an explicit ID list.</span>
+          <span class="fc-node__fn">fetchUserStoriesBySprint()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Reads each story&#39;s existing test-case links so drafting is idempotent — no duplicates.</span>
+          <span class="fc-node__fn">fetchLinkedTestCases()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For stories with sufficient detail, drafts test cases — steps, expected results, priority — via the LLM, in plain or Given/When/Then form.</span>
+          <span class="fc-node__fn">generateTestCasesWithLLM()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For under-specified stories, records the exact missing fields (short description, no acceptance criteria, no design link) and the assignee.</span>
+          <span class="fc-node__fn">analyzeForUIDetails()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Detects acceptance-criteria drift since tests were last drafted and flags the linked tests as potentially stale.</span>
+          <span class="fc-node__fn">detectContentChanges()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Emits a coverage-and-gap report: per-feature coverage percentage and the blockers holding back the rest.</span>
+          <span class="fc-node__fn">generateFeatureReportMarkdown()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"fetchUserStoriesBySprint()","explain":"Two-phase fetch, because WIQL and the work-item API do different jobs. The `wiql` query selects only `[System.Id]` for every `User Story` whose `IterationPath` is `UNDER` the sprint — `UNDER` matches the whole iteration subtree, not just an exact node, so nested iterations are included — and the `areaPath` ternary appends an `AND [System.AreaPath] UNDER ...` clause only when a component filter was passed. WIQL deliberately returns **IDs only**, so `workItemIds` is just a reference list; the real field data is hydrated in a second pass batched at 200 (ADO's per-call cap). During hydration each story's HTML fields are cleaned to text and its acceptance criteria is content-hashed, which is what later lets the agent detect drift and stay idempotent.","code":"async function fetchUserStoriesBySprint(sprint, areaPath, checkLinks = true) {\n  // WIQL is ADO's SQL-ish work-item query language, POSTed to the /wiql endpoint\n  const wiql = {\n    query: `\n      SELECT [System.Id] FROM WorkItems\n      WHERE [System.WorkItemType] = 'User Story'\n        AND [System.IterationPath] UNDER 'MyProject\\\\${sprint}'\n        ${areaPath ? `AND [System.AreaPath] UNDER '${areaPath}'` : ''}\n      ORDER BY [System.Id]\n    `,\n  };\n  const queryResult = await fetchFromADO('/wit/wiql?api-version=7.0', 'POST', wiql);\n  const workItemIds = (queryResult.workItems || []).map(wi => wi.id); // WIQL returns IDs only (a reference list), never field data — hence the hydrate step next\n\n  // Hydrate in batches of 200 — ADO's work-items batch endpoint caps at 200 IDs per call, so larger\n  // sprints must be chunked. Each item's HTML fields are stripped to text, the acceptance criteria is\n  // content-hashed (for later drift detection), and if checkLinks, existing 'TestedBy' test cases are fetched.\n  return stories;\n}"},{"fn":"fetchLinkedTestCases()","explain":"Idempotency starts here — before drafting anything the agent needs to know what tests already exist. It re-fetches the work item with `$expand=relations` (mandatory; the default representation omits links entirely), then filters `result.relations` to just `Microsoft.VSTS.Common.TestedBy-Forward` — the story→test-case direction, ignoring parent/child and reverse links. ADO exposes a relation only as a `rel.url`, so the numeric id is recovered with `rel.url.split('/').pop()` and a second call hydrates each test case. `AutomationStatus` is defaulted to `'Not Automated'` because the field is simply absent on manually created tests rather than empty, which would otherwise surface as `undefined`.","code":"async function fetchLinkedTestCases(workItemId) {\n  // $expand=relations is required — without it the work item comes back with no link data at all\n  const result = await fetchFromADO(\n    `/wit/workitems/${workItemId}?api-version=7.0&$expand=relations`\n  );\n  const testCases = [];\n  for (const rel of result.relations || []) {\n    if (rel.rel === 'Microsoft.VSTS.Common.TestedBy-Forward') { // only the story->test 'TestedBy' forward link; ignores parents, children, other relation types\n      const testCaseId = parseInt(rel.url.split('/').pop()); // relations carry only a URL, so the numeric ID is parsed off the tail of the path\n      const tc = await fetchFromADO(`/wit/workitems/${testCaseId}?api-version=7.0`);\n      testCases.push({\n        id: tc.id,\n        title: tc.fields['System.Title'],\n        state: tc.fields['System.State'],\n        automationStatus: tc.fields['Microsoft.VSTS.TCM.AutomationStatus'] || 'Not Automated', // field is absent on manual tests, so default it rather than leaving undefined\n      });\n    }\n  }\n  return testCases;\n}"},{"fn":"generateTestCasesWithLLM()","explain":"The prompt is assembled from the strongest available evidence, not just the ticket. `context` always carries the story id and its `acceptanceCriteria`, and when a prior briefing (`intel`) exists it folds in that feature's `businessRules` and `edgeCases` — each pre-formatted with its `priority` — so the model drafts against known behavior rather than guessing. It calls Gemini Flash at `temperature: 0.3`, deliberately low so the steps come out concrete and reproducible instead of inventive, with `maxTokens: 8192` to fit a whole suite. `parseLLMJson` tolerates the markdown fences models wrap arrays in, and every returned case is passed through `buildBlueprint`, which stamps it with the source hash and the chosen `mode`/`outputFormat` (plain or Given/When/Then) — the metadata that makes later drift-detection and idempotency possible.","code":"async function generateTestCasesWithLLM(story, intel, contextDocs, mode, outputFormat) {\n  let context = `STORY: US-${story.id} — ${story.title}\\n`;\n  context += `ACCEPTANCE CRITERIA:\\n${story.acceptanceCriteria}\\n`;\n  if (intel) { // intel is the prior Test-Scout briefing; when present it enriches the prompt with rules + edge cases\n    context += `\\nBUSINESS RULES:\\n${intel.businessRules.map(r => `- ${r.name}: ${r.description}`).join('\\n')}\\n`;\n    context += `\\nEDGE CASES:\\n${intel.edgeCases.map(e => `- [${e.priority}] ${e.scenario}`).join('\\n')}\\n`;\n  }\n\n  const prompt = `You are a senior QA engineer generating detailed,\nexecutable test cases.\n${context}\nGenerate test cases for each acceptance criterion,\nwith concrete steps and expected results. Respond as a JSON array.`;\n\n  const response = await callGeminiFlash(prompt, { temperature: 0.3, maxTokens: 8192 }); // temp 0.3: low, so cases stay concrete/repeatable rather than creative; 8k out for a full suite\n  const llmCases = parseLLMJson(response.answer); // tolerant JSON parse — strips fences the model may wrap the array in\n  return llmCases.map((tc, index) => buildBlueprint(story, tc, index, intel, mode, outputFormat)); // each raw case -> a blueprint carrying the source hash + mode (plain / Given-When-Then)\n}"},{"fn":"analyzeForUIDetails()","explain":"Deterministic under-specification check — thresholds, not judgment, so a story grades the same every run. `description.length \u003c 50` treats a near-empty description as missing; `ac.length \u003c 30` flags absent acceptance criteria but **exempts** `workItemType === 'Bug'`, since bugs legitimately carry no AC and shouldn't be penalized. The design-reference test fails only when none of `figma`/`design`/`wireframe`/`mockup` appears anywhere in the combined text, catching UI work with no mockup to test against. The key policy is `missingElements.length \u003c 2`: one gap is tolerated, but two or more sets `hasUIDetails` false — that's the line between 'draft the tests' and 'send it back to the owner'.","code":"function analyzeForUIDetails(title, description, ac, workItemType) {\n  const combinedText = `${title} ${description} ${ac}`.toLowerCase();\n  const missingElements = [];\n\n  if (description.length \u003c 50) missingElements.push('Missing/short description'); // \u003c50 chars = effectively no description; a real spec is longer\n  if (ac.length \u003c 30 && workItemType !== 'Bug') missingElements.push('Missing acceptance criteria'); // bugs are exempt — they legitimately have no AC, so don't flag them\n\n  // A testable UI story should reference a design somewhere; none of these keywords => no design link\n  if (!combinedText.includes('figma') && !combinedText.includes('design') &&\n      !combinedText.includes('wireframe') && !combinedText.includes('mockup')) {\n    missingElements.push('No design reference (Figma/wireframe)');\n  }\n  if (title.toLowerCase().includes('qa test') && description.length \u003c 30 && ac.length \u003c 30) {\n    missingElements.push('QA Test task has no test case details');\n  }\n\n  const hasUIDetails = missingElements.length \u003c 2; // tolerate ONE gap: 2+ missing elements means the story is too thin to test\n  return { hasUIDetails, missingElements };\n}"},{"fn":"detectContentChanges()","explain":"Cheap, exact drift detection via content hashing rather than text diffing. It first locates the story's prior blueprints by `bp.source.workItemId === story.id` and bails with `null` if none exist — no prior draft means nothing to compare. Otherwise it compares the stored `acceptanceCriteriaHash` against the story's current one; equal hashes mean the wording is byte-identical, so it returns `null` (no drift). On a mismatch the recommendation is state-aware: if any linked test is still in `'Design'` (not yet executed) it returns `update_tests` — safe to regenerate — but if the tests have moved past design it returns `review_tests`, deferring to a human before disturbing tests that may already have results attached.","code":"function detectContentChanges(story, existingBlueprints) {\n  const storyBlueprints = Array.from(existingBlueprints.values())\n    .filter(bp => bp.source.workItemId === story.id);\n  if (storyBlueprints.length === 0) return null; // no prior draft for this story => nothing to compare, so no drift to report\n\n  const latest = storyBlueprints[0];\n  // Compare stored vs live AC content hash — a cheap exact-equality test, no diffing needed\n  if (latest.source.acceptanceCriteriaHash === story.acceptanceCriteriaHash) {\n    return null; // no changes\n  }\n\n  // Drift confirmed. If any linked test is still in 'Design' (not yet executed) it's safe to auto-update;\n  // otherwise recommend a human review before touching tests that may already have run\n  const recommendAction = story.linkedTestCases.some(tc => tc.state === 'Design')\n    ? 'update_tests'\n    : 'review_tests';\n\n  return {\n    storyId: story.id, storyTitle: story.title,\n    previousHash: latest.source.acceptanceCriteriaHash,\n    currentHash: story.acceptanceCriteriaHash,\n    recommendAction, linkedTestCases: story.linkedTestCases,\n  };\n}"},{"fn":"generateFeatureReportMarkdown()","explain":"A pure string-builder — no model, so the report is fully reproducible from the computed data. The headline metric is `Math.round((storiesWithTests / totalUserStories) * 100)`, an integer coverage percentage; note it counts **stories that have any linked test**, not test-case pass rates. `report.testCoverage.map(...)` renders one table row per story with a `tc.hasTests ? '✅' : '❌'` flag, and `report.gapAnalysis.map(...)` emits a `### US-\u003cid>` heading only for the under-specified stories — so the gap section's length is itself a signal of how much of the feature is blocked. Both maps `.join('\\n')` into the surrounding Markdown so the whole document is one template literal.","code":"function generateFeatureReportMarkdown(report) {\n  // Whole report is one Markdown template literal; ${...} blocks interpolate live data inline.\n  // Coverage % = storiesWithTests / totalUserStories (Math.round to a whole number); the per-row\n  // checkmark flags whether that story has any linked test; the gap section lists only thin stories.\n  return `# Feature Test Coverage & Gap Analysis Report\n**Feature:** ${report.feature.title} (ID: ${report.feature.id})\n**Test Coverage:** ${Math.round(\n    (report.summary.storiesWithTests / report.summary.totalUserStories) * 100\n  )}%\n\n## Test Coverage by User Story\n| Story ID | Title | State | Test Cases | Coverage |\n${report.testCoverage.map(tc =>\n  `| US-${tc.storyId} | ${tc.storyTitle} | ${tc.state} | ${tc.linkedTestCases.length} | ${tc.hasTests ? '✅' : '❌'} |`\n).join('\\n')}\n\n## Gap Analysis — Items Needing Developer Input\n${report.gapAnalysis.map(gap => `### US-${gap.storyId}: ${gap.storyTitle}`).join('\\n')}\n`;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A feature that&#39;s mostly ready</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A feature with 8 user stories: 6 well-specified, 2 one-liners with no design reference.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Drafted test cases for the 6 ready stories, plus a report: &#39;Coverage 75%. 2 stories blocked — #204 (no acceptance criteria, assigned to A. Rivera), #211 (no design reference, assigned to J. Okoro).&#39;</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A story whose acceptance criteria drifted</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A story with existing test cases whose acceptance criteria were reworded last week.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A content-hash mismatch flag: &#39;Story #188 changed since its 4 test cases were drafted — review recommended before the next run.&#39;</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A blocked test-authoring task</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A ticket titled &#39;QA test creation for login screen&#39; whose parent tasks carry no UI/design detail.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A high-priority action item: &#39;Test creation cannot proceed — parent tasks lack UI/design details. Developer input needed,&#39; with a paste-ready comment template requesting the missing fields.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Read access to <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> and a <strong>personal access token</strong> (<code>ADO_PAT</code>) with work-item read scope.</li><li>A Google Gemini API key to draft the actual test steps; without it the agent runs in no-LLM mode and produces the gap report only.</li><li>Optional: a folder of context documents — designs, prompts, screenshots — to ground the drafted cases.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed under Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the code and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> resolves the agent&#39;s dependencies — the ADO REST client, the xlsx writer, and the Gemini client — into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency set changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the environment variables.</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token
+export GOOGLE_API_KEY=your-gemini-key   # optional</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: the ADO org/project to query, the PAT that authorizes it, and the Gemini key. Nothing is hard-coded — repoint these to target a different project.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Draft test cases for a sprint.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/test-plan-generator.ts \
+  --sprint &quot;Sprint-12&quot; \
+  --mode create</code></pre>
+        <div class="rb__why"><span>Why</span> The real run. <code>--sprint</code> scopes the iteration; <code>--mode create</code> drafts only for stories with no existing test cases — never duplicating linked work.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Reads every story in the sprint, drafts cases for the testable ones, and emits a gap report for the rest.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Idempotent — skips stories that already have test cases and touches only new or changed ones.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Or run a coverage-and-gap report over a whole feature.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/test-plan-generator.ts \
+  --mode report \
+  --feature-id 5001</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--mode report</code> skips drafting and reports coverage percentage plus the exact tickets blocking the rest — a pre-release gate.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the results.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/test-plans/
+# or, for a report run:
+open ./outputs/reports/feature-reports/</code></pre>
+        <div class="rb__why"><span>Why</span> Outputs land as Markdown, JSON, and Excel — Markdown for reading, Excel for testers, JSON for the next stage in the pipeline.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--sprint &lt;name&gt; | --feature-id &lt;id&gt; | --stories &lt;ids&gt;</dt><dd>Scope selector — by sprint iteration, by feature, or by an explicit ID list.</dd><dt>--mode create|update|report|full</dt><dd>create = new stories only; update = re-draft where the content hash changed; report = coverage/gap only; full = both.</dd><dt>--context &lt;folder&gt;</dt><dd>Optional folder of design docs, prompts, and screenshots used to ground the drafted cases.</dd><dt>environment variables</dt><dd><code>ADO_ORGANIZATION</code>, <code>ADO_PROJECT</code>, <code>ADO_PAT</code>, and optionally <code>GOOGLE_API_KEY</code>.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>test plan (Markdown / JSON / Excel)</dt><dd>Drafted test cases — steps, expected results, priority — per story, ready to push into ADO.</dd><dt>feature report (Markdown / JSON)</dt><dd>Coverage percentage plus a gap-analysis table naming which tickets are under-specified and who owns them.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Re-run whenever the sprint&#39;s stories change. <code>--mode create</code> skips stories that already have test cases; <code>--mode update</code> re-drafts only those whose acceptance-criteria hash changed and flags the rest as &#39;may be stale — review recommended.&#39;</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Pipe its output into the <strong>Test Scheduler</strong> — once test cases exist and are counted, the scheduler balances who tests what and by when. Wire the <code>--mode create</code> step into sprint-kickoff automation so drafts are waiting on day one.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: scope the agent to a sprint and watch drafted test cases and a gap report land on disk.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Queries Azure DevOps</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First — once per sprint, feature, or ID list you scope it to.</dd>
+          <dt>Takes in</dt><dd>A sprint name, a feature ID, or a list of story IDs.</dd>
+          <dt>Shows out</dt><dd>Every matching user story with description, acceptance criteria, and existing linked test cases, via the ADO REST API.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Reads existing coverage</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Per story, before drafting anything.</dd>
+          <dt>Takes in</dt><dd>A story ID and its <code>TestedBy</code> relations.</dd>
+          <dt>Shows out</dt><dd>The set of test cases already linked to that story, so drafting stays idempotent.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Drafts test cases via the LLM</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>For every story with enough detail to test.</dd>
+          <dt>Takes in</dt><dd>The story&#39;s acceptance criteria, plus business rules and edge cases from a prior feature briefing if present.</dd>
+          <dt>Shows out</dt><dd>Concrete steps, expected results, and priority — plain and, optionally, Given/When/Then form, via Gemini Flash.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Flags gaps and drift</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>For every child work item, and every story with previously drafted tests.</dd>
+          <dt>Takes in</dt><dd>A ticket&#39;s title/description/acceptance-criteria text, and the content hash stored on its last test cases.</dd>
+          <dt>Shows out</dt><dd>A typed list of missing elements (no design reference, no acceptance criteria) and a content-hash drift flag where the wording has moved on.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Emits the coverage and gap report</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, at end of run.</dd>
+          <dt>Takes in</dt><dd>All processed stories, their linked tests, and the detected gaps.</dd>
+          <dt>Shows out</dt><dd>Markdown, JSON, and Excel reports with a coverage percentage and prioritized action items, each assigned to the owner of the fix.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-test-scout.html">← The Test Scout</a>
+      <a href="the-test-scheduler.html">The Test Scheduler →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

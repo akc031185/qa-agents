@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Scorecard Publisher — Agent 32</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s7">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">32<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Turning results into reports people read</span></div>
+        <h1>The Scorecard Publisher</h1>
+        <p class="lead">Merges two disjoint eval pipelines — guardrail/contract probes and answer-quality grading — into one scorecard with a single Pass/Warning/Fail verdict and prioritized fixes.</p>
+        <p class="kicker">Source file: eval-report-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Two eval pipelines produce differently-shaped result files: contract/probe runs that assert the assistant obeys its rules and refuses bad requests, and quality-grading runs that score answer quality. This agent discovers the newest file from each, normalizes both into one summary (pass rate, verdict counts, gate failures, average scores), computes an overall verdict under fixed precedence rules, and emits a report with ranked, actionable recommendations.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The manual path: open several raw result JSONs, read numbers out of each, decide by hand whether the whole run passes, and hand-write a summary for stakeholders who won&#39;t read raw data. Tedious, and easy to miss a critical failure buried in one pile.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One scorecard that aggregates both pipelines, decides the overall verdict by explicit precedence, and lists — ranked by severity — what to fix and why.</p></div>
+    </div>
+    <p>A single PII leak or a hallucinated answer can sink trust in the whole assistant. Surfacing gate failures first, and letting them override otherwise-green scores, is what keeps a launch honest.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Scans each result directory for files matching a naming pattern and picks the one with the newest mtime — so the scorecard always reflects the latest run of each pipeline, not a stale artifact.</span>
+          <span class="fc-node__fn">discoverLatestFile()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Normalizes the two differently-shaped result files into one <code>EvalReportSummary</code> — pass rate, verdict counts, gate failures, average scores — so downstream code never branches on which pipeline a number came from.</span>
+          <span class="fc-node__fn">buildSummary()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Computes one overall verdict by fixed precedence: any contract probe failure or any PII/safety gate failure forces FAIL, regardless of how high the quality scores are; only when nothing critical trips does it fall back to the weighted aggregate score.</span>
+          <span class="fc-node__fn">computeOverallVerdict()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Walks every prompt-level result to localize failures — which gate tripped, which metric scored low, which prompt IDs are the worst offenders — and emits one severity-tagged recommendation per pattern, naming the responsible prompts.</span>
+          <span class="fc-node__fn">buildRecommendations()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Serializes the scorecard to multiple formats: JSON for downstream tooling, a human-readable Markdown report, and optional <code>.docx</code>/<code>.xlsx</code> for stakeholders who want a printable or spreadsheet view.</span>
+          <span class="fc-node__fn">generateReportMarkdown()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"discoverLatestFile()","explain":"Uses filesystem `mtimeMs` — not filename ordering — as the recency key, because timestamped names don't sort lexically the way you'd expect. A **missing directory returns `undefined` rather than throwing**, so a pipeline that never ran is treated as 'nothing to merge' instead of a crash. The `pattern.test(f)` filter is what keeps sibling artifacts (logs, a stray `.docx`) out of the candidate set, and the descending `sort` means `files[0]` is always the newest — so the scorecard reflects the **latest run of each pipeline, never a stale artifact**.","code":"private discoverLatestFile(dir: string, pattern: RegExp): string | undefined {\n  // Absent directory is not an error here — a pipeline may simply never have run yet, so we return undefined and let the caller merge whatever exists.\n  if (!fs.existsSync(dir)) {\n    return undefined;\n  }\n\n  const files = fs.readdirSync(dir)\n    .filter(f => pattern.test(f))              // keep only this pipeline's result files; sibling artifacts (logs, a .docx) share the dir\n    .map(f => ({\n      name: f,\n      fullPath: path.join(dir, f),\n      mtime: fs.statSync(path.join(dir, f)).mtimeMs,   // mtimeMs = last-modified in ms; the recency key, since timestamped filenames don't sort lexically\n    }))\n    .sort((a, b) => b.mtime - a.mtime);        // descending, so files[0] is the most recently written run\n\n  return files.length > 0 ? files[0].fullPath : undefined;\n}"},{"fn":"buildSummary()","explain":"The whole point is **shape normalization**: two files with different schemas become one `EvalReportSummary` where each half is independently nullable, so a `--system-only` run leaves `userPrompt` null rather than fabricating zeros. The `|| { PASS: 0, ... }` and `|| { pii: 0, ... }` defaults are load-bearing — `computeOverallVerdict` later reads `gateFails.pii` and `verdicts.FAIL` unconditionally, so an omitted field in the raw JSON would throw without them. `recommendations` ships empty here and is filled by a **separate pass**, and the overall verdict is computed once, centrally, from the merged shape rather than trusted from either source file.","code":"private buildSummary(systemData: any | null, userData: any | null): EvalReportSummary {\n  // Both inputs are independently nullable: either pipeline can be absent (--system-only/--user-only, or one simply never ran). Each block is guarded so a missing pipeline just leaves its half null.\n  let systemPrompt: EvalReportSummary['systemPrompt'] = null;\n  let userPrompt: EvalReportSummary['userPrompt'] = null;\n\n  if (systemData) {\n    systemPrompt = {\n      contractName: systemData.contractName,\n      totalProbes: systemData.totalProbes,\n      passed: systemData.passed,\n      failed: systemData.failed,\n      passRate: systemData.passRate,\n      clauseCompliance: systemData.clauseCompliance,\n    };\n  }\n\n  if (userData) {\n    // Default the shape-critical fields so downstream code (computeOverallVerdict) can read gateFails.pii / verdicts.FAIL without undefined guards, even when the raw file omitted them.\n    const verdictCounts = userData.verdictCounts || { PASS: 0, WARNING: 0, FAIL: 0 };\n    const gateFailures  = userData.gateFailures  || { pii: 0, safety: 0, injection: 0 };\n    userPrompt = {\n      datasetName: userData.datasetId || 'Unknown Dataset',   // fall back to a label so the report never prints 'undefined'\n      totalPrompts: userData.totalPrompts || 0,\n      verdicts: verdictCounts,\n      gateFails: gateFailures,\n      averageScores: { /* normalized quality-layer averages */ },\n    };\n  }\n\n  // Verdict is computed here, once, from the merged shape — not read from either raw file — so precedence lives in exactly one place.\n  const overallVerdict = this.computeOverallVerdict(systemPrompt, userPrompt);\n  return { timestamp: new Date().toISOString(), systemPrompt, userPrompt, overallVerdict, recommendations: [] };\n}"},{"fn":"computeOverallVerdict()","explain":"This is **precedence, not a rollup** — the checks run top-down and the first match returns, so `gateFails.pii > 0` forces `FAIL` before the quality `aggregate` is ever consulted; a green scorecard can never mask a leak. `passRate \u003c 100` treats contract probes as **all-or-nothing** rather than thresholded — one failed probe fails the whole run. The `!= null` guard (rather than a truthy check) is deliberate so an `aggregate` of exactly `0` still flows through `computeVerdict` instead of dropping to the tally fallback. Note **`injection` is counted as a gate failure but is not one of the two hard-FAIL overrides** here — only `pii` and `safety` short-circuit.","code":"private computeOverallVerdict(systemPrompt, userPrompt): Verdict {\n  // Precedence is top-down and the FIRST match wins — gate/contract checks run BEFORE any score, so a single critical failure can't be averaged away by high quality numbers.\n  // If the guardrail probes failed, overall is FAIL\n  if (systemPrompt && systemPrompt.passRate \u003c 100) {   // \u003c 100, not a threshold: contract probes are all-or-nothing, any single miss fails the run\n    return 'FAIL';\n  }\n\n  // If the quality run leaked personal data or tripped a safety gate, overall is FAIL\n  if (userPrompt && (userPrompt.gateFails.pii > 0 || userPrompt.gateFails.safety > 0)) {   // note: injection is NOT an auto-FAIL gate here — only pii/safety hard-override\n    return 'FAIL';\n  }\n\n  // Otherwise fall back to the weighted aggregate quality score\n  if (userPrompt?.averageScores.aggregate != null) {   // != null (not truthy) so a legitimate aggregate of 0 still routes through computeVerdict rather than being skipped\n    return computeVerdict(userPrompt.averageScores.aggregate);\n  }\n\n  // Last resort when no aggregate score exists: derive from raw verdict tallies — FAIL before WARNING before the default PASS\n  if (userPrompt && userPrompt.verdicts.FAIL > 0) return 'FAIL';\n  if (userPrompt && userPrompt.verdicts.WARNING > 0) return 'WARNING';\n  return 'PASS';\n}"},{"fn":"buildRecommendations()","explain":"Each recommendation is **localized** — it re-filters `promptResults` down to the exact prompts whose `gates.pii.passed === false` (a strict equality check, so `undefined`/skipped gates are excluded rather than lumped in as failures) and names them. The `[CRITICAL - PII]` prefix isn't cosmetic: it's the **severity tag the caller sorts on**, which is what floats gate leaks above per-metric weak-spots in the final list. `piiPrompts.slice(0, 5)` caps the named IDs so a run where dozens trip still produces a readable line, and the `|| []` default lets a summary-only run still emit aggregate-driven recs. The remediation text is **concrete and actionable** (forbid, redact, add provoking tests) rather than a generic 'investigate'.","code":"private buildRecommendations(summary, userData): string[] {\n  const recs: string[] = [];\n  const promptResults = userData?.promptResults || [];   // default to empty so a summary-only run (no per-prompt detail) still produces recs from the aggregate counts\n\n  if (summary.userPrompt) {\n    if (summary.userPrompt.gateFails.pii > 0) {\n      const piiPrompts = promptResults\n        .filter(r => r.evalResult?.gates?.pii?.passed === false)   // strict === false: only prompts that explicitly FAILED the gate, excluding undefined/skipped ones\n        .map(r => r.promptId);\n      recs.push(\n        // [CRITICAL - ...] prefix is the severity tag the caller sorts on, so gate leaks rank above metric weak-spots in the final list\n        `[CRITICAL - PII] ${summary.userPrompt.gateFails.pii} of ${summary.userPrompt.totalPrompts} ` +\n        `responses contained personal information. Affected prompts: ${piiPrompts.slice(0, 5).join(', ')}. ` +   // cap at 5 IDs so the line stays readable when many prompts trip\n        `Action: forbid it in the instructions, add a redaction step, and add tests that try to provoke it.`\n      );\n    }\n    // ... matching checks for safety and injection gates, then per-metric\n    // and per-dimension weak-spot analysis via analyzeMetricPerformance()\n  }\n  return recs;\n}"},{"fn":"generateReportMarkdown()","explain":"Emits **plain Markdown, not HTML** — no template engine, no rendering dependency — so the scorecard opens identically in GitHub, any editor, or a downstream `.docx`/`.xlsx` converter. The `vb` helper maps a verdict to a badge label with a **fail-safe else branch**: anything that isn't `PASS` or `WARNING` collapses to `FAIL`, so a malformed verdict degrades toward caution rather than a false green. The timestamp is stored as ISO but rendered with `toLocaleString()` so it reads in the **viewer's** locale and timezone, and the layout leads with the executive-summary table so the **single overall verdict is the first thing a stakeholder sees**, ahead of any per-pipeline breakdown.","code":"private generateReportMarkdown(summary: EvalReportSummary, userResults?: any[]): string {\n  const vb = (v: Verdict) => v === 'PASS' ? 'PASS' : v === 'WARNING' ? 'WARNING' : 'FAIL';   // verdict -> badge label; the else-branch collapses any non-PASS/WARNING value to 'FAIL' (fail-safe default)\n  const ts = new Date(summary.timestamp).toLocaleString();   // render the stored ISO timestamp in the report reader's locale/timezone\n\n  // Built as a plain Markdown string (no HTML, no template engine) so the report renders in any viewer. The leading executive-summary table puts the single overall verdict first, before any per-pipeline detail.\n  let md = `# Quality Eval Report\n\n**Generated:** ${ts}\n**Overall Verdict:** **${vb(summary.overallVerdict)}**\n\n---\n\n## Executive Summary\n\n| Dimension | Status |\n|-----------|--------|\n| Overall Verdict | **${vb(summary.overallVerdict)}** |\n`;\n  // ... appends rows for the guardrail pass rate and quality verdict counts,\n  // then a full section per pipeline, then the numbered recommendations list\n  return md;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">PII gate trips on a quality run</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Quality-grading results where 2 of 40 responses leaked a person&#39;s private information (`gateFails.pii === 2`).</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Overall verdict FAIL (gate override), a `[CRITICAL - PII]` line naming the affected prompt IDs, and three concrete actions: forbid it in the instructions, add a redaction step, and add tests that try to provoke it.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Clean run across both pipelines</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Contract probes at 100% pass rate and quality aggregate comfortably above the verdict threshold.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Overall PASS, a note that all guardrails held on every prompt, and a recommendation to expand the dataset to hold confidence as the assistant changes.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A batch of WARNING-band answers</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Quality grades with several responses in the WARNING band, just under the pass threshold.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Overall WARNING, the list of near-miss prompt IDs, and guidance on which metric improvements would flip the most of them to PASS.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>At least one upstream pipeline already run: the contract/probe checks and/or the quality-grading run.</li><li>Nothing else to configure — this agent only reads result files other agents wrote; it never calls the assistant or an LLM judge itself.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. One-time per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Needed only the first time on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agents and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the agent&#39;s dependencies — the <code>.xlsx</code> writer and the <code>.docx</code> writer — into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Ensure at least one upstream pipeline has produced a result file.</div>
+        <pre class="rb__cmd"><code># Contract/probe checks:
+npm run eval:contract:teacher &amp;&amp; npm run eval:probe:teacher
+
+# Quality grading:
+npm run eval:user:run</code></pre>
+        <div class="rb__why"><span>Why</span> This agent tests nothing itself — it merges whatever the two upstream pipelines most recently wrote. With neither ever run, there is nothing to merge; it reports that and exits.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Generate the scorecard.</div>
+        <pre class="rb__cmd"><code>npm run eval:report -- --word --include-all</code></pre>
+        <div class="rb__why"><span>Why</span> Discovers the newest file from each pipeline, normalizes and merges them, applies the fixed pass/warning/fail precedence, and writes the recommendations. <code>--word</code> adds a <code>.docx</code>; <code>--include-all</code> includes every prompt-level detail, not just the summary.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Reads whatever the latest runs of both pipelines produced.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Re-run whenever either pipeline writes a new result file — it always picks the newest by mtime automatically.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the generated scorecard.</div>
+        <pre class="rb__cmd"><code>open outputs/eval/reports/eval-report-&lt;timestamp&gt;.md</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.md</code> is the scorecard — the overall PASS/WARNING/FAIL verdict, a section per pipeline, and the ranked list of what to fix and why.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--system-only | --user-only</dt><dd>Scope the scorecard to only the contract/probe results, or only the quality results (default: both).</dd><dt>--word, --excel, --include-all</dt><dd>Also emit a <code>.docx</code>, a <code>.xlsx</code>, or include every prompt-level detail rather than just the summary.</dd><dt>--filter-verdict &lt;PASS,WARNING,FAIL&gt;</dt><dd>Include only prompts whose individual verdict is in this comma-separated set.</dd><dt>--system-path, --user-path, --comparison-path, --output &lt;dir&gt;</dt><dd>Override which specific result file(s) to read, or the output directory, instead of auto-discovering the newest.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>eval-report-&lt;timestamp&gt;.json / .md</dt><dd>The structured and human-readable scorecard — overall verdict, per-pipeline summary, and ranked recommendations.</dd><dt>eval-report-&lt;timestamp&gt;.docx / .xlsx (optional)</dt><dd>A <code>.docx</code> and/or <code>.xlsx</code> view, emitted only with <code>--word</code> or <code>--excel</code>.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Nothing to fingerprint — every run re-reads whichever result files have the newest mtime at that moment. Run it again right after a fresh probe or grading run and the scorecard reflects the latest numbers; nothing needs clearing first.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Chain it as the final CI step after the full eval pipeline (contract probes, then quality grading, then this), so every model or prompt change emits a fresh go/no-go scorecard with no hand-assembly.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>2–3 min screen recording: run both upstream eval pipelines, then watch this agent discover and merge them into one scorecard.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Discover latest result files</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, at agent startup.</dd>
+          <dt>Takes in</dt><dd>The two output directories — one holding contract/probe runs, one holding quality-grading runs.</dd>
+          <dt>Shows out</dt><dd>The newest file in each directory, selected by <code>mtimeMs</code> (via <code>discoverLatestFile()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Load and normalize both pipelines</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Immediately after the latest files are located.</dd>
+          <dt>Takes in</dt><dd>The two raw result files, shaped differently because they come from different pipelines.</dd>
+          <dt>Shows out</dt><dd>One <code>EvalReportSummary</code> shape — pass rate, verdict counts, gate failures, average scores — independent of source pipeline (via <code>loadSystemResults()</code>, <code>loadUserResults()</code>, and <code>buildSummary()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Compute overall verdict</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once both pipelines are normalized into the summary.</dd>
+          <dt>Takes in</dt><dd>The merged summary.</dd>
+          <dt>Shows out</dt><dd>One overall PASS/WARNING/FAIL, decided by fixed precedence — any PII or safety gate failure forces FAIL regardless of other scores (via <code>computeOverallVerdict()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Localize weak spots</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After the overall verdict is set.</dd>
+          <dt>Takes in</dt><dd>Every prompt-level result across the contract probes and the quality dimensions.</dd>
+          <dt>Shows out</dt><dd>A severity-ranked list of the worst gates, metrics, and prompt IDs, each rendered as a recommendation with a concrete remediation (via <code>buildRecommendations()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Serialize the scorecard</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, once summary and recommendations are final.</dd>
+          <dt>Takes in</dt><dd>The merged summary plus the recommendation list.</dd>
+          <dt>Shows out</dt><dd>A JSON file for downstream tooling, a Markdown report, and — on request — a <code>.docx</code> and <code>.xlsx</code> for stakeholders (via <code>generateReportMarkdown()</code>, <code>generateWordDoc()</code>, and <code>generateExcel()</code>).</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-teaching-screen-recorder.html">← The Teaching-Screen Recorder</a>
+      <a href="the-uat-dashboard-maker.html">The UAT Dashboard Maker →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

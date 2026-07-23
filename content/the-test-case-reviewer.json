@@ -1,0 +1,173 @@
+{
+  "slug": "the-test-case-reviewer",
+  "plate": 9,
+  "name": "The Test-Case Reviewer",
+  "techName": "tc-review-agent.ts",
+  "category": "plan",
+  "oneLiner": "Splits a test-results spreadsheet into a passed-verified acceptance-criteria doc and a review sheet of everything needing a human ruling.",
+  "lead": "Partitions a round of test results into two work-products with different follow-up. Passing rows become a clean Given/When/Then acceptance-criteria document. Failures and untested rows become a review sheet — expected vs actual, tester comment preserved — with decision tick-boxes for the lead to rule on each.",
+  "chore": "After execution, someone sorts the results spreadsheet by hand: passes get written up as confirmed behavior; every failure or skip has to be summarized — expected, actual, tester note — and put in front of the scrum master to rule 'real bug or bad test?'. Across many tabs it's tedious and the write-ups come out inconsistent.",
+  "instead": "The agent reads the workbook and emits two documents. One is an acceptance-criteria document built only from `PASS` rows, in Given/When/Then form with duplicates merged. The other is a review sheet listing every non-passing test — expected result, actual result, tester comment verbatim — with tick-boxes for 'Valid Bug', 'Invalid Test', or 'Needs More Info'.",
+  "whyItMatters": "Every failed or skipped test gets an explicit human ruling instead of slipping through the gap between 'passed' and 'forgotten'.",
+  "howItWorks": [
+    {
+      "step": "Reads the results workbook tab by tab (one feature per sheet), mapping columns by header text regardless of order.",
+      "fn": "loadExcel()",
+      "explain": "Column resolution is by **header text, not position**, because testers reorder columns from sheet to sheet: `getRow(1).eachCell` scans the header row and records each column index into `colMap`. The expected-result rule is `h.includes('expected') && !h.includes('actual')` specifically so a combined 'Actual vs Expected' header can't hijack the expected binding. Data rows start at `r = 2` to skip the consumed header, and `colMap.status || 7` falls back to column 7 when no `status` header was found. The load-bearing decision is `rawStatus.toUpperCase() === 'PASS'`: only an exact PASS counts as passed, so FAIL, blanks, and typos all fall into `reviewTcs` — the partition errs toward demanding a human ruling rather than silently accepting a row as verified.",
+      "code": "async function loadExcel(filePath) {\n  const wb = new ExcelJS.Workbook();\n  await wb.xlsx.readFile(filePath);\n  const sheets = [];\n\n  for (const ws of wb.worksheets) { // one worksheet = one feature; each is partitioned independently\n    const colMap = {};\n    // resolve columns by HEADER TEXT, not fixed position — testers reorder columns between sheets\n    ws.getRow(1).eachCell((cell, col) => {\n      const h = String(cell.value || '').toLowerCase().trim();\n      if (h.includes('scenario')) colMap.scenario = col;\n      if (h.includes('expected') && !h.includes('actual')) colMap.expectedResult = col; // exclude 'actual' so an Actual-vs-Expected header isn't mis-bound to expected\n      if (h.includes('actual')) colMap.actualResult = col;\n      if (h === 'status') colMap.status = col;\n    });\n\n    const allTcs = [];\n    for (let r = 2; r <= ws.rowCount; r++) { // start at row 2 — row 1 is the header just consumed\n      const row = ws.getRow(r);\n      const rawStatus = String(row.getCell(colMap.status || 7).value || '').trim(); // fall back to column 7 if no 'status' header was found; coerce/blank-guard before comparing\n      allTcs.push({ /* scenario, expectedResult, actualResult, ... */\n        status: rawStatus, isPassed: rawStatus.toUpperCase() === 'PASS' }); // strict equality to PASS — anything else (FAIL, blank, 'passed ') is treated as needs-review\n    }\n\n    sheets.push({\n      sheetName: ws.name,\n      passedTcs: allTcs.filter(tc => tc.isPassed),\n      reviewTcs: allTcs.filter(tc => !tc.isPassed),\n    });\n  }\n  return sheets;\n}"
+    },
+    {
+      "step": "Converts the passing tests into a Given/When/Then acceptance-criteria doc, merging duplicates via the LLM (rule-based fallback if unavailable).",
+      "fn": "generateACsFromPassed()",
+      "explain": "Turns verified passes into merged acceptance criteria, with two fallbacks so it can never hard-fail. It early-returns on `passedTcs.length === 0` to skip a pointless model call, then prompts Gemini Flash at `temperature: 0.2` — deliberately near-deterministic because an AC must faithfully restate proven behavior — and explicitly instructs the model to **merge** tests that assert the same thing into one criterion. Both `!response.answer` (empty) and `!parsed` (unparseable JSON) route to `buildRuleBasedACs`, so an LLM outage degrades output quality without blocking the document. The `acId: `AC-${i + 1}`` numbering is assigned locally rather than trusting the model, guaranteeing stable, gap-free identifiers regardless of what it returns.",
+      "code": "async function generateACsFromPassed(feature) {\n  if (feature.passedTcs.length === 0) return { criteria: [], sourceTcCount: 0 }; // no passes on this tab => no ACs to build; skip the LLM call entirely\n\n  const tcBlock = feature.passedTcs.map(tc =>\n    `[${tc.tcId}] ${tc.scenario}\\n  Precondition: ${tc.precondition}\\n  Expected: ${tc.expectedResult}`\n  ).join('\\n\\n');\n\n  const prompt = `You are a QA analyst generating acceptance criteria\nfrom verified (PASSED) test cases.\n\n${tcBlock}\n\nGenerate a JSON object with a \"description\" and a \"criteria\" array,\neach entry: { scenarioName, given, when, then }.\nMerge test cases that test the same behaviour into a single AC.`;\n\n  const response = await callGeminiFlash(prompt, { temperature: 0.2, maxTokens: 4096 }); // temp 0.2: near-deterministic; ACs must restate behaviour faithfully, not paraphrase creatively\n  if (!response.answer) return buildRuleBasedACs(feature); // empty model response -> deterministic fallback, so an LLM outage never blocks the document\n\n  const parsed = parseLLMJson(response.answer);\n  if (!parsed) return buildRuleBasedACs(feature); // unparseable JSON -> same fallback; degrade quality, never fail\n\n  return { featureLabel: feature.featureLabel, description: parsed.description,\n    criteria: parsed.criteria.map((c, i) => ({ acId: `AC-${i + 1}`, ...c })), // assign stable AC-1, AC-2... ids ourselves rather than trusting the model to number them\n    sourceTcCount: feature.passedTcs.length };\n}"
+    },
+    {
+      "step": "Converts the non-passing tests into a review sheet, keeping each tester's actual result and comment verbatim, with decision tick-boxes.",
+      "fn": "generateReviewFromFailed()",
+      "explain": "The mirror of the AC path, but with the opposite merge policy — every non-passing test must survive as its own entry because a human still has to rule on each one, so the prompt explicitly says **do NOT merge scenarios** and **do NOT fabricate**, preserving `actualResult` and `comments` verbatim. It builds one block per `reviewTcs` entry carrying status/expected/actual/comments, calls Gemini Flash at the same low `temperature: 0.2`, and early-returns when there's nothing non-passing. As with the AC side, an empty `response.answer` or an unparseable body falls back to `buildRuleBasedReview`, so a failed model call still yields a complete, if plainer, review sheet — the failures are never dropped.",
+      "code": "async function generateReviewFromFailed(feature) {\n  if (feature.reviewTcs.length === 0) return { criteria: [], sourceTcCount: 0 }; // no failures/skips on this tab => nothing to review\n\n  const tcBlock = feature.reviewTcs.map(tc =>\n    `[${tc.tcId}] ${tc.scenario}\\n  Status: ${tc.status}\\n  Expected: ${tc.expectedResult}\\n  Actual: ${tc.actualResult}\\n  Comments: ${tc.comments}`\n  ).join('\\n\\n');\n\n  const prompt = `These test cases did NOT pass. Generate a JSON object\nwith \"description\" and a \"criteria\" array — each entry in Given/When/Then\nform plus \"actualResult\", \"comments\", \"originalStatus\".\nDo NOT merge scenarios — each failed TC should be its own entry.\nPreserve the actual result and comments — do NOT fabricate.`;\n\n  const response = await callGeminiFlash(prompt, { temperature: 0.2, maxTokens: 4096 }); // same low temp; the prompt forbids merging and forbids fabricating actual/comments\n  if (!response.answer) return buildRuleBasedReview(feature); // deterministic fallback keeps every failed TC in front of a human even without the LLM\n\n  const parsed = parseLLMJson(response.answer); // tolerant parse of the model JSON\n  return parsed ? { ...feature, criteria: parsed.criteria } : buildRuleBasedReview(feature);\n}"
+    },
+    {
+      "step": "Falls back to a deterministic rule-based AC or review document whenever the LLM is unavailable or returns unparseable output.",
+      "fn": "buildRuleBasedACs()",
+      "explain": "The no-LLM safety net — a pure field mapping so an AC document always exists, byte-identical across runs. Each passed row becomes one criterion: `precondition → given`, `userPrompt → when`, `expectedResult → then`, with `acId` numbered locally like the LLM path. The `||` defaults matter: a blank precondition falls back to `'the user is logged into the application'` and a missing `userPrompt` reuses `expectedResult` as the trigger, so a sparse row still yields a structurally valid Given/When/Then rather than empty fields. The `description` bakes in `passedTcs.length` as evidence of how many tests back the claim — deterministic phrasing, no wordsmithing, which is exactly the tradeoff when the model is unavailable.",
+      "code": "function buildRuleBasedACs(feature) {\n  return {\n    featureLabel: feature.featureLabel,\n    description: `The ${feature.featureLabel} feature provides the capabilities described below, as verified by ${feature.passedTcs.length} passed test cases.`,\n    criteria: feature.passedTcs.map((tc, i) => ({ // one AC per passed row, straight mapping — no model, so output is fully deterministic\n      acId: `AC-${i + 1}`,\n      scenarioName: tc.scenario,\n      given: tc.precondition || 'the user is logged into the application', // precondition -> Given; default to a sane baseline when the row left it blank\n      when: tc.userPrompt || tc.expectedResult, // action -> When; if no explicit action was captured, reuse the expected result as the trigger\n      then: tc.expectedResult,\n    })),\n    sourceTcCount: feature.passedTcs.length,\n  };\n}"
+    },
+    {
+      "step": "Serializes both documents to Markdown, JSON, and — with `--word` — two docx files.",
+      "fn": "run()",
+      "explain": "Two separate documents are written because they have two different audiences and follow-ups — the AC doc is confirmed behavior ready to file, the review doc is a decision queue for the lead. Markdown and JSON are always emitted for both piles; the AC JSON is tagged `type: 'acceptance-criteria'` so a downstream consumer can tell the artifacts apart. Every filename carries `${ts}`, making each run a fresh dated snapshot rather than an overwrite (the agent is stateless by design). The docx pair is gated behind `if (generateWord)`, and it's specifically `buildReviewWord` that renders the decision tick-boxes — so the reviewer's ruling surface only exists in the Word output.",
+      "code": "// AC Document — the 'confirmed behaviour' artifact, built from PASS rows only\nconst acMd = buildACMarkdown(acFeatures);\nfs.writeFileSync(path.join(outputDir, `TC_AC_Document_${ts}.md`), acMd);\nfs.writeFileSync(path.join(outputDir, `TC_AC_Document_${ts}.json`),\n  JSON.stringify({ type: 'acceptance-criteria', features: acFeatures }, null, 2));\n\n// Review Document — the 'needs a human ruling' artifact, one entry per non-passing test\nconst rvMd = buildReviewMarkdown(reviewFeatures);\nfs.writeFileSync(path.join(outputDir, `TC_Review_Document_${ts}.md`), rvMd);\n\nif (generateWord) {\n  await buildACWord(acFeatures, path.join(outputDir, `TC_AC_Document_${ts}.docx`));\n  await buildReviewWord(reviewFeatures, path.join(outputDir, `TC_Review_Document_${ts}.docx`)); // the review docx is the one carrying the Valid Bug / Invalid Test / Needs Info tick-boxes\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "A results sheet with a mix of outcomes",
+      "input": "A workbook of 30 results across 3 feature tabs — 22 PASS, 5 FAIL, 3 blank.",
+      "output": "An acceptance-criteria document from the 22 passes, plus a review sheet of the 8 non-passing rows with expected-vs-actual detail and 'Valid Bug / Invalid Test / Needs More Info' tick-boxes."
+    },
+    {
+      "caption": "A single failed test needing a ruling",
+      "input": "A row: scenario 'Upload a 50MB file', expected 'accepted', actual 'error: file too large', status FAIL, comment 'limit may be intentional'.",
+      "output": "A review entry restated as Given/When/Then, with the actual result and tester note preserved verbatim, awaiting the lead's ruling on whether the size limit is a bug or by design."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Reads the results workbook",
+      "whenRuns": "First, at startup.",
+      "input": "An xlsx file, one tab per feature.",
+      "output": "Each row's columns resolved by header, and status normalized so only an exact `PASS` counts as passed."
+    },
+    {
+      "heading": "Builds acceptance criteria from the passes",
+      "whenRuns": "Once per feature tab with passed tests.",
+      "input": "The passed rows' scenario, precondition, action, and expected result.",
+      "output": "A merged Given/When/Then acceptance-criteria document via Gemini Flash."
+    },
+    {
+      "heading": "Builds the review sheet from the rest",
+      "whenRuns": "Once per feature tab with non-passed tests.",
+      "input": "The failed/skipped rows' expected vs actual result and tester comments.",
+      "output": "One Given/When/Then review item per test, actual result and comment preserved verbatim."
+    },
+    {
+      "heading": "Falls back without the LLM",
+      "whenRuns": "Whenever the LLM call fails or returns unparseable output.",
+      "input": "The same raw test rows.",
+      "output": "A deterministic, still-usable AC or review document built straight from the data, no model wordsmithing."
+    },
+    {
+      "heading": "Writes the two documents",
+      "whenRuns": "Once, at end of run.",
+      "input": "The generated AC and review content for every feature.",
+      "output": "Markdown and JSON always, plus two docx files — one with decision tick-boxes — with `--word`."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "A results workbook — one tab per feature, with columns for scenario, expected result, actual result, status, and comments (order can vary; columns are resolved by header text).",
+      "A Google Gemini API key for the merged, polished write-up; without it the agent degrades to a deterministic rule-based version built straight from the rows."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program executed under Node. One-time install per machine.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone the code and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` resolves the agent's dependencies — the ExcelJS reader, the docx writer, and the Gemini client — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op unless the dependency set changed."
+      },
+      {
+        "label": "Set the LLM key (optional).",
+        "cmd": "export GOOGLE_API_KEY=your-gemini-key   # optional",
+        "why": "Read at startup. If unset, the agent still runs — it degrades to the deterministic rule-based write-up with no model wordsmithing."
+      },
+      {
+        "label": "Dry-run first — inspect the workbook without spending LLM calls.",
+        "cmd": "npx tsx agents/tc-review-agent.ts --excel ./inputs/results.xlsx --dry-run",
+        "why": "`--dry-run` reads every tab and prints passed vs review counts per feature — confirms the columns resolved correctly before the real run.",
+        "firstRun": "Prints counts only — no documents written."
+      },
+      {
+        "label": "Run for real; add `--word` for the docx files.",
+        "cmd": "npx tsx agents/tc-review-agent.ts --excel ./inputs/results.xlsx --word",
+        "why": "Drop `--dry-run`. Builds two documents: an acceptance-criteria doc from the passes, and a review sheet — with tick-boxes — for everything else.",
+        "firstRun": "Partitions each tab into passed/non-passed, sends each pile to the LLM, and writes both documents.",
+        "rerun": "Recomputes fresh from the workbook's current contents — re-run after the next execution round to pick up new results."
+      },
+      {
+        "label": "Open the two documents.",
+        "cmd": "open ./outputs/reports/tc-spec/TC_AC_Document_*.md\nopen ./outputs/reports/tc-spec/TC_Review_Document_*.md",
+        "why": "The AC document is confirmed behavior, ready to file. The review document goes to the lead — each entry has tick-boxes for 'Valid Bug', 'Invalid Test', or 'Needs More Info'."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--excel <path>",
+        "desc": "The results workbook, one tab per feature. Falls back to a standard inputs folder if omitted."
+      },
+      {
+        "name": "--word / --dry-run",
+        "desc": "--word also emits the Word documents; --dry-run prints the pass/review counts and stops."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "TC_AC_Document_<timestamp>.md / .json / .docx",
+        "desc": "A Given/When/Then acceptance-criteria document from the passing tests only — duplicates merged."
+      },
+      {
+        "name": "TC_Review_Document_<timestamp>.md / .json / .docx",
+        "desc": "One entry per failed/skipped test — expected vs actual, tester comments verbatim, and tick-boxes for the lead's ruling."
+      }
+    ],
+    "rerun": "Stateless — each run reads the workbook's current state and rebuilds both documents from scratch. Re-run after every execution round or whenever the results sheet updates; treat the new files as the current snapshot.",
+    "integrate": "Route the AC document to whoever maintains the feature's official acceptance criteria. Route the review document straight to the team lead or scrum master for a ruling — nothing should sit between 'tested' and 'decided' for long."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: point the agent at a results workbook and watch two documents come out — one confirmed, one awaiting a ruling.",
+    "script": [
+      "Open a terminal beside the results spreadsheet so viewers can see both.",
+      "Say: 'After a test round, this agent splits the results into confirmed and needs-a-decision — automatically.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's done); explain it grabs the helper libraries.",
+      "Show the spreadsheet — point out a PASS row and a FAIL row with a tester comment.",
+      "Run the command with `--dry-run`; show the pass/review counts it prints per feature tab.",
+      "Re-run without `--dry-run`, adding `--word`; narrate as it sends each pile to the AI.",
+      "Open the AC document; read one Given/When/Then entry that merged two duplicate tests.",
+      "Open the review document; read the failed entry with its actual result and tester comment preserved, and the three tick-boxes.",
+      "Close: 'The lead now rules on eight things instead of digging through thirty rows.'"
+    ]
+  }
+}

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Build Watcher — Agent 11</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s3">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">11<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Keeping the project tracker up to date</span></div>
+        <h1>The Build Watcher</h1>
+        <p class="lead">Triggers an ADO pipeline run and polls it to completion, returning a pass/fail verdict — no tab-refreshing to catch the result.</p>
+        <p class="kicker">Source file: ado-pipeline-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Fire-and-forget CI/CD. This agent POSTs a pipeline run to the ADO REST API, polls its <code>state</code> on a fixed interval, and reports succeeded/failed the moment the run terminates. Build, test, or deploy pipelines — same flow.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Kick off a pipeline, then keep flipping to a browser tab every few minutes to check if it&#39;s done. A run can take 30 minutes. Focus drifts, failures go unnoticed for an hour, and cancelling a hung run means hunting through the ADO UI for the stop button.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent triggers the run, then polls <code>getRunStatus</code> every 30s until <code>state === &#39;completed&#39;</code>, then prints the result, elapsed time, and run URL. On request it fetches published artifacts or PATCHes a stuck run to <code>canceling</code> — all headless.</p></div>
+    </div>
+    <p>A failed build caught in seconds instead of an hour keeps the team from stacking work on a broken base.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Give it a pipeline ID and optionally a branch. It POSTs to <code>/pipelines/{id}/runs</code> on the ADO REST API (api-version 7.0), defaulting <code>refName</code> to <code>refs/heads/main</code>, and gets back a run ID to track.</span>
+          <span class="fc-node__fn">triggerPipeline()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Polls <code>getRunStatus</code> on a fixed interval — 30s by default — until <code>state</code> reads <code>completed</code>, then reports the outcome: succeeded or failed, elapsed time, and the run URL.</span>
+          <span class="fc-node__fn">waitForCompletion()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">On request, fetches the artifacts the run published.</span>
+          <span class="fc-node__fn">getArtifacts()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">PATCHes a still-running run to <code>canceling</code>, on request.</span>
+          <span class="fc-node__fn">cancelRun()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"triggerPipeline()","explain":"Triggering a run is a single **POST** to `/pipelines/{id}/runs` — ADO creates *and* queues the run in one call, so there is no separate 'start' step. The branch is pinned through `resources.repositories.self.refName` (the `self` repo is the pipeline's own YAML repo), which must be a **full git ref** — `refs/heads/main`, never a bare `main`; passing a bare name silently falls back to the pipeline's default branch. The returned `run.id` is the handle every later poll and cancel needs, and `run._links.web.href` is the browser URL ADO hands back so a human can open the run.","code":"async triggerPipeline(pipelineId: number, options: TriggerOptions = {}): Promise\u003cAgentResponse> {\n  // ADO pins a run to a branch via resources.repositories.self.refName;\n  // 'self' is the pipeline's own YAML repo.\n  const body: Record\u003cstring, unknown> = {\n    resources: {\n      repositories: {\n        // Must be a FULL git ref (refs/heads/...), not a bare branch name, or ADO runs the default branch.\n        self: { refName: options.branch ? `refs/heads/${options.branch}` : 'refs/heads/main' },\n      },\n    },\n  };\n\n  // POST to /runs both creates AND queues the run in one call - there is no separate 'start'.\n  const response = await fetch(\n    `${this.baseUrl}/pipelines/${pipelineId}/runs?api-version=7.0`,\n    {\n      method: 'POST',\n      headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n      body: JSON.stringify(body),\n    }\n  );\n\n  const run = await response.json();\n  return {\n    success: true,\n    // run.id is the handle every later poll/cancel needs; _links.web.href is the browser URL ADO returns.\n    data: { runId: run.id, state: run.state, url: run._links.web.href },\n    message: `Pipeline run #${run.id} triggered successfully`,\n  };\n}"},{"fn":"waitForCompletion()","explain":"This is a bounded poll: it re-reads `getRunStatus` every `pollInterval` (30s default) and only stops when `run.state === 'completed'` — ADO's terminal state. Crucially, `state` and `result` are **separate fields**: `state` says *whether* the run finished, `result` says *how* — so a completed run maps to success only when `run.result === 'succeeded'` (it could equally be `failed` or `canceled`). The `while (Date.now() - startTime \u003c timeout)` guard caps the wait at 30 min so a hung run can't block forever, and a null status from a transient API hiccup bails out immediately rather than looping on a dead handle.","code":"async waitForCompletion(\n  pipelineId: number,\n  runId: number,\n  options: { timeout?: number; pollInterval?: number } = {}\n): Promise\u003cAgentResponse> {\n  const timeout = options.timeout || 30 * 60 * 1000;      // 30 minutes default\n  const pollInterval = options.pollInterval || 30 * 1000; // 30 seconds default\n  const startTime = Date.now();\n\n  // Bound the total wait so a hung run can't block forever.\n  while (Date.now() - startTime \u003c timeout) {\n    const run = await this.getRunStatus(pipelineId, runId);\n    // Null = transient API failure; bail rather than loop on a dead handle.\n    if (!run) return { success: false, data: {}, errors: ['Failed to get pipeline status'] };\n\n    // 'completed' is ADO's only terminal state; run.result then tells us HOW it ended.\n    if (run.state === 'completed') {\n      // state says it finished; result (succeeded|failed|canceled) says the outcome.\n      const success = run.result === 'succeeded';\n      return {\n        success,\n        data: { runId: run.id, result: run.result, url: run.webUrl },\n        message: `Pipeline ${success ? 'succeeded' : 'failed'}`,\n      };\n    }\n    await this.sleep(pollInterval);\n  }\n  // Fell out of the loop = never reached 'completed' within the timeout window.\n  return { success: false, data: {}, errors: [`Timeout waiting for pipeline after ${timeout / 1000}s`] };\n}"},{"fn":"getArtifacts()","explain":"A `GET` on `/runs/{runId}/artifacts` lists what the run published. A non-OK response returns `[]` rather than throwing, so a run with no artifacts — or a permissions gap — degrades to an empty list instead of breaking the caller. Each entry is flattened to `name`/`size`/`downloadUrl`, where the URL comes from `artifact.signedContent.url`: a **short-lived signed link** ADO mints on demand, so it must be used promptly and never cached or stored.","code":"async getArtifacts(pipelineId: number, runId: number): Promise\u003cPipelineArtifact[]> {\n  const response = await fetch(\n    `${this.baseUrl}/pipelines/${pipelineId}/runs/${runId}/artifacts?api-version=7.0`,\n    { headers: { Authorization: this.authHeader } }\n  );\n\n  // No artifacts or no access -> return empty rather than throw, so the caller degrades gracefully.\n  if (!response.ok) return [];\n\n  const data = await response.json();\n  return data.value.map((artifact: any) => ({\n    name: artifact.name,\n    // signedContent.url is a short-lived signed link ADO mints on demand - use promptly, don't cache.\n    downloadUrl: artifact.signedContent.url,\n    size: artifact.size,\n  }));\n}"},{"fn":"cancelRun()","explain":"Cancelling is a **PATCH** (a partial update of the existing run), not a POST — the URL targets the run itself, and the body sets only `{ state: 'canceling' }`. You are declaring **intent**: ADO tears the run down asynchronously, so it moves to `canceling` first and only later to a terminal `completed`/`canceled` — it does not stop instantly. The function reports success once the request is accepted, not once the run has actually wound down, so a follow-up poll is what confirms the teardown finished.","code":"async cancelRun(pipelineId: number, runId: number): Promise\u003cAgentResponse> {\n  const response = await fetch(\n    // Target the run itself; PATCH = partial update of the existing run, not a new POST.\n    `${this.baseUrl}/pipelines/${pipelineId}/runs/${runId}?api-version=7.0`,\n    {\n      method: 'PATCH',\n      headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n      // Sets intent only; ADO tears the run down async, so it won't stop instantly.\n      body: JSON.stringify({ state: 'canceling' }),\n    }\n  );\n\n  return { success: true, data: { runId }, message: `Pipeline run ${runId} cancelled` };\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Trigger a build and wait for the verdict</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Trigger the build pipeline on `main` and wait for completion.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Triggered run #4821. Polled every 30s. Verdict after 12 min: SUCCEEDED, with the run URL.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A deploy run fails</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Trigger the deploy pipeline and watch it.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Triggered run #4822. Verdict after 3 min: FAILED. Flagged immediately, before anyone stacks work on it.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Cancel a hung run</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Cancel run #4822 on the deploy pipeline — it&#39;s hung.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>PATCHed the run to `canceling`; run #4822 is winding down.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Azure DevOps access and a <strong>PAT</strong> with pipeline read/execute scope.</li><li>The pipeline IDs you want to run — build, test, and/or deploy — from whoever owns your CI setup.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the engine that runs the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript run under Node — a one-time per-machine install.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> One-time setup per machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent and install its dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the agent&#39;s dependencies into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Cold install — a minute or two.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless <code>package.json</code> changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target org, project, PAT, and pipeline IDs (env vars).</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token
+export ADO_BUILD_PIPELINE_ID=123
+export ADO_TEST_PIPELINE_ID=124
+export ADO_DEPLOY_PIPELINE_ID=125</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: which ADO org/project to hit, the PAT that authorizes it, and which pipeline ID maps to build/test/deploy. Nothing is hard-coded — swap these to point at another project.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Trigger a run and poll it.</div>
+        <pre class="rb__cmd"><code>npm run ado:pipeline -- trigger 123 --branch main
+# note the run number it prints, e.g. &quot;Run #4821&quot;, then:
+npm run ado:pipeline -- wait 123 4821</code></pre>
+        <div class="rb__why"><span>Why</span> <code>trigger</code> starts the run and returns its ID; <code>wait</code> polls that run every 30s until it reports succeeded or failed.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Triggers a fresh run and polls it end to end.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Each <code>trigger</code> starts a new run with its own ID — never reused.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Read the printed verdict.</div>
+        <pre class="rb__cmd"><code># no file to open — the result prints straight to the terminal, e.g.:
+# { &quot;success&quot;: true, &quot;data&quot;: { &quot;runId&quot;: 4821, &quot;result&quot;: &quot;succeeded&quot;, &quot;url&quot;: &quot;...&quot; } }</code></pre>
+        <div class="rb__why"><span>Why</span> No report file is written — the output is the immediate succeeded/failed verdict plus the run URL, printed straight to stdout.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>trigger &lt;pipeline-id&gt; [--branch &lt;name&gt;]</dt><dd>Triggers a run of the pipeline on the given branch (defaults to <code>main</code>).</dd><dt>wait &lt;pipeline-id&gt; &lt;run-id&gt;</dt><dd>Polls a run every 30s until <code>completed</code>, then reports succeeded/failed.</dd><dt>cancel &lt;pipeline-id&gt; &lt;run-id&gt;</dt><dd>PATCHes a stuck run to <code>canceling</code>.</dd><dt>environment variables</dt><dd>Target ADO org/project, the PAT, and the pipeline IDs for build/test/deploy.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console verdict</dt><dd>Succeeded or failed, run duration, and the run URL — printed to stdout, not persisted.</dd><dt>artifact list (on request)</dt><dd>Names, sizes, and signed download URLs of the artifacts a successful run published.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No stored state — every <code>trigger</code> is a fresh run with its own ID. Re-running on the same branch just starts the pipeline over, which is exactly what you want after pushing a fix.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Wire the <code>trigger</code> + <code>wait</code> pair into whatever kicks off your CI/CD flow (a pre-merge gate, a nightly build) so no one refreshes a status page — the agent reports back the moment there&#39;s a verdict.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 2-3 minute screen recording: trigger a pipeline run and watch the agent report the verdict.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Triggering the run</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When you trigger a build, test, or deploy pipeline.</dd>
+          <dt>Takes in</dt><dd>A pipeline ID and optional branch.</dd>
+          <dt>Shows out</dt><dd>A POST to the ADO pipelines endpoint, returning a run ID.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Polling for completion</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Every 30s (or your chosen interval) while the run is in progress.</dd>
+          <dt>Takes in</dt><dd>The run ID.</dd>
+          <dt>Shows out</dt><dd>The run&#39;s current <code>state</code> — in progress, or completed with a <code>result</code>.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Reporting the verdict</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>As soon as <code>state</code> reads <code>completed</code>.</dd>
+          <dt>Takes in</dt><dd>The run&#39;s <code>result</code> field.</dd>
+          <dt>Shows out</dt><dd>Succeeded or failed, elapsed time, and the run URL.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Fetching artifacts</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Only on request, after a successful run.</dd>
+          <dt>Takes in</dt><dd>The run ID.</dd>
+          <dt>Shows out</dt><dd>A list of published artifacts with names, sizes, and signed download URLs.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Cancelling a run</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Only on request.</dd>
+          <dt>Takes in</dt><dd>The run ID.</dd>
+          <dt>Shows out</dt><dd>A PATCH to the ADO REST API; the run moves to <code>canceling</code>.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-requirements-sharpener.html">← The Requirements Sharpener</a>
+      <a href="the-test-suite-organizer.html">The Test-Suite Organizer →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

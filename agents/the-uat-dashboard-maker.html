@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The UAT Dashboard Maker — Agent 33</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s7">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">33<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Turning results into reports people read</span></div>
+        <h1>The UAT Dashboard Maker</h1>
+        <p class="lead">Parses the returned UAT spreadsheet — even a wide-format sheet several testers filled side by side — and emits a one-slide dashboard, an HTML page, and raw JSON with the go/no-go call computed.</p>
+        <p class="kicker">Source file: uat-dashboard-agent.ts</p>
+      </div>
+    </div>
+
+    <p>The last gate before launch is UAT: real users exercise the app and log pass/fail plus comments into an <code>.xlsx</code> workbook. This agent parses that workbook — detecting when multiple testers shared one sheet in wide format — aggregates pass/fail counts, classifies failures into buckets, computes coverage and pass rate, evaluates them against exit criteria, and renders a single PowerPoint slide plus a self-contained HTML dashboard showing coverage, pass rate, the issue list, and launch readiness.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The manual path: open the returned workbook, count prompts tried, passed, and failed, bucket the failures, compute the pass rate, check it against exit criteria, then hand-build a summary slide for the go/no-go meeting. Error-prone counting plus hours of slide work, redone every time a fresh workbook comes back.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Point the agent at the workbook (or the folder it lands in) and get back a finished dashboard slide, a matching HTML page, and the raw JSON — counting, classification, and exit-criteria evaluation all done.</p></div>
+    </div>
+    <p>The go/no-go launch decision rests on these numbers, so counting them correctly and rendering them unambiguously is exactly what a room of decision-makers needs.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Resolves the input path: a file is used directly; a directory is scanned for <code>.xlsx</code> files (skipping <code>~$</code> temp locks and dotfiles) and the newest by mtime is picked.</span>
+          <span class="fc-node__fn">resolveInputFile()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Auto-detects single- vs. multi-tester layout by matching repeating <code>Tester #N: Name</code> headers in the sheet&#39;s second row.</span>
+          <span class="fc-node__fn">detectWideFormat()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Aggregates pass/fail across the Sample Prompts and New Prompts sheets, computes coverage and combined pass rate, and evaluates each exit criterion (coverage, pass rate ≥ 80%, zero high-severity issues, formal sign-off).</span>
+          <span class="fc-node__fn">aggregateMetrics()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Classifies each failed result into a named bucket, retaining feature area, classification, and the tester&#39;s comment (falling back to the actual result when no comment was left).</span>
+          <span class="fc-node__fn">classifyIssues()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Renders a one-slide <code>LAYOUT_WIDE</code> PowerPoint via <code>pptxgenjs</code> — header bar, coverage/pass-rate rings, metric cards, and issue bars — plus a matching HTML dashboard and a JSON dump, unless <code>--dry-run</code> was passed.</span>
+          <span class="fc-node__fn">generatePptx()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"resolveInputFile()","explain":"Accepts **either a file or a drop-folder** so testers can dump workbooks somewhere shared without renaming anything. The `~$` filter is the load-bearing quirk — Excel writes a `~$whatever.xlsx` **lock file whenever a workbook is open in the app**, and handing that placeholder to the parser throws, so it's excluded alongside dotfiles. When a directory is given it picks the **newest by `mtimeMs`** (filenames aren't reliably sortable), and both the missing-path and empty-folder cases `process.exit(1)` — a **hard fail is preferred over silently parsing nothing** and emitting a bogus dashboard.","code":"function resolveInputFile(inputPath) {\n  const resolved = path.resolve(inputPath);\n  if (!fs.existsSync(resolved)) {\n    console.error(`Error: Path not found: ${resolved}`);\n    process.exit(1); // hard-fail on a bad path rather than continuing with nothing to parse\n  }\n  const stat = fs.statSync(resolved);\n  if (!stat.isDirectory()) return resolved; // it's a file, use directly\n\n  // Scan folder for .xlsx files (non-temp, non-hidden)\n  const files = fs.readdirSync(resolved)\n    .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$') && !f.startsWith('.')) // '~$' is Excel's lock file for a workbook still open in the app — parsing it would throw; dotfiles are hidden/OS cruft\n    .map(f => {\n      const full = path.join(resolved, f);\n      return { name: f, path: full, mtime: fs.statSync(full).mtimeMs }; // mtimeMs is the recency key — filenames aren't reliably ordered\n    })\n    .sort((a, b) => b.mtime - a.mtime); // newest first\n\n  if (files.length === 0) {\n    console.error(`Error: No .xlsx files found in ${resolved}`);\n    process.exit(1);\n  }\n  return files[0].path;\n}"},{"fn":"detectWideFormat()","explain":"Layout detection is **data-driven, not configured** — it reads row 2 (the note row) and counts how many cells match a `Tester #N: Name` banner. The regex is deliberately **forgiving** (`#` optional, flexible whitespace, case-insensitive) because testers hand-type those headers inconsistently, and `String(row2[c] || '')` coerces numeric/empty/`undefined` cells so `.match` never throws. The **`> 1` threshold is the real decision**: one banner (or none) is a normal single-tester sheet and returns `null`, while two or more means a shared wide-format workbook whose `colOffset`s tell the parser where each tester's column block begins. A blank name after the colon **falls back to `Tester #N`** so no block is left unlabeled.","code":"function detectWideFormat(rows) {\n  if (rows.length \u003c 3) return null; // need header + note row + at least one data row; anything shorter can't be a real sheet\n  const row2 = rows[1]; // the NOTE row — where 'Tester #N: Name' banners live in a shared workbook\n  const testerBlocks = [];\n\n  for (let c = 0; c \u003c (row2?.length || 0); c++) {\n    const val = String(row2[c] || '').trim(); // coerce: cells may be numbers, undefined, or missing — String()||'' guards all three before matching\n    const match = val.match(/^Tester\\s*#?\\s*(\\d+)\\s*:\\s*(.*)/i); // tolerant pattern: optional '#', flexible spacing, case-insensitive — testers type these headers inconsistently\n    if (match) {\n      const name = match[2].trim() || `Tester #${match[1]}`; // fall back to the numbered label when someone left the name blank after the colon\n      testerBlocks.push({ testerName: name, colOffset: c }); // colOffset marks where this tester's column block starts — used later to slice their answers out of the wide row\n    }\n  }\n  return testerBlocks.length > 1 ? testerBlocks : null; // >1 = genuinely wide/shared; 0 or 1 banner means a normal single-tester sheet, signalled by null\n}"},{"fn":"aggregateMetrics()","explain":"Counts key off the **exact strings `'Pass'`/`'Fail'`**, so blank or untested rows fall through both filters and never inflate either tally — deliberate, since an unanswered prompt is neither a pass nor a fail. `passRate` guards divide-by-zero so an all-untested round reports **`0`, not `NaN`**. `testCoverage` is a **Set comparison** (`passedTestNums.size >= uniqueTestNums.size`): a prompt passed by any one of several testers counts once, and coverage is met only when every distinct test number has at least one pass. The exit bar is **fixed and strict** — `passRate >= 80`, `highIssues === 0` (zero, not 'few') — and `formalSignOff` is **hardcoded `false`** so the numbers can never auto-satisfy what is a human sign-off.","code":"function aggregateMetrics(results, inputFile, numTesters) {\n  const sampleResults = results.filter(r => r.sheet === 'Sample Prompts');\n  const samplePassed = sampleResults.filter(r => r.passFail === 'Pass'); // exact 'Pass' only — blank/untested rows fall through both buckets and don't inflate either count\n  const sampleFailed = sampleResults.filter(r => r.passFail === 'Fail');\n  // ... same tally repeated for the New Prompts sheet, then combined ...\n\n  const passRate = totalTested > 0 ? (totalPassed / totalTested) * 100 : 0; // guard divide-by-zero: an all-untested round reports 0%, not NaN\n\n  const exitCriteria = {\n    // coverage passes only if every unique test number was passed by at least one tester — a Set comparison, so a prompt tried by 3 testers still counts once\n    testCoverage: uniqueTestNums.size > 0 && passedTestNums.size >= uniqueTestNums.size,\n    passRate: passRate >= 80, // fixed 80% launch bar\n    criticalIssues: highIssues === 0, // zero high-severity issues, not 'few'\n    formalSignOff: false, // always pending — a human decision, never auto-satisfied by the numbers\n  };\n\n  return { totalPrompts, totalTested, coveragePct, passRate, exitCriteria /* ...more */ };\n}"},{"fn":"classifyIssues()","explain":"A pure **shape-narrowing map** — no filtering, so every failed result becomes exactly one issue record and nothing is dropped. The two `||` cascades are the real logic: `classification` falls back through the tester's explicit bucket, then the **feature area as a coarse bucket**, then `'Other'`, guaranteeing no failure is left uncategorized on the dashboard. `comment` prefers the tester's own note but **falls back to the machine-observed `actualResults`** when they left the comment blank, and finally a `'(no comment)'` placeholder so the rendered issue row never shows an empty cell.","code":"function classifyIssues(failedResults) {\n  return failedResults.map(r => ({\n    testNum: r.testNum,\n    feature: r.feature,\n    classification: r.classification || r.feature || 'Other', // cascade: explicit bucket, else group by feature area, else 'Other' — every failure lands in some named bucket\n    comment: r.testerComments || r.actualResults || '(no comment)', // prefer the tester's own note; fall back to the observed result; last resort a placeholder so the field is never empty\n    tester: r.tester,\n  }));\n}"},{"fn":"generatePptx()","explain":"`pptxgenjs` is pulled in via **dynamic `import()`**, not a top-level require, so a `--dry-run` (which never calls this function) doesn't pay to load the heavy slide library. `LAYOUT_WIDE` fixes the canvas at **13.33×7.5in — 16:9**, the projector ratio for the go/no-go meeting, and every coordinate thereafter is in **inches**, with `w: '100%'` spanning the header band the full slide width. The title uses a **single `addText` with two runs** so the bold 'UAT Summary' and the lighter date sit on one baseline in one text box rather than two overlapping shapes. The whole function is `async` and `writeFile` is awaited so the caller is guaranteed the `.pptx` is **fully flushed to disk** before it moves on to the HTML and JSON deliverables.","code":"async function generatePptx(metrics, outputPath, linkedFiles) {\n  const PptxGenJS = (await import('pptxgenjs')).default; // dynamic import: the heavy slide lib loads only when actually rendering, so --dry-run never pays for it\n  const pptx = new PptxGenJS();\n  pptx.layout = 'LAYOUT_WIDE'; // 13.33 x 7.5 inches — 16:9, the projector aspect ratio for the go/no-go room\n\n  const slide = pptx.addSlide();\n  slide.addShape('rect', { x: 0, y: 0, w: '100%', h: 0.55, fill: { color: TEAL } }); // header band; coordinates are in INCHES, w:'100%' spans the full slide width\n  slide.addText([\n    // one addText with two runs so 'UAT Summary' is bold and the date is lighter within a single text box, kept on one baseline\n    { text: 'UAT Summary', options: { fontSize: 14, bold: true, color: WHITE } },\n    { text: `  |  ${dateStr}`, options: { fontSize: 11, color: WHITE } },\n  ], { x: 0.3, y: 0.1, w: 9, h: 0.35 });\n\n  // ... draws the coverage/pass-rate rings, the sample/new prompt\n  // metric cards, the issue bars, and the exit-criteria bar ...\n\n  await pptx.writeFile({ fileName: outputPath }); // async write — the whole function is awaited so callers know the .pptx is flushed before continuing\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Three testers, one wide-format workbook</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A workbook where three testers each filled their own column block against the same prompt list.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>`detectWideFormat()` resolves three tester blocks, their results combine into one pass rate, and coverage plus issues render across all three on a single slide.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Dry-run before writing files</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The same workbook, run with `--dry-run`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A plain-text summary to stdout — coverage, pass rate, issue counts, and each exit criterion marked met/not — with no `.pptx`, `.html`, or `.json` written.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Exit criteria clear the bar</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A completed round at 84% pass rate, every prompt passed by at least one tester, and zero high-severity issues.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A dashboard with green rings, the first three exit criteria marked met, and the fourth — `formalSignOff` — marked pending, since that boolean is hardcoded to a human decision.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>The filled-in UAT workbook (the final round where real users exercise the app before launch) as an <code>.xlsx</code> file, or a directory where those get dropped.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. One-time per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Needed only the first time on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agents and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the agent&#39;s dependencies — <code>xlsx</code> for parsing and <code>pptxgenjs</code> for the slide — into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">No env vars needed — just know where the workbook lives.</div>
+        <pre class="rb__cmd"><code># example: a single returned workbook
+./returned-uat-results.xlsx
+
+# or a shared folder several testers dropped their copies into
+./uat-results/</code></pre>
+        <div class="rb__why"><span>Why</span> Unlike agents that hit a work board or an LLM, this one only reads a local <code>.xlsx</code> — there&#39;s nothing else to configure.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Dry-run first, writing no files.</div>
+        <pre class="rb__cmd"><code>npm run uat:dashboard -- --input ./returned-uat-results.xlsx --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--dry-run</code> prints the aggregated numbers — coverage, pass rate, issues, exit criteria — to stdout, so you can verify the sheet parsed correctly before rendering the slide.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run for real and open the dashboard.</div>
+        <pre class="rb__cmd"><code>npm run uat:dashboard -- --input ./returned-uat-results.xlsx
+
+open outputs/reports/uat/UAT_Dashboard_&lt;timestamp&gt;.pptx
+open outputs/reports/uat/UAT_Dashboard_&lt;timestamp&gt;.html</code></pre>
+        <div class="rb__why"><span>Why</span> Without <code>--dry-run</code>, it writes all three deliverables: a one-slide PowerPoint with ring and bar charts, a self-contained HTML page, and the raw JSON — ready to drop into the go/no-go meeting.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Parses every row, detects the tester layout, and builds all three files fresh.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Point <code>--input</code> at the folder instead of one file and it always picks the newest <code>.xlsx</code> by mtime — handy once a newer round of results comes back.</div>
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--input &lt;path&gt;</dt><dd>A single <code>.xlsx</code> workbook, or a directory — in which case the newest <code>.xlsx</code> by mtime is used.</dd><dt>--dry-run</dt><dd>Print the aggregated summary to stdout only; skip writing the <code>.pptx</code>, <code>.html</code>, and <code>.json</code>.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>UAT_Dashboard_&lt;timestamp&gt;.pptx</dt><dd>A one-slide PowerPoint with coverage and pass-rate ring charts, issue bar charts, and the four exit-criteria checks.</dd><dt>UAT_Dashboard_&lt;timestamp&gt;.html</dt><dd>A self-contained HTML dashboard of the same metrics, shareable without opening PowerPoint.</dd><dt>UAT_Dashboard_&lt;timestamp&gt;.json</dt><dd>Every aggregated number in raw form — coverage, pass rate, issues by bucket, and the exit-criteria checklist.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Re-run whenever a fresh workbook comes back from a new tester round — point <code>--input</code> at the shared drop folder and it always picks the newest file by mtime, so the dashboard never goes stale. Nothing needs clearing between runs; each writes a new timestamped set of files.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Drop the completed workbook into the shared folder as the last step of a UAT round, then run this agent as the trigger for the go/no-go meeting — the <code>.pptx</code> is what gets projected, the <code>.json</code> is what gets archived alongside the decision.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>2-min screen recording: point the agent at a filled-in UAT <code>.xlsx</code> and watch the dashboard slide render.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 6</div>
+        <h3 class="display">Resolve the workbook</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, on the input path you pass.</dd>
+          <dt>Takes in</dt><dd>A file path, or a directory where testers drop filled-in workbooks.</dd>
+          <dt>Shows out</dt><dd>One resolved <code>.xlsx</code> path — the newest by mtime when a directory is given (via <code>resolveInputFile()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 6</div>
+        <h3 class="display">Parse the workbook</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Immediately after the file is resolved.</dd>
+          <dt>Takes in</dt><dd>The &#39;Sample Prompts&#39;, &#39;New Prompts&#39;, and &#39;Testers&#39; sheets in the workbook.</dd>
+          <dt>Shows out</dt><dd>Every row parsed into structured records via the <code>xlsx</code> library.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 6</div>
+        <h3 class="display">Detect tester layout</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>As each sheet is parsed.</dd>
+          <dt>Takes in</dt><dd>The header row and the row below it.</dd>
+          <dt>Shows out</dt><dd>Either a single-tester layout, or — via repeating <code>Tester #N</code> column blocks every six columns — a multi-tester layout with each tester&#39;s columns mapped correctly (via <code>detectWideFormat()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 6</div>
+        <h3 class="display">Aggregate metrics</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every row from every sheet is parsed.</dd>
+          <dt>Takes in</dt><dd>The full list of per-test results — pass, fail, or untested — across all testers.</dd>
+          <dt>Shows out</dt><dd>Coverage, pass/fail counts, and pass rate for the Sample and New prompt sheets, combined into one set of totals (via <code>aggregateMetrics()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 6</div>
+        <h3 class="display">Classify failures and evaluate exit criteria</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once the totals are known.</dd>
+          <dt>Takes in</dt><dd>Every failed result and its comment.</dd>
+          <dt>Shows out</dt><dd>Issue counts per named bucket, plus a met/not-met/pending evaluation of the four exit criteria: coverage, pass rate ≥ 80%, zero high-severity issues, and formal sign-off (via <code>classifyIssues()</code>).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="5">
+        <div class="uh-slide__no">6 / 6</div>
+        <h3 class="display">Render the deliverables</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, unless <code>--dry-run</code> was passed.</dd>
+          <dt>Takes in</dt><dd>The finished metrics object.</dd>
+          <dt>Shows out</dt><dd>A one-slide PowerPoint (ring and bar charts via <code>pptxgenjs</code>), a matching self-contained HTML dashboard, and a JSON dump of every number, ready for the go/no-go meeting (via <code>generatePptx()</code>).</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button><button class="uh-dot" data-uh-dot="5" aria-label="Slide 6"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-scorecard-publisher.html">← The Scorecard Publisher</a>
+      <a href="the-tracker-toolkit.html">The Tracker Toolkit →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

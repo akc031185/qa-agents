@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Design Matcher — Agent 17</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s4">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">17<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Checking the screens look right</span></div>
+        <h1>The Design Matcher</h1>
+        <p class="lead">Diffs Figma reference exports against live-app screenshots captured across desktop and phone viewports, and flags every screen that&#39;s missing, partial, or unreachable on mobile.</p>
+        <p class="kicker">Source file: design-comparison-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Pairs each screen&#39;s Figma export with a Playwright-captured screenshot of the running app at every configured viewport, classifies each as MATCH / PARTIAL / NOT_IMPLEMENTED by counting which viewports actually produced a capture, and emits a side-by-side report. The key signal: a feature that renders on desktop but has no mobile capture surfaces as a PARTIAL (desktop-only) with a per-device reason.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The manual path: open the app, resize to each phone viewport, navigate to every screen, screenshot it, open the matching Figma export, and eyeball the pair — across dozens of screens and multiple viewports. Slow, error-prone to track, and non-deterministic between reviewers.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One command drives a headless browser through every screen at every viewport, captures each, pairs it with its Figma reference, and classifies the gap deterministically — same navigation, same viewports, same output every run.</p></div>
+    </div>
+    <p>A feature that renders on desktop but is unreachable on mobile is a dead end for phone users. Counting captures per viewport catches that before it ships.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Drives the live app through every mapped screen at each viewport via <code>npx playwright test</code>, screenshotting each. A non-zero Playwright exit is downgraded to a warning, since screens not yet built on mobile legitimately fail to capture.</span>
+          <span class="fc-node__fn">runCaptures()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Resolves each screen&#39;s Figma reference PNG from the design source dir and copies it into the report working dir; missing exports are logged and skipped.</span>
+          <span class="fc-node__fn">loadFigmaReferences()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Joins each screen to its Figma reference and probes the captures dir for a <code>&lt;screenId&gt;-&lt;viewport&gt;.png</code> at every viewport, recording captured true/false per viewport.</span>
+          <span class="fc-node__fn">matchScreens()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Classifies each screen by capture count: all viewports = MATCH, zero = NOT_IMPLEMENTED, desktop-only = PARTIAL with a per-device missing reason, anything else = PARTIAL.</span>
+          <span class="fc-node__fn">analyzeGaps()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Aggregates the per-status counts (matching / partial / notImplemented / captured) and packages every screen&#39;s detail into one timestamped report object.</span>
+          <span class="fc-node__fn">buildReport()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Renders the report to Markdown — summary counts, a per-screen status section, and a side-by-side image table (Figma | desktop | phone A | phone B) — plus an optional Word doc with the images embedded.</span>
+          <span class="fc-node__fn">generateMarkdown()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"runCaptures()","explain":"Shells out to the capture spec with `execSync` and a **600s timeout** — a full sweep navigates every screen at every viewport, so the ceiling is generous. The `cd` into `browser/` matters: it anchors Playwright's config, deps, and output resolution to that root regardless of where the agent was launched. Passing `DESIGN_CAPTURE_SCREENS` only when `screenFilter` is non-empty lets a caller re-shoot a single screen without re-running the whole set. The critical decision is the empty `catch`: Playwright exits **non-zero if any capture fails**, but a screen not yet built on mobile *should* fail to capture, so the error is logged `warn` and swallowed — those screens become `NOT_IMPLEMENTED` downstream rather than crashing the run.","code":"async function runCaptures(screenFilter?: string[]) {\n  // responsive.config.ts declares one Playwright project per viewport; the spec drives the capture\n  const configPath = path.join(baseDir, 'browser', 'responsive.config.ts');\n  const specPath = path.join(baseDir, 'browser', 'tests', 'design-capture.spec.ts');\n\n  // cd into the browser dir first so Playwright resolves its config, deps, and output paths from that root\n  let cmd = `cd \"${path.join(baseDir, 'browser')}\" && npx playwright test ` +\n            `\"${specPath}\" --config \"${configPath}\" --reporter=list`;\n  if (screenFilter && screenFilter.length > 0) {\n    // Scope the run to specific screens via an env var the spec reads — skips re-shooting the whole set\n    cmd = `DESIGN_CAPTURE_SCREENS=${screenFilter.join(',')} ${cmd}`;\n  }\n\n  try {\n    // 600s ceiling — a full sweep navigates and screenshots every screen at every viewport, which is slow\n    execSync(cmd, { timeout: 600000, encoding: 'utf-8' });\n  } catch (error: any) {\n    // A screen that isn't reachable yet is expected, not fatal —\n    // it just gets marked NOT_IMPLEMENTED further down the pipeline.\n    // Playwright exits non-zero when ANY capture fails, so we swallow it rather than abort the report\n    log(`Playwright exited with warnings: ${error.message?.slice(0, 200)}`, 'warn');\n  }\n}"},{"fn":"loadFigmaReferences()","explain":"Walks the static `FIGMA_SCREENS` map and, for each screen whose export **exists on disk**, copies it into the report working dir renamed from its Figma export name to `\u003cscreen.id>.png` — that rename is what lets `matchScreens` later pair reference to capture by **screen id** rather than by the designer's arbitrary filename. A screen whose export is **absent** is logged `warn` and simply never added to the returned `Map`, so downstream it renders a live capture with no reference beside it rather than throwing. The map is keyed by `screen.id`, the same key the capture filenames use, which keeps the join trivial.","code":"function loadFigmaReferences(): Map\u003cstring, string> {\n  const refs = new Map\u003cstring, string>();\n\n  for (const screen of FIGMA_SCREENS) {\n    // Each screen's reference PNG lives under the design source dir by its exported filename\n    const sourcePath = path.join(figmaSourceDir, screen.figmaFile);\n\n    if (fs.existsSync(sourcePath)) {\n      // Copy into the report dir renamed to \u003cscreen.id>.png so matchScreens pairs by id, not export name\n      const destPath = path.join(figmaDir, `${screen.id}.png`);\n      fs.copyFileSync(sourcePath, destPath);\n      refs.set(screen.id, destPath);\n    } else {\n      // No export on disk — drop the screen from the map; it'll show a live capture with nothing to diff\n      log(`Missing: ${screen.figmaFile} — skipping ${screen.id}`, 'warn');\n    }\n  }\n  return refs;\n}"},{"fn":"matchScreens()","explain":"For each screen it resolves the reference (falling back to `null` when the export was missing), then probes the captures dir for a `\u003cscreenId>-\u003cviewport>.png` at **every** viewport — presence on disk is the entire signal, there is deliberately **no pixel diffing** here, only capture-existence per device. That is the key design choice: a screen that renders on desktop but produced no phone PNG shows up as `captured: false` on the mobile viewports, which is exactly what a desktop-only feature looks like. `status` is left as the stub `'NOT_CAPTURED'` and `observations` empty — `analyzeGaps` owns the actual classification, so this step stays a pure presence probe.","code":"function matchScreens(screens: ScreenMapping[], figmaRefs: Map\u003cstring, string>,\n                       viewports: readonly string[]): ScreenComparison[] {\n  return screens.map(screen => {\n    // null when the export was missing above — a capture with no reference to compare against\n    const figmaPath = figmaRefs.get(screen.id) || null;\n\n    const captures = viewports.map(vp => {\n      // Capture filenames are \u003cscreenId>-\u003cviewport>.png; presence on disk IS the signal — no pixel diffing\n      const fullPath = path.join(capturesDir, `${screen.id}-${vp}.png`);\n      const captured = fs.existsSync(fullPath);\n      return { viewport: vp, screenshotPath: captured ? fullPath : null, captured };\n    });\n\n    // status stays NOT_CAPTURED until analyzeGaps classifies from the per-viewport captured flags\n    return { screen, figmaPath, captures, status: 'NOT_CAPTURED', observations: [] };\n  });\n}"},{"fn":"analyzeGaps()","explain":"Deterministic classification from three tallies — total captured, whether **desktop** captured, and how many **mobile** viewports captured — with the branches checked **top-down and mutually exclusive**, so their order encodes precedence. `capturedCount === 0` wins first (`NOT_IMPLEMENTED`, unreachable in this build); then all-viewports (`MATCH`); then the branch this whole agent exists for — **desktop present but zero mobile** → `PARTIAL` flagged `DESKTOP-ONLY`, which calls `addPerDeviceMissingReasons` to attach a human reason per missing device (buried in a swipeable row, desktop-sidebar-only, no mobile entry point). Everything else is a mixed `PARTIAL` with a `captured/total` note. No LLM and no thresholds: the same capture set grades identically every run.","code":"function analyzeGaps(comparisons: ScreenComparison[]) {\n  for (const comp of comparisons) {\n    // Three tallies drive everything: total captured, whether desktop captured, and how many mobile did\n    const capturedCount = comp.captures.filter(c => c.captured).length;\n    const total = comp.captures.length;\n    const desktopOk = comp.captures.find(c => c.viewport === 'desktop')?.captured ?? false;\n    const mobileOk = comp.captures.filter(c => c.viewport !== 'desktop' && c.captured).length;\n\n    // Branches are checked top-down and are mutually exclusive; order encodes precedence\n    if (capturedCount === 0) {\n      // Nothing captured anywhere → the screen isn't reachable in this build at all\n      comp.status = 'NOT_IMPLEMENTED';\n      comp.observations.push('Screen not reachable in current build — no screenshots captured');\n    } else if (capturedCount === total) {\n      comp.status = 'MATCH';\n      comp.observations.push(`Responsive: captured across all ${total} viewports`);\n    } else if (desktopOk && mobileOk === 0) {\n      // The signal this agent exists for: renders on desktop, on NO phone viewport → dead end for mobile\n      comp.status = 'PARTIAL';\n      comp.observations.push('DESKTOP-ONLY: Not available on any mobile viewport');\n      addPerDeviceMissingReasons(comp, comp.captures.filter(c => !c.captured).map(c => c.viewport));\n    } else {\n      // Captured on some-but-not-all viewports — partial coverage, note the fraction\n      comp.status = 'PARTIAL';\n      comp.observations.push(`Captured in ${capturedCount}/${total} viewports`);\n    }\n  }\n}"},{"fn":"buildReport()","explain":"Reduces the classified `ScreenComparison[]` into a single `ComparisonReport` — totals plus one count per status bucket. Note `captured` and `matching` are **not** the same metric: `captured` counts screens where **any** viewport landed a shot (`captures.some`), whereas `matching` counts only fully-`MATCH` screens, so a desktop-only `PARTIAL` still increments `captured` but not `matching`. The `timestamp` is emitted here so the JSON and its rendered `.md`/`.docx` siblings share one suffix and successive runs sit side by side rather than overwriting. `includeLandscape` is carried through so the renderer knows how many viewport columns to expect.","code":"function buildReport(comparisons: ScreenComparison[], includeLandscape = false): ComparisonReport {\n  return {\n    // ISO timestamp doubles as the report filename suffix downstream, keeping successive runs side by side\n    timestamp: new Date().toISOString(),\n    totalScreens: comparisons.length,\n    // \"captured\" = at least one viewport landed; distinct from MATCH, which requires ALL viewports\n    captured: comparisons.filter(c => c.captures.some(cap => cap.captured)).length,\n    matching: comparisons.filter(c => c.status === 'MATCH').length,\n    partial: comparisons.filter(c => c.status === 'PARTIAL').length,\n    notImplemented: comparisons.filter(c => c.status === 'NOT_IMPLEMENTED').length,\n    includeLandscape,\n    screens: comparisons,\n  };\n}"},{"fn":"generateMarkdown()","explain":"Builds the report line-by-line into a string array joined on newlines. It leads with the headline counts — `matching`, `partial`, `notImplemented` relabeled **Full Responsive / Partial / Not Reachable** — the numbers a reviewer scans first, then per screen emits a `### label — status` heading, the side-by-side image table (Figma reference next to each viewport's capture), and every `observation` as a bullet, including the per-device missing reasons `analyzeGaps` attached. Because the observations were populated upstream, this renderer stays pure formatting — no re-classification here. With `--word` the same structure is emitted as a `.docx` with the PNGs embedded rather than linked.","code":"function generateMarkdown(report: ComparisonReport): string {\n  const lines: string[] = [];\n  lines.push('# Mobile Responsiveness Validation Report');\n  lines.push(`**Total Screens Tested:** ${report.totalScreens}`);\n  // Summary line collapses the three status buckets into the headline counts a reviewer scans first\n  lines.push(`**Full Responsive:** ${report.matching}  **Partial:** ${report.partial}  ` +\n             `**Not Reachable:** ${report.notImplemented}`);\n\n  for (const comp of report.screens) {\n    // Per-screen heading carries the label and its status verdict so the section is skimmable\n    lines.push(`### ${comp.screen.label} — ${comp.status}`);\n    // ... side-by-side image table: design picture | desktop | phone A | phone B\n    // Each observation (incl. per-device missing reasons from analyzeGaps) becomes a bullet\n    for (const obs of comp.observations) lines.push(`- ${obs}`);\n  }\n  return lines.join('\\n');\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Settings screen renders on desktop only</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Figma export of a Settings dialog, plus the live app to capture against.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Classified `PARTIAL` (DESKTOP-ONLY): desktop capture present, no mobile capture at any phone viewport. Per-device reason: no Settings entry point in the mobile nav.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Card unreachable in a horizontal-scroll row</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Figma export for a &#39;Summaries&#39; card sitting fourth in a swipeable card row.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Classified `NOT_IMPLEMENTED` on mobile — the capture navigation never scrolled to the card. Reason attached: buried in a horizontally-scrolling row.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Home screen matches at every viewport</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Figma export of the home screen, plus captures from desktop and three phone viewports.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Classified `MATCH` — captured at all viewports, rendered as a side-by-side row showing the greeting, chat input, and menu button present on each.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>The target app running at a reachable URL (dev or QA) — the agent captures it live, not from a mockup.</li><li>A local dir of Figma-exported PNGs, one per mapped screen, filenames matching the screen ids.</li><li>~10-15 min on first run: <code>npx playwright install</code> downloads the Chromium and WebKit engines before any capture.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed by Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed once per new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install dependencies — once for the agent, once for the Playwright package it drives.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+cd Playwright
+npm install
+npx playwright install   # downloads the actual Chromium + WebKit browser engines</code></pre>
+        <div class="rb__why"><span>Why</span> The agent lives in the project root; the browser-driving layer lives in a sibling <code>Playwright</code> dir with its own deps. <code>npx playwright install</code> fetches the Chromium + WebKit engines — they aren&#39;t bundled with the npm package.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads deps plus the browser engines — the slow part (5-10 min).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless a dependency or browser version changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target URL and drop in the Figma exports.</div>
+        <pre class="rb__cmd"><code>export APP_URL=https://your-app-url/home
+
+# copy the designer&#39;s exported PNGs into inputs/mobile/pages/,
+# named to match each screen the agent knows about</code></pre>
+        <div class="rb__why"><span>Why</span> <code>APP_URL</code> is the live app the capture spec navigates; unset, it falls back to a built-in default that won&#39;t be your app. The PNGs are the reference half of each diff — a screen with no export renders its live capture with nothing to compare against.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run it.</div>
+        <pre class="rb__cmd"><code>npm run design:compare -- --word</code></pre>
+        <div class="rb__why"><span>Why</span> The full run: captures every mapped screen at every viewport (desktop + phones), pairs each with its Figma reference, classifies the gap, and writes the report. <code>--word</code> additionally emits a <code>.docx</code> with images embedded side by side.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Navigates and captures every screen at every viewport from scratch — the ~10 min part.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> <code>--report-only</code> rebuilds the report from on-disk captures without re-capturing; <code>--capture-only</code> does the inverse (refresh captures, skip the report).</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the generated report.</div>
+        <pre class="rb__cmd"><code>open outputs/mobile/reports/design-comparison-&lt;timestamp&gt;.md</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.md</code> is the side-by-side diff — Figma reference next to the live capture at each viewport, each screen labeled <code>MATCH</code>, <code>PARTIAL</code>, or <code>NOT_IMPLEMENTED</code>.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>APP_URL (environment variable)</dt><dd>URL of the running app to capture.</dd><dt>inputs/mobile/pages/*.png</dt><dd>Figma-exported reference PNGs, one per mapped screen, filenames matching screen ids.</dd><dt>--screens &lt;list&gt;, --landscape, --capture-only, --report-only, --word</dt><dd>Flags to filter screens, add landscape viewports, split capture/report phases, or emit a <code>.docx</code>.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>design-comparison-&lt;timestamp&gt;.json / .md</dt><dd>Machine-readable and rendered report — per-screen status and observations.</dd><dt>design-comparison-&lt;timestamp&gt;.docx (optional)</dt><dd><code>.docx</code> with the Figma reference and every viewport&#39;s capture embedded side by side; emitted only with <code>--word</code>.</dd><dt>outputs/mobile/captures/*.png</dt><dd>Raw captures, one per screen per viewport — reused by <code>--report-only</code> on a later run.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> <code>--report-only</code> skips capture entirely and rebuilds the report from whatever is in the captures dir — useful when only the Figma references changed. A flagless run always re-captures, since there&#39;s no content-hash/fingerprint of the live app the way document-based agents fingerprint their inputs.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Wire the full run into a nightly or pre-release CI job so every merge gets a fresh diff. Treat any screen that flips MATCH → PARTIAL or NOT_IMPLEMENTED as a regression to triage before ship.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>3-4 min screen recording: point the agent at the live app and the Figma exports, and watch the side-by-side diff report build.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Capturing every screen at every viewport</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, unless invoked with <code>--report-only</code> to rebuild from existing captures.</dd>
+          <dt>Takes in</dt><dd>The static screen map plus per-screen navigation.</dd>
+          <dt>Shows out</dt><dd>Playwright screenshots at each viewport written to the local captures dir — no cloud device lab.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Resolving Figma references</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Alongside the capture step.</dd>
+          <dt>Takes in</dt><dd>Exported Figma PNGs in the local design source dir.</dd>
+          <dt>Shows out</dt><dd>Each reference copied into the report working dir, keyed by screen id for pairing.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Pairing capture to reference per viewport</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After both captures and references are resolved.</dd>
+          <dt>Takes in</dt><dd>Every capture filename plus the copied reference map.</dd>
+          <dt>Shows out</dt><dd>A per-screen match record listing which viewports produced a capture.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Classifying the gap</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Immediately after pairing.</dd>
+          <dt>Takes in</dt><dd>Each screen&#39;s per-viewport match record.</dd>
+          <dt>Shows out</dt><dd>A <code>MATCH</code> / <code>PARTIAL</code> / <code>NOT_IMPLEMENTED</code> label plus a per-device reason for each missing viewport (e.g. buried in a swipeable row, desktop-sidebar-only).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Emitting the report</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, after all screens are classified.</dd>
+          <dt>Takes in</dt><dd>The full classified <code>ScreenComparison[]</code>.</dd>
+          <dt>Shows out</dt><dd>A JSON report and a Markdown report, plus — with <code>--word</code> — a <code>.docx</code> with reference and every viewport&#39;s capture embedded side by side.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-tracker-sync.html">← The Tracker Sync</a>
+      <a href="the-screen-size-checker.html">The Screen-Size Checker →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

@@ -1,0 +1,200 @@
+{
+  "slug": "the-requirements-sharpener",
+  "plate": 10,
+  "name": "The Requirements Sharpener",
+  "techName": "story-ac-refinement-agent.ts",
+  "category": "plan",
+  "oneLiner": "Rewrites a vague requirement into precise, testable Given/When/Then criteria grounded in the actual design screenshots — additively, never overwriting the original.",
+  "lead": "Requirements are usually written before the design exists, so they stay fuzzy — 'the user can submit the form' with no real button labels or error messages. This agent feeds the requirement plus the finished design screenshots to a multimodal LLM and gets back sharp criteria that quote the actual on-screen text and cite the screen each came from. The original acceptance criteria are read once and never written back — the sharpened set is stored alongside.",
+  "chore": "Making a requirement like 'show an error if the input is invalid' testable means cross-referencing it against the design mockups by hand: the exact error wording, the precise button label, which states are disabled, what the empty screen reads — then rewriting each point. It's meticulous, and anything missed becomes a gap a tester hits later.",
+  "instead": "The agent pulls the requirement, the prior feature briefing, and the exported design package — including the screenshots as base64 image data — and sends them to a multimodal Gemini model that reads the pixels, not just descriptions. It returns Given/When/Then criteria that quote exact labels and messages and cite the source screen, added alongside the untouched original.",
+  "whyItMatters": "Vague requirements produce vague tests that miss real defects. Grounding every criterion in the actual design closes that gap before the first test is authored.",
+  "howItWorks": [
+    {
+      "step": "Fetches the requirement — title, description, original acceptance criteria — live from ADO.",
+      "fn": "fetchStory()",
+      "explain": "A thin read-and-normalize over the raw work item. Both rich-text fields — `System.Description` and `Microsoft.VSTS.Common.AcceptanceCriteria` — are HTML in ADO, so `cleanHtml` flattens them to the plain text a language model can actually reason over, and each field is `|| ''`-guarded so a missing value becomes an empty string rather than `undefined`. This `acceptanceCriteria` is the **original**, captured once here and never written back — the whole agent is additive, storing sharpened criteria alongside it. `parentId` is stringified for uniform handling (empty when there's no parent) and `adoUrl` is retained so downstream output can deep-link each criterion back to its source ticket.",
+      "code": "private async fetchStory(storyId) {\n  const f = await this.fetchWorkItemFields(storyId);\n  return {\n    id: storyId,\n    title: f['System.Title'] || '',\n    state: f['System.State'] || '',\n    description: cleanHtml(f['System.Description'] || ''), // ADO rich-text fields are HTML; cleanHtml flattens to plain text the model can read\n    acceptanceCriteria: cleanHtml(f['Microsoft.VSTS.Common.AcceptanceCriteria'] || ''), // this is the ORIGINAL AC, read once and never written back — the agent is additive\n    parentId: String(f['System.Parent'] || ''), // stringified for consistent downstream use; empty string when the story has no parent\n    adoUrl: `https://dev.azure.com/my-org/MyProject/_workitems/edit/${storyId}`, // deep link kept so every refined criterion can cite its source ticket\n  };\n}"
+    },
+    {
+      "step": "Loads the prior feature briefing for this requirement, if present, to reuse its business rules and user flows.",
+      "fn": "loadStoryIntelligence()",
+      "explain": "Best-effort enrichment from a prior Test-Scout briefing — its absence must not break the run, so a missing `intelPath` returns a fully-formed `{ found: false, ... }` shape instead of throwing. When a briefing exists, `businessRules` is defensively normalized because entries arrive in mixed shapes: the `.map` coerces a `{description}`, a `{name}`, or a bare string all down to text, `.filter(r => r && r.length > 10)` discards empties and trivially short fragments, and `.slice(0, 10)` caps the count. The caps are prompt-budget controls — 10 rules and an 800-char `summary` — deliberately small so this context grounds the model without crowding out the design screenshots, which are the higher-signal input for this agent.",
+      "code": "function loadStoryIntelligence(storyId) {\n  const intelPath = findIntelligenceFile(storyId);\n  if (!intelPath) return { found: false, businessRules: [], userFlowSteps: [] }; // no prior briefing found — return a valid empty shape (found:false) rather than throwing\n\n  const raw = JSON.parse(fs.readFileSync(intelPath, 'utf-8'));\n  const rules = (raw.businessRules || [])\n    .map(r => r.description || r.name || (typeof r === 'string' ? r : '')) // rules arrive in mixed shapes ({description}, {name}, or bare string) — normalize each to text\n    .filter(r => r && r.length > 10) // drop empties and trivially short fragments that add no signal\n    .slice(0, 10); // cap at 10 rules to bound the prompt size fed to the multimodal model\n\n  return {\n    storyTitle: raw.storyTitle || raw.title || '',\n    summary: (raw.summary || '').slice(0, 800), // summary trimmed to 800 chars — enough context without crowding out the design images\n    businessRules: rules,\n    found: true,\n    intelPath,\n  };\n}"
+    },
+    {
+      "step": "Loads the design package — frame-structure JSON, the on-screen text listing, and the screenshots themselves.",
+      "fn": "loadFigmaContext()",
+      "explain": "Assembles the multimodal payload with everything guarded and bounded. The text artifacts — frame-structure JSON and the on-screen text listing — are each `existsSync`-gated and hard-capped (`slice(0, 20000)` / `slice(0, 15000)`) so a large export can't blow the token budget, degrading to `''` when absent. Screenshots are loaded only when `includeImages` is set (the `--no-images` flag clears it) and the folder exists; the `.sort()` before `.slice(0, MAX_DESIGN_IMAGES)` makes the selection deterministic — the same 8 files every run, in filename order — rather than filesystem-arbitrary. Each image is `base64`-encoded for inline transport in the Gemini request, and `imageCount` is returned so the final result can honestly report how many screens actually grounded the criteria.",
+      "code": "function loadFigmaContext(figmaDir, includeImages) {\n  const framesJsonText = fs.existsSync(framesPath)\n    ? fs.readFileSync(framesPath, 'utf-8').slice(0, 20000) : ''; // 20k-char cap on the frame JSON — a token-budget guard; absent file => empty string, not a throw\n  const textContentMd = fs.existsSync(textPath)\n    ? fs.readFileSync(textPath, 'utf-8').slice(0, 15000) : ''; // on-screen text listing capped at 15k chars\n\n  const images = [];\n  if (includeImages && fs.existsSync(screensDir)) { // images are opt-in (--no-images clears includeImages) and skipped if the screens folder is missing\n    const pngs = fs.readdirSync(screensDir)\n      .filter(f => /\\.(png|jpg|jpeg)$/i.test(f)).sort().slice(0, MAX_DESIGN_IMAGES);\n    for (const filename of pngs) {\n      const buf = fs.readFileSync(path.join(screensDir, filename));\n      images.push({ filename, mimeType: 'image/png', base64: buf.toString('base64') }); // base64-encode each screenshot for inline transport in the multimodal request\n    }\n  }\n  return { framesJsonText, textContentMd, images, imageCount: images.length }; // imageCount is recorded so the result can report how many screens actually grounded the criteria\n}"
+    },
+    {
+      "step": "Sends the requirement, the briefing, and the design screenshots to a multimodal LLM in one request, asking for sharper criteria.",
+      "fn": "callGeminiMultimodal()",
+      "explain": "Hand-builds the Gemini `contents` payload as a single interleaved `parts` array so the model reasons over the real screens, not prose about them. Text goes first, then each image is pushed as an `inlineData` part immediately followed by a `[Design image attached above: <filename>]` text marker — that pairing is what lets the model cite *which* screen a criterion came from, the whole point of this agent. `generationConfig` uses `?? 8192`/`?? 0.2` defaults, the low temperature chosen so the model quotes exact on-screen labels rather than paraphrasing them. Extraction is defensively deep-chained — `data.candidates?.[0]?.content?.parts?.[0]?.text || ''` — so a safety-blocked or empty response returns an empty string the caller can handle, instead of throwing on an undefined path.",
+      "code": "async function callGeminiMultimodal(systemText, userText, images, options) {\n  const parts = [{ text: systemText + '\\n\\n' + userText }];\n\n  for (const img of images) {\n    parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } }); // each screenshot rides inline as an inlineData part — Gemini reads the pixels, not a description\n    parts.push({ text: `[Design image attached above: ${img.filename}]` }); // a text marker after each image so the model can name which screen a criterion came from\n  }\n\n  const response = await fetch(GEMINI_URL, {\n    method: 'POST',\n    body: JSON.stringify({\n      contents: [{ parts }],\n      generationConfig: { maxOutputTokens: options?.maxTokens ?? 8192, temperature: options?.temperature ?? 0.2 }, // temp 0.2: criteria must quote exact on-screen text, not paraphrase; ?? sets the defaults\n    }),\n  });\n\n  const data = await response.json();\n  return { answer: data.candidates?.[0]?.content?.parts?.[0]?.text || '', model: 'gemini-2.0-flash' }; // deep optional-chaining: a blocked/empty candidate yields '' instead of a crash\n}"
+    },
+    {
+      "step": "Parses back Given/When/Then criteria that quote exact labels and cite the source screen — stored alongside the untouched original.",
+      "fn": "execute()",
+      "explain": "Assembles the per-story result record, and its ordering encodes the agent's core contract: `originalAC: story.acceptanceCriteria` is stored **verbatim, never overwritten**, and `refinedAC: parsed.refinedAC` sits beside it as an additive layer — the sharpened criteria never replace the source. Every field is parsed off `parseLLMJson(llm.answer)` rather than raw `JSON.parse`, and `parsed.summary || ''` defaults the optional summary so the record shape is uniform whether or not the model returned one. The record also carries provenance — `screenshotsUsed: figma.imageCount`, `intelligenceUsed`, `llmModel`, `llmTimeMs` — so each output is auditable: you can see exactly how many screens and which model produced these criteria, and `error: ''` marks a clean run in the results array.",
+      "code": "const parsed = parseLLMJson(llm.answer); // tolerant parse of the model JSON before we trust any field off it\nresults.push({\n  storyId, title: story.title, state: story.state, adoUrl: story.adoUrl,\n  feature,\n  originalAC: story.acceptanceCriteria,   // preserved verbatim, never overwritten\n  refinedAC: parsed.refinedAC,             // additive — cites design + intelligence sources\n  summary: parsed.summary || '', // summary is optional in the response — default to empty so the record shape stays stable\n  llmModel: llm.model, llmTimeMs: llm.timeMs,\n  screenshotsUsed: figma.imageCount, // provenance: how many screens actually informed these criteria\n  intelligenceUsed: true, error: '',\n});"
+    },
+    {
+      "step": "Serializes the result to JSON, Markdown, a Word document, and an import-ready xlsx with one row per criterion.",
+      "fn": "buildExcel()",
+      "explain": "Flattens the nested result set into the exact grain ADO's import expects: the outer loop walks `results`, the inner loop walks each story's `refinedAC`, and `ws.addRow` emits **one row per criterion** — not per story — so a story with five sharpened criteria becomes five importable rows. The column set (`storyId`, `acId`, Given/When/Then, `designs`) mirrors an ADO paste-back layout, and `designs: (ac.designReferences || []).join('\\n')` collapses each criterion's source-screen citations into one newline-separated cell, with the `|| []` guard so a criterion that cited nothing still writes cleanly. The file is timestamped like every other output, so each run is a distinct snapshot ready to paste straight back into the tool.",
+      "code": "private async buildExcel(results, ts) {\n  const ws = wb.addWorksheet('Refined AC');\n  ws.columns = [\n    { header: 'Story ID', key: 'storyId', width: 10 },\n    { header: 'AC #', key: 'acId', width: 8 },\n    { header: 'Given', key: 'given', width: 40 },\n    { header: 'When', key: 'when', width: 40 },\n    { header: 'Then', key: 'then', width: 40 },\n    { header: 'Design Refs', key: 'designs', width: 40 }, // the citations — which screens each criterion was grounded in\n  ];\n\n  for (const r of results) { // flatten: nested refinedAC arrays become one worksheet row PER criterion\n    for (const ac of r.refinedAC) { // one row per AC — the grain ADO import expects, not one row per story\n      ws.addRow({ storyId: r.storyId, acId: ac.id, given: ac.given, when: ac.when,\n        then: ac.then, designs: (ac.designReferences || []).join('\\n') });\n    }\n  }\n\n  const xlsxPath = path.join(this.outputDir, `StoryAC_Refinement_${ts}.xlsx`);\n  await wb.xlsx.writeFile(xlsxPath); // write the workbook; the paste-back-into-ADO deliverable\n  return xlsxPath;\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "A fuzzy 'submit the form' requirement",
+      "input": "A requirement reading 'The user can submit feedback', plus a design folder with the feedback screen's empty, error, and success states.",
+      "output": "Sharpened criteria such as 'Given the feedback box is empty, When the user taps Send, Then the Send button stays disabled and the hint reads \"Please enter feedback to continue\"' — quoting the exact text from `02_error.png`, appended below the untouched original."
+    },
+    {
+      "caption": "A character-limit rule from the briefing",
+      "input": "A requirement with no length rule, but a prior briefing noting 'feedback is capped at 500 characters'.",
+      "output": "A criterion fusing design and briefing: 'Given the user has typed 500 characters, When they type one more, Then input is blocked and a counter shows 500/500' — citing both the design screen and the briefing's business rule."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Fetches the story",
+      "whenRuns": "First, when the agent starts on a story.",
+      "input": "A story ID.",
+      "output": "Its title, description, and original acceptance criteria, via the ADO REST API."
+    },
+    {
+      "heading": "Checks for a prior briefing",
+      "whenRuns": "Next, per story.",
+      "input": "The story ID.",
+      "output": "Any test-intelligence summary — business rules, user-flow steps — found in prior feature folders; proceeds without one under `--allow-no-intelligence`."
+    },
+    {
+      "heading": "Loads the design package",
+      "whenRuns": "Once, for the whole batch.",
+      "input": "A folder of exported design files.",
+      "output": "The frame structure, every on-screen text string, and up to 8 screenshots as base64 image data."
+    },
+    {
+      "heading": "Queries the multimodal LLM",
+      "whenRuns": "Once per story.",
+      "input": "The story, the briefing summary, and the design text and screenshots in one request.",
+      "output": "Given/When/Then criteria quoting exact button labels and error text and citing the source screen, via Gemini 2.0 Flash reading the images directly."
+    },
+    {
+      "heading": "Keeps the original untouched",
+      "whenRuns": "When persisting each story's result.",
+      "input": "The model's newly generated criteria.",
+      "output": "The sharpened criteria stored alongside — never replacing — the story's `originalAC`."
+    },
+    {
+      "heading": "Writes the outputs",
+      "whenRuns": "Once, at end of run.",
+      "input": "Every story's refined criteria.",
+      "output": "JSON, Markdown, a one-row-per-criterion xlsx ready to import into ADO, and a Word document with `--word`."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Read access to Azure DevOps and a **personal access token** (`ADO_PAT`).",
+      "A Google Gemini API key — this agent needs a multimodal model, since it sends the design screenshots directly.",
+      "A folder of exported design files (frame-structure JSON, a text listing, and the screenshots).",
+      "Ideally a prior feature briefing from the Test Scout — the agent runs without one under `--allow-no-intelligence`."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime for the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program executed under Node. One-time install per machine.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone the code and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` resolves the agent's dependencies — the ADO REST client, the xlsx/docx writers, and the Gemini client — into `node_modules`.",
+        "firstRun": "Downloads everything (a minute or two).",
+        "rerun": "No-op unless the dependency set changed."
+      },
+      {
+        "label": "Set the environment variables.",
+        "cmd": "export ADO_PAT=your-access-token\nexport GOOGLE_API_KEY=your-gemini-key",
+        "why": "Read at startup — the PAT to fetch the story, the Gemini key for the multimodal call that reads the requirement and the design screenshots together and writes sharper criteria."
+      },
+      {
+        "label": "Point it at the requirement and its design folder — dry-run first.",
+        "cmd": "npx ts-node agents/story-ac-refinement-agent.ts \\\n  --story-ids 6001 \\\n  --figma-dir ./designs/feedback-screen \\\n  --dry-run",
+        "why": "`--story-ids` is the requirement ticket number(s); `--figma-dir` is the exported design folder. `--dry-run` fetches everything and confirms the story and designs resolved, without an LLM call.",
+        "firstRun": "Fetches the story, checks for a prior briefing and usable design files, and skips the LLM step."
+      },
+      {
+        "label": "Run for real.",
+        "cmd": "npx ts-node agents/story-ac-refinement-agent.ts \\\n  --story-ids 6001 \\\n  --figma-dir ./designs/feedback-screen \\\n  --word",
+        "why": "Drop `--dry-run`. Sends the requirement, the prior briefing (if found), and the screenshots to the multimodal model and gets back sharper Given/When/Then criteria. `--word` also writes a docx.",
+        "firstRun": "Generates the sharpened criteria and writes every output.",
+        "rerun": "No change-tracking — recomputes fresh from the current requirement text and designs; re-run whenever the design updates."
+      },
+      {
+        "label": "If there's no prior briefing, allow the agent to proceed without one.",
+        "cmd": "npx ts-node agents/story-ac-refinement-agent.ts \\\n  --story-ids 6001 \\\n  --figma-dir ./designs/feedback-screen \\\n  --allow-no-intelligence",
+        "why": "By default the agent requires a prior feature briefing (from the Test Scout) for its business rules. This flag proceeds on the requirement text and designs alone."
+      },
+      {
+        "label": "Open the sharpened criteria.",
+        "cmd": "open ./outputs/reports/story-ac-refinement/",
+        "why": "Outputs land as JSON, Markdown, an import-ready xlsx (one row per criterion), and — with --word — a docx. The original requirement wording is always preserved alongside, never overwritten."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--story-ids <ids>",
+        "desc": "Comma-separated requirement ticket number(s) to sharpen."
+      },
+      {
+        "name": "--figma-dir <path>",
+        "desc": "A folder of exported design files — frame-structure JSON, on-screen text listing, and screenshots."
+      },
+      {
+        "name": "--word / --dry-run / --no-images / --allow-no-intelligence",
+        "desc": "--word adds a docx; --dry-run skips the LLM call; --no-images sends text only (no screenshots); --allow-no-intelligence proceeds without a prior briefing."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "StoryAC_Refinement_<timestamp>.json / .md",
+        "desc": "Every requirement's original criteria alongside the sharpened Given/When/Then criteria, each citing the source screen and label."
+      },
+      {
+        "name": "StoryAC_Refinement_<timestamp>.xlsx",
+        "desc": "One row per sharpened criterion — Story ID, Given, When, Then, Design Refs — ready to paste back into ADO."
+      },
+      {
+        "name": "StoryAC_Refinement_<timestamp>.docx",
+        "desc": "A shareable Word document (only with --word)."
+      }
+    ],
+    "rerun": "No change-tracking — every run re-reads the requirement and design folder fresh. Re-run whenever the design changes (a new screenshot, an updated label) or the requirement's wording is edited; the original text is never overwritten, so nothing is lost by re-running.",
+    "integrate": "Feed it the briefing from the **Test Scout** for richer, rule-aware criteria. Its sharpened output is the ideal input to the **Test-Plan Author** — precise Given/When/Then criteria yield far more accurate drafted test cases than a vague one-line requirement."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: pass a vague requirement and its design folder, and watch precise, screenshot-grounded criteria come back.",
+    "script": [
+      "Open a terminal; have the design screenshots open in a viewer for comparison.",
+      "Say: 'This agent looks at the actual screens and rewrites a vague requirement into something exact.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's done); explain it grabs the helper libraries.",
+      "Show the `export` lines including the AI key; say this is the only client-specific part.",
+      "Run the command with `--dry-run`; show it confirming the story and the design folder were both found.",
+      "Re-run without `--dry-run`, adding `--word`; narrate as it sends the text and screenshots together to the AI.",
+      "Open the Markdown output; show the original requirement wording untouched at the top.",
+      "Scroll to the sharpened criteria; read one that quotes an exact button label and cites the screen it came from.",
+      "Close: 'Nothing was guessed — every sharpened line points back to a real pixel on a real screen.'"
+    ]
+  }
+}

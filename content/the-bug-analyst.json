@@ -1,0 +1,178 @@
+{
+  "slug": "the-bug-analyst",
+  "plate": 2,
+  "name": "The Bug Analyst",
+  "techName": "bug-intelligence-agent.ts",
+  "category": "find",
+  "oneLiner": "Rolls every bug under a feature into a computed status report — fix rate, time-to-fix, hotspots, per-assignee load — with zero manual tallying.",
+  "lead": "Walks a feature (or an explicit story list) down to its child Bug work items, enriches each with a computed days-to-fix, aggregates the whole set in memory, and emits a shareable report set: JSON, Markdown, a multi-sheet Excel workbook, and optionally Word. Replaces the afternoon-in-spreadsheets with a single deterministic pass.",
+  "chore": "Briefing a lead means opening the tracker and hand-tallying: open vs fixed, severity mix, which area has the most, who's carrying the load, mean time-to-fix — then pasting it into a doc. Hours of work, stale the next day, and arithmetic errors creep in by hand.",
+  "instead": "An instant, reproducible report — totals by severity/state, fix rate, average days-to-fix, the hotspot story, per-assignee workload, plus generated insights and recommendations — as Markdown, Excel, JSON, and optionally Word. Every number is computed from live tracker data, so it's right every run.",
+  "whyItMatters": "Go/no-go calls ride on these numbers. Getting them fast and correct is the difference between a confident ship and a nasty surprise — and computed beats hand-tallied every time.",
+  "howItWorks": [
+    {
+      "step": "Given a feature or story list, walks each story's hierarchy and collects its child Bug work items.",
+      "fn": "gatherBugs()",
+      "explain": "The hierarchy walk that feeds everything downstream. For each `storyId` it fetches the work item **with its relations** (a normal fetch omits them), captions it (falling back to `Story #<id>` when the title is blank), then pulls only the **outbound** `Hierarchy-Forward` links via `extractRelationIds` — that direction means *children*, so a bug's own parent link is never mistaken for a child. Empty child sets `continue` early to skip a pointless batch call, and `getWorkItemsBatch` requests a **fixed field projection** (not the whole work item) in one round-trip per story, keeping ADO calls down. The `child.fields?.['System.WorkItemType'] === 'Bug'` guard drops sibling Tasks/Test-Cases so only Bugs are enriched.",
+      "code": "private async gatherBugs(parentIds: number[]) {\n  const allBugs: EnrichedBug[] = [];\n  const storyTitles = new Map<number, string>();\n\n  for (const storyId of parentIds) {\n    // Fetch WITH relations — a plain getWorkItem omits the link graph we need\n    const wi = await this.client.getWorkItemWithRelations(storyId);\n    // Blank titles happen on partially-created items; keep a usable caption\n    const storyTitle = wi.fields?.['System.Title'] || `Story #${storyId}`;\n    storyTitles.set(storyId, storyTitle);\n\n    // Hierarchy-Forward = OUTBOUND links = children (Reverse would be the parent)\n    const childIds = this.client.extractRelationIds(wi.relations || [], 'System.LinkTypes.Hierarchy-Forward');\n    if (childIds.length === 0) continue; // no children — skip the batch round-trip\n\n    // One batched call per story, projecting ONLY the fields the report reads\n    const children = await this.client.getWorkItemsBatch(childIds, [\n      'System.Id', 'System.Title', 'System.WorkItemType', 'System.State',\n      'Microsoft.VSTS.Common.Severity', 'Microsoft.VSTS.Common.Priority',\n      'System.AssignedTo', 'System.CreatedDate', 'Microsoft.VSTS.Common.ResolvedDate',\n    ]);\n\n    for (const child of children) {\n      // Children include Tasks/Test-Cases too — keep only Bugs\n      if (child.fields?.['System.WorkItemType'] === 'Bug') {\n        allBugs.push(this.enrichBug(child, storyId, storyTitle));\n      }\n    }\n  }\n  return { bugs: allBugs, storyTitles };\n}"
+    },
+    {
+      "step": "Normalizes each raw work item into a typed `EnrichedBug` with a computed days-to-fix.",
+      "fn": "enrichBug()",
+      "explain": "The normalization boundary — every downstream aggregate reads `EnrichedBug`, never raw ADO JSON. `daysToFix` is derived only when **both** `resolvedDate` and `createdDate` are present; the ms delta is converted to days (`1000*60*60*24`), `Math.round(x*10)/10` snaps it to **0.1-day** resolution, and `Math.max(0, …)` clamps negatives — a real defense, since ADO's `ResolvedDate` can predate `CreatedDate` after a bug is edited or re-imported, which would otherwise poison the mean. Unresolved bugs deliberately keep `daysToFix = null` (not `0`) so the aggregator can **exclude** them rather than average in a fake zero. The `raw.id ?? f['System.Id'] ?? 0` chain and every `|| ''` / `|| 'Unspecified'` fallback guarantee a fully-populated typed record even when ADO omits a field, and `extractDisplayName` collapses the `AssignedTo` identity object down to a plain name string.",
+      "code": "private enrichBug(raw: any, parentStoryId: number, parentStoryTitle: string): EnrichedBug {\n  const f = raw.fields || {};\n  const createdDate = f['System.CreatedDate'] || '';\n  const resolvedDate = f['Microsoft.VSTS.Common.ResolvedDate'] || null; // null while still open\n\n  let daysToFix: number | null = null; // stays null for unresolved bugs — NOT 0\n  if (resolvedDate && createdDate) {   // need both endpoints to compute a span\n    const diff = new Date(resolvedDate).getTime() - new Date(createdDate).getTime();\n    // ms -> days, rounded to 0.1; clamp >= 0 because ADO dates can go backwards after edits\n    daysToFix = Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24) * 10) / 10);\n  }\n\n  return {\n    id: raw.id ?? f['System.Id'] ?? 0, // id lives at top level OR in fields depending on the API\n    title: f['System.Title'] || '',\n    state: f['System.State'] || 'Unknown',\n    severity: f['Microsoft.VSTS.Common.Severity'] || 'Unspecified',\n    assignedTo: this.client.extractDisplayName(f['System.AssignedTo']), // identity object -> plain name\n    createdDate, resolvedDate, daysToFix,\n    parentStoryId, parentStoryTitle,\n    // ... plus description, repro steps and tags\n  } as EnrichedBug;\n}"
+    },
+    {
+      "step": "Single-pass aggregation: totals by severity/state, fix rate, mean days-to-fix, per-assignee workload.",
+      "fn": "buildReport()",
+      "explain": "The single-pass aggregator — one `for` loop over `bugs` buckets everyone into `assigneeMap`, with `bug.assignedTo || 'Unassigned'` so null-assignee bugs still count somewhere instead of vanishing. Note that `FIXED_STATES` (`Resolved`/`Closed`) and `OPEN_STATES` (`New`/`Active`) are **not** exhaustive — a bug in a custom state like `Removed` increments neither counter, which is why `open + fixed` can be less than `total` and the numbers stay honest rather than force-fitting every state. `fixRate` divides `fixedBugs` by the **full** `bugs.length` (with a `> 0` guard against divide-by-zero on an empty feature), while `avgDaysToFix` first filters to `daysToFix !== null` so unresolved bugs never drag the mean toward zero — an all-open feature yields `null`, not `0`, again snapped to 0.1-day precision. Every metric comes from this one in-memory sweep — no second ADO query.",
+      "code": "private buildReport(bugs: EnrichedBug[], storyTitles: Map<number, string>, input: BugIntelInput) {\n  const FIXED_STATES = ['Resolved', 'Closed'];\n  const OPEN_STATES = ['New', 'Active']; // note: not exhaustive — custom states count as neither\n  const assigneeMap = new Map<string, { total: number; open: number; fixed: number }>();\n\n  for (const bug of bugs) {\n    const aName = bug.assignedTo || 'Unassigned'; // keep null-assignee bugs in the tally\n    if (!assigneeMap.has(aName)) assigneeMap.set(aName, { total: 0, open: 0, fixed: 0 });\n    const a = assigneeMap.get(aName)!;\n    a.total++;\n    if (FIXED_STATES.includes(bug.state)) a.fixed++;\n    if (OPEN_STATES.includes(bug.state)) a.open++;\n  }\n\n  const fixedBugs = bugs.filter(b => FIXED_STATES.includes(b.state)).length;\n  const fixRate = bugs.length > 0 ? fixedBugs / bugs.length : 0; // guard empty feature\n\n  // Only resolved bugs have a daysToFix — exclude nulls so open bugs don't skew the mean to 0\n  const daysArr = bugs.filter(b => b.daysToFix !== null).map(b => b.daysToFix!);\n  const avgDaysToFix = daysArr.length > 0\n    ? Math.round((daysArr.reduce((a, b) => a + b, 0) / daysArr.length) * 10) / 10 // 0.1-day precision\n    : null; // no resolved bugs yet -> null, not 0\n\n  // ... plus counts by severity, priority, and per-story breakdowns\n}"
+    },
+    {
+      "step": "Emits threshold-triggered insight strings — hotspot story, sub-50% fix rate, an assignee with ≥ 3 open bugs.",
+      "fn": "generateInsights()",
+      "explain": "Deterministic, threshold-fired commentary — no LLM, so the same stats always produce the same lines. It relies on `perStory` already being **sorted descending by bug count**, so `perStory[0]` is by definition the hotspot; the `hotspot.bugCount > 0` guard suppresses the line on a clean feature. The fix-rate warning is gated on `< 0.5` **and** `totalBugs >= 3` together — the minimum-sample guard stops a single unfixed bug (a 0% rate over one item) from reading as a systemic problem. For load, `perAssignee.find(a => a.openBugs > 0)` takes the **first** entry with open work (the list is pre-sorted, so that's the most-loaded person), and the `>= 3` cutoff means only a genuine pile-up surfaces. Each line is pushed conditionally, so `insights` can legitimately come back empty — silence means nothing crossed a threshold.",
+      "code": "private generateInsights(summary, perStory, perAssignee): string[] {\n  const insights: string[] = [];\n\n  // Hotspot story — perStory is pre-sorted desc by bug count, so [0] is the worst offender\n  const hotspot = perStory[0];\n  if (hotspot && hotspot.bugCount > 0) { // suppress on a clean feature\n    insights.push(\n      `Story #${hotspot.storyId} (${hotspot.storyTitle}) is a hotspot with ${hotspot.bugCount} bugs (${hotspot.openCount} still open)`,\n    );\n  }\n\n  // Fix rate commentary — require >=3 bugs so a lone unfixed bug (0%) isn't flagged as systemic\n  const pct = Math.round(summary.fixRate * 100);\n  if (summary.fixRate < 0.5 && summary.totalBugs >= 3) {\n    insights.push(`Bug resolution is behind — only ${pct}% resolved. Consider allocating more dev time`);\n  }\n\n  // Assignee with the most open bugs — first with open work = most-loaded (list is pre-sorted)\n  const topAssignee = perAssignee.find(a => a.openBugs > 0);\n  if (topAssignee && topAssignee.openBugs >= 3) { // only a real pile-up trips the warning\n    insights.push(`${topAssignee.name} has ${topAssignee.openBugs} open bugs — check if support is needed`);\n  }\n\n  return insights; // may be empty — nothing crossed a threshold\n}"
+    },
+    {
+      "step": "Derives actionable recommendations from the same stats — prioritize Critical/High, triage backlog, flag untested stories.",
+      "fn": "generateRecommendations()",
+      "explain": "The action-oriented sibling of `generateInsights` — same deterministic threshold style, but each line is a *thing to do*. `critHigh` sums the `1 - Critical` and `2 - High` buckets off `bySeverity` with `|| 0` fallbacks so a missing severity key reads as zero instead of `NaN`, and any non-zero total recommends prioritizing before sprint end. The zero-bug filter inverts the usual hotspot logic — a story with `bugCount === 0` is treated as **suspicious**, likely *untested* rather than genuinely clean, so it nudges you to confirm test execution actually started; the offending IDs are joined into one readable line. Finally `openBugs >= 5` recommends a formal triage session — a higher bar than the per-assignee `>= 3` insight because this is about the whole feature's backlog. Like insights, `recs` can return empty when nothing qualifies.",
+      "code": "private generateRecommendations(summary, perStory): string[] {\n  const recs: string[] = [];\n\n  // || 0 so a missing severity bucket reads as 0, not NaN, in the sum\n  const critHigh = (summary.bySeverity['1 - Critical'] || 0) + (summary.bySeverity['2 - High'] || 0);\n  if (critHigh > 0) {\n    recs.push(`Prioritize fixing ${critHigh} Critical/High severity bugs before sprint end`);\n  }\n\n  // Zero bugs is treated as SUSPICIOUS (untested), not clean — the inverse of a hotspot\n  const zeroBugStories = perStory.filter(s => s.bugCount === 0);\n  if (zeroBugStories.length > 0) {\n    const ids = zeroBugStories.map(s => `#${s.storyId}`).join(', ');\n    recs.push(`Stories ${ids} have no bugs — verify test execution has started`);\n  }\n\n  // Feature-wide backlog threshold — higher than the per-assignee >=3 cutoff\n  if (summary.openBugs >= 5) {\n    recs.push(`Schedule a bug triage session to review ${summary.openBugs} open bugs`);\n  }\n\n  return recs; // empty when nothing qualifies\n}"
+    },
+    {
+      "step": "Serializes the report to a multi-sheet Excel workbook (plus JSON/Markdown/Word alongside).",
+      "fn": "generateExcel()",
+      "explain": "The serialization step — `xlsx` is `require`d lazily inside the function, not imported at module top, so a `--dry-run` that never writes files pays nothing for the dependency. It builds the workbook as an **array-of-arrays** (`aoa_to_sheet`): each inner array is one row, an empty `[]` renders a blank spacer row, and the `['Metric','Value']` row acts as a header. Two presentation choices matter — `s.fixRate` (a 0–1 float) is multiplied by 100 and suffixed `%` for a human-readable cell, and `s.avgDaysToFix ?? 'N/A'` uses `??` (not `||`) so a legitimate **zero** average survives while only `null`/`undefined` become `'N/A'`. Each sheet is appended by name via `book_append_sheet`, and `writeFile` flushes the whole `.xlsx` to `outputPath` in one call.",
+      "code": "private generateExcel(report: BugIntelReport, outputPath: string): void {\n  const XLSX = require('xlsx'); // lazy require — dry-run never loads the writer\n  const wb = XLSX.utils.book_new();\n  const s = report.summary;\n\n  // Array-of-arrays: each row is an array; [] is a blank spacer row\n  const summaryRows: any[][] = [\n    ['Bug Intelligence Summary'],\n    [],\n    ['Metric', 'Value'],\n    ['Total Bugs', s.totalBugs],\n    ['Open Bugs', s.openBugs],\n    ['Fixed Bugs', s.fixedBugs],\n    ['Fix Rate', `${Math.round(s.fixRate * 100)}%`], // 0..1 float -> \"81%\"\n    ['Avg Days to Fix', s.avgDaysToFix ?? 'N/A'],    // ?? keeps a real 0; only null/undefined -> N/A\n  ];\n  const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);\n  XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary'); // sheet tab name\n\n  // ... plus 'All Bugs', 'Per-Story', and 'Severity x State Pivot' sheets\n\n  XLSX.writeFile(wb, outputPath); // flush the whole workbook to disk in one call\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Weekly readiness roll-up on a feature",
+      "input": "`--feature-id` covering eight stories, `--word`.",
+      "output": "Report: 47 bugs, 38 fixed / 9 open, 81% fix rate, avg 3.2 days-to-fix; hotspot insight on the one story with 12 bugs; recommendation to schedule regression on the fixed set. Emitted as Markdown, Excel, JSON, Word."
+    },
+    {
+      "caption": "Pre-standup sanity check",
+      "input": "A handful of story IDs with `--dry-run`.",
+      "output": "On-screen tally only — `Total bugs: 14, mostly Medium, 4 open` — no files written. Glance and go."
+    },
+    {
+      "caption": "Load imbalance across the team",
+      "input": "A feature whose bugs skew to one assignee.",
+      "output": "Per-assignee workload table plus a threshold-fired insight — `Alex has 6 open bugs — check if support is needed` — and a triage-session recommendation."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Hierarchy walk to child bugs",
+      "whenRuns": "First, from a feature or story list.",
+      "input": "A feature ID or story IDs.",
+      "output": "Every child Bug work item, batch-fetched from ADO."
+    },
+    {
+      "heading": "Field normalization + days-to-fix",
+      "whenRuns": "Per bug found.",
+      "input": "The raw ADO fields.",
+      "output": "A typed `EnrichedBug` with computed `daysToFix`, ready to aggregate."
+    },
+    {
+      "heading": "In-memory aggregation",
+      "whenRuns": "After enrichment.",
+      "input": "The full `EnrichedBug[]`.",
+      "output": "Totals by severity/state, fix rate, avg days-to-fix, per-assignee load — one pass, no extra queries."
+    },
+    {
+      "heading": "Threshold insights + recommendations",
+      "whenRuns": "After aggregation.",
+      "input": "The summary statistics.",
+      "output": "Rule-fired lines flagging hotspots, sub-50% fix rate, and overloaded assignees, plus recommended actions."
+    },
+    {
+      "heading": "Multi-format serialization",
+      "whenRuns": "Last, unless `--dry-run`.",
+      "input": "The finished report object.",
+      "output": "JSON, Markdown, an `xlsx` workbook, and — with `--word` — a `.docx` with embedded bug screenshots."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "An Azure DevOps org/project and a **PAT** with work-item read scope.",
+      "A feature ID (top-down discovery) or a list of story IDs to roll up from.",
+      "No LLM key — metrics, insights, and recommendations are all rule-computed, not model-generated."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript on Node. One-time per machine.",
+        "firstRun": "First time only, on a new machine."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the ADO client and the `xlsx`/report writers into `node_modules`.",
+        "firstRun": "Full install, a minute or two.",
+        "rerun": "No-op once installed, unless the dependency list changed."
+      },
+      {
+        "label": "Export the ADO target (environment variables).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token",
+        "why": "Read at startup to resolve the org/project and authenticate the read queries."
+      },
+      {
+        "label": "Dry-run to tally bug counts on-screen.",
+        "cmd": "npm run bug:intel -- --feature-id 4001 --dry-run\n# or a targeted list of stories:\nnpm run bug:intel -- --parent-ids \"4010,4013,4060\" --dry-run",
+        "why": "`--dry-run` walks the hierarchy and aggregates on-screen without writing files — a fast check before the full serialization.",
+        "firstRun": "Reads every story and bug under the feature fresh."
+      },
+      {
+        "label": "Generate the full report set.",
+        "cmd": "npm run bug:intel -- --feature-id 4001\n# add a Word document too:\nnpm run bug:intel:word -- --feature-id 4001",
+        "why": "Drops `--dry-run` and serializes the report files to disk.",
+        "rerun": "No caching — every run re-queries live ADO data, so it always reflects current counts and picks up bugs filed since last run."
+      },
+      {
+        "label": "Open the report.",
+        "cmd": "open ./outputs/reports/bug-intel/BugIntel_<timestamp>.md",
+        "why": "The `.md` is the at-a-glance summary; the `.xlsx` holds the sortable bug list and severity-by-state pivot for a deeper cut."
+      }
+    ],
+    "inputs": [
+      { "name": "--feature-id <id>", "desc": "Feature ID — auto-discovers child stories and their bugs, top-down." },
+      { "name": "--parent-ids <ids>", "desc": "Comma-separated story IDs to target instead of (or alongside) a feature." },
+      { "name": "--feature-name <name>", "desc": "Optional report-header label, if you don't want it auto-fetched." },
+      { "name": "--word", "desc": "Also serialize a `.docx` version." },
+      { "name": "--dry-run", "desc": "On-screen tally only — no files written." },
+      { "name": "environment variables", "desc": "Org/project target and the PAT." }
+    ],
+    "outputs": [
+      { "name": "BugIntel_<timestamp>.json", "desc": "Full structured report — totals, fix rate, per-story and per-assignee breakdowns, insights, recommendations." },
+      { "name": "BugIntel_<timestamp>.md", "desc": "The same report rendered for at-a-glance reading." },
+      { "name": "BugIntel_<timestamp>.xlsx", "desc": "Multi-sheet workbook: Summary, All Bugs, Per-Story, severity-by-state pivot." },
+      { "name": "BugIntel_<timestamp>.docx", "desc": "Shareable Word version, only with `--word`." }
+    ],
+    "rerun": "Nothing to warm — every run queries ADO fresh, so a second run reflects whatever changed since (newly filed, newly fixed). Schedule it to keep the report current with zero manual tallying.",
+    "integrate": "Point it at a fixed `--feature-id` in a nightly/weekly CI or cron job; pipe the `.xlsx`/`.json` into a dashboard, or drop the `.md` straight into a status channel — it's authored to be posted as-is."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 2-3 minute screen recording: point it at a feature ID and watch the computed status report serialize.",
+    "script": [
+      "Open a terminal beside the team's work board so viewers see both.",
+      "Say: 'This agent turns a pile of bug tickets into the manager's status report. Watch.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's already done); explain it's grabbing the tracker client and report writers.",
+      "Show the `export ADO_ORGANIZATION / ADO_PROJECT / ADO_PAT` lines; say this is the only project-specific config.",
+      "Run `npm run bug:intel -- --feature-id 4001 --dry-run`; narrate the on-screen tally as it appears.",
+      "Run it again without --dry-run and with --word; explain it's now writing the full report set to disk.",
+      "Open the produced `.md`; read out the fix rate, the hotspot story, and one insight line.",
+      "Open the `.xlsx`; show the per-story and severity-by-state sheets.",
+      "Close: 'Same numbers, every time, in the time it takes to read this sentence.'"
+    ]
+  }
+}

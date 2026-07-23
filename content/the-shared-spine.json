@@ -1,0 +1,177 @@
+{
+  "slug": "the-shared-spine",
+  "plate": 38,
+  "name": "The Shared Spine",
+  "techName": "src/core/config.ts",
+  "category": "toolkit",
+  "oneLiner": "The config seam every agent shares: reads env vars once, computes a capability map, and degrades each agent to offline instead of crashing.",
+  "lead": "The backbone all agents share. `loadConfig()` reads the env once, treats blanks and placeholders as unset, and computes a `capabilities` map — `ado`, `api`, `db`, `llm` — from what's genuinely present. Agents gate optional behaviour on that map and call `requireCapability()` only where they truly can't proceed, so a missing credential yields a clear message or an offline fallback, never a crash. It's why the whole kit runs with or without Azure, on whatever subset a team has.",
+  "chore": "The prior setup copy-pasted the same env — org, project, board URL, PATs — into dozens of scripts, each assuming everything was present and connected. A missing piece failed with a confusing error deep in a later call, and there was no single way to ask 'what can I actually run right now?'",
+  "instead": "One `loadConfig()` reads every setting and returns a capability map plus per-capability `issues` hints — always a usable config, degraded or not. Agents branch on `cfg.capabilities.*`; `requireCapability()` throws one actionable error at the exact point an ability is needed. `npm run doctor` prints the whole scorecard, secrets redacted. The kit runs on any subset — cloud or none.",
+  "whyItMatters": "The same toolkit runs for a team on full Azure and for a team with almost nothing configured — no rewrites, no dead ends. Every agent asks the config what it can do before it tries, so the result is simply the subset that can run, running.",
+  "howItWorks": [
+    {
+      "step": "`real()` decides whether an env value counts as genuinely present, treating blanks and obvious placeholders (`PASTE_YOUR_KEY`, `<...>`) as unset.",
+      "fn": "real()",
+      "explain": "The gatekeeper that stops a **placeholder from masquerading as a real credential**. It trims the value, treats empty as unset (`''`), then rejects anything that looks like leftover template text — the regex matches values that *start* with `PASTE`, `REPLACE`, `EXAMPLE`, `CHANGE`, `YOUR_`/`YOUR-`, or an `<…>` angle-bracket token, case-insensitively — returning `''` for those too. This matters because capabilities are computed by truthiness downstream: if `PASTE_YOUR_KEY` counted as present, a capability would flip **on** and then fail confusingly at call time. Returning a clean `''` makes 'not really configured' indistinguishable from 'blank', which is exactly what the capability map wants.",
+      "code": "function real(v: string | undefined): string {\n  const s = (v ?? '').trim(); // undefined/whitespace both collapse to ''.\n  if (!s) return ''; // blank is unset.\n  // Reject leftover .env template text so a placeholder can't flip a capability on.\n  if (/^(PASTE|REPLACE|EXAMPLE|CHANGE|YOUR[_-]|<.*>)/i.test(s)) return '';\n  return s;\n}"
+    },
+    {
+      "step": "`loadConfig` builds the per-domain config, then computes one `capabilities` map from what's genuinely present — always returning a usable config, never throwing.",
+      "fn": "loadConfig()",
+      "explain": "The single seam that reads the environment **once** and always returns a usable `ToolkitConfig` — it never throws on missing values. Every var passes through `real()` first, so blanks and placeholders are already normalized to `''` before capabilities are computed. `ado.offline` is **derived, not configured**: `!pat` means no write token, so fixture mode. Each capability is a plain `Boolean(...)` over its truly-required vars (`ado` needs org **and** project; `db` needs a connection string **or** a bridge dir), and every capability that comes out off pushes an actionable `issues` hint naming the exact env var to set. The returned object bundles the per-domain configs, the capability map, and those hints — the rest of the toolkit branches on it.",
+      "code": "export function loadConfig(opts: { envPath?: string } = {}): ToolkitConfig {\n  const issues: string[] = []; // collected enable-hints for every off capability.\n  const e = process.env;\n  const org = real(e.ADO_ORG);\n  const project = real(e.ADO_PROJECT);\n  const pat = real(e.ADO_PAT);\n  // offline is DERIVED, not configured: no PAT => fixture mode.\n  const ado: AdoConfig = { org, project, pat, offline: !pat, /* ... */ } as AdoConfig;\n  const api: ApiConfig = { baseUrl: real(e.API_BASE_URL), bearerToken: real(e.API_BEARER_TOKEN) } as ApiConfig;\n  const db: DbConfig = { connectionString: real(e.DB_CONNECTION_STRING), bridgeDir: real(e.DB_BRIDGE_DIR) };\n  const llm: LlmConfig = { googleApiKey: real(e.GOOGLE_API_KEY), anthropicApiKey: real(e.ANTHROPIC_API_KEY) };\n\n  // Each capability is Boolean() over the vars it genuinely needs to function.\n  const capabilities = {\n    ado: Boolean(org && project),\n    api: Boolean(api.baseUrl),\n    db: Boolean(db.connectionString || db.bridgeDir), // either backend counts.\n    llm: Boolean(llm.googleApiKey || llm.anthropicApiKey),\n  };\n  // Off capabilities get an actionable hint naming the exact var(s) to set.\n  if (!capabilities.db) issues.push('DB capability off: set DB_CONNECTION_STRING or DB_BRIDGE_DIR.');\n  return { ado, api, db, llm, capabilities, issues };\n}"
+    },
+    {
+      "step": "`requireCapability` asserts an ability up front and throws one actionable error naming the missing setting — instead of a baffling failure deep in a later call.",
+      "fn": "requireCapability()",
+      "explain": "The **fail-fast assertion** agents call at the one point they truly can't proceed without an ability. If the capability is on it returns silently; if off, it looks up the matching hint from `cfg.issues` — the entry whose text starts with `{cap} capability`, the same hints `loadConfig` pushed — and throws a single error that both names the missing capability and states the exact setting to add: `Required capability \"db\" is unavailable. DB capability off: set …`. The point is **placement**: called deliberately at the moment of need, it converts what would be a cryptic failure three calls deep into one actionable message at the top of the stack. When no matching hint exists it still throws a sensible generic fallback.",
+      "code": "export function requireCapability(cfg: ToolkitConfig, cap: Capability): void {\n  if (cfg.capabilities[cap]) return; // capability present -> proceed silently.\n  // Reuse the exact enable-hint loadConfig already produced for this capability.\n  const hint = cfg.issues.find(i => i.toLowerCase().startsWith(`${cap} capability`))\n    || `${cap} capability is not configured.`;\n  // One actionable throw at the point of need, not a mystery failure deep in a call.\n  throw new Error(`[qa-agent-toolkit] Required capability \"${cap}\" is unavailable. ${hint}`);\n}"
+    },
+    {
+      "step": "`callGemini` falls back to rule-based behaviour when no AI key is present — trying Gemini, then Claude, then returning an empty answer — so callers treat 'no AI' as a normal case.",
+      "fn": "callGemini()",
+      "explain": "Makes 'no AI configured' a **normal, non-throwing case**, so an agent's AI-assisted step can degrade to plain logic. It reads the keys via `keysOf(opts)` and, if there's no `googleApiKey`, immediately hands off to `callClaudeFallback` (which itself no-ops to rule-based behaviour when no Anthropic key exists) — primary provider, then secondary, then nothing. The `{ answer: '', model: 'none' }` return is the deliberate **harmless sentinel** for the neither-key path: an empty answer a caller reads as 'AI unavailable' rather than an exception to catch. Combined with the retry-on-429 and fall-back-on-hard-failure behaviour in the elided body, no LLM outage ever crashes a run.",
+      "code": "export async function callGemini(prompt: string, opts?: LLMOptions): Promise<LLMResponse> {\n  const { googleApiKey } = keysOf(opts); // resolve keys from opts, else env.\n  // No primary key -> try the secondary provider (which itself degrades to rules).\n  if (!googleApiKey) return callClaudeFallback(prompt, opts);\n  // ... call the Gemini API, retrying on 429, falling back on any hard failure\n  // Harmless sentinel: empty answer, model 'none' — callers read this as \"no AI\", not an error.\n  return { answer: '', timeMs: 0, model: 'none' };\n}"
+    },
+    {
+      "step": "`doctor.ts` loads the config once and prints a scorecard line per capability — on/off with a reason — never revealing a secret value.",
+      "fn": "doctor.ts",
+      "explain": "The human-facing view of the capability map — it calls the real `loadConfig()` once and prints one aligned line per capability, `✅` when on and `⚪ (off)` when not, each with a short reason, using `padEnd(22)` to keep the column tidy. It reports **status, never secrets**: the note describes where a capability points or what to set, but no key or PAT value is ever printed. The important nuance is the extra branch — when ADO is *on* (`capabilities.ado`) but `ado.offline` is true (org/project set, no PAT), it prints a dedicated line clarifying the tracker is in **OFFLINE fixture mode**, rather than leaving someone to wonder why writes aren't hitting the board. It's the same `loadConfig` every agent uses, just rendered for a person.",
+      "code": "const cfg = loadConfig(); // the exact same seam every agent uses at startup.\n// One aligned row per capability: mark + padded label + (off) + reason. Never a secret.\nconst line = (on: boolean, label: string, note: string) =>\n  `  ${on ? '✅' : '⚪'}  ${label.padEnd(22)} ${on ? '' : '(off) '}${note}`;\n\nfor (const c of caps) {\n  const on = cfg.capabilities[c.key]; // drive the mark straight off the capability map.\n  console.log(line(on, c.label, on ? c.on : c.off));\n}\n// ADO configured (org+project) but PAT-less: call out fixture mode explicitly.\nif (cfg.capabilities.ado && cfg.ado.offline) {\n  console.log('\\n  ℹ️  ADO is in OFFLINE mode (no ADO_PAT): reads/writes use local fixtures.');\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Run with almost nothing configured",
+      "input": "A `.env` with only `API_BASE_URL` set, everything else blank.",
+      "output": "`doctor` reports API `on` and ADO / DB / LLM `off`, each with a one-line enable hint — and the kit runs the parts it can."
+    },
+    {
+      "caption": "No cloud at all",
+      "input": "No `ADO_PAT` and no AI key, just `ADO_ORG` and `ADO_PROJECT`.",
+      "output": "`ado.offline` is true, so the tracker uses fixtures, and `callGemini` falls back to rule-based logic — the agents still run, no cloud required."
+    },
+    {
+      "caption": "Actionable error, not a mystery failure",
+      "input": "An agent that calls `requireCapability(cfg, 'db')` when no DB is configured.",
+      "output": "It throws immediately: 'Required capability \"db\" is unavailable. DB capability off: set DB_CONNECTION_STRING or DB_BRIDGE_DIR.' — instead of failing deep inside with a cryptic error."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Reads every setting once",
+      "whenRuns": "First, the moment any agent starts up.",
+      "input": "Env vars for the board, the service, the database, and the AI keys.",
+      "output": "One config object, placeholders and blanks already treated as unset via `real()`."
+    },
+    {
+      "heading": "Computes the capability map",
+      "whenRuns": "Right after the settings are read.",
+      "input": "Which vars are genuinely present.",
+      "output": "An on/off map — `ado`, `api`, `db`, `llm` — plus an `issues` hint for every off capability."
+    },
+    {
+      "heading": "Degrades instead of crashing",
+      "whenRuns": "Whenever a piece is missing.",
+      "input": "A missing credential (no PAT, no AI key).",
+      "output": "The affected agent takes its offline/fallback path — fixtures for the board, rule-based logic for AI — nothing throws."
+    },
+    {
+      "heading": "Demands a capability only when needed",
+      "whenRuns": "At the one point an agent can't proceed without an ability.",
+      "input": "The capability name via `requireCapability`.",
+      "output": "Nothing (present) or one clear, actionable error naming the exact setting to add."
+    },
+    {
+      "heading": "Prints the scorecard on demand",
+      "whenRuns": "On `npm run doctor`.",
+      "input": "Nothing — it just reads the current environment.",
+      "output": "A short per-capability scorecard, on/off with a reason and never a secret value — so a new team sees in seconds what will run."
+    }
+  ],
+  "status": "toolkit",
+  "runbook": {
+    "runnable": true,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Node.js (installed in step 1 below) — nothing else.",
+      "No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A `.env` only matters later, if you point it at something real."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The toolkit is TypeScript on Node. One install per machine; no other runtime required.",
+        "firstRun": "First time on a new machine only."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/qa-agent-toolkit\nnpm install",
+        "why": "`npm install` pulls the toolkit's only dependency (`dotenv`) into `node_modules`. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.",
+        "firstRun": "Downloads everything (seconds — the dependency list is tiny).",
+        "rerun": "No-op unless the dependency list changed."
+      },
+      {
+        "label": "(Optional) copy the env template — only to go live later.",
+        "cmd": "cp .env.example .env\n# then open .env and fill in ONLY the section you need",
+        "why": "Skippable for the demo — every capability is off by default and the demo runs regardless. `.env` matters only once you point the toolkit at a real board, service, or database."
+      },
+      {
+        "label": "Run the capability check.",
+        "cmd": "npm run doctor",
+        "why": "Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty `.env` everything reads `(off)`, which is expected: nothing here needs to be on."
+      },
+      {
+        "label": "Run the health check — this IS the demo for this plate.",
+        "cmd": "npm run doctor",
+        "why": "`doctor.ts` calls the real `loadConfig()` and prints its capability scorecard — with nothing in `.env`, every capability legitimately reads `(off)`, which is exactly the point: the spine doesn't crash or complain, it tells you plainly what won't run and why.",
+        "firstRun": "With no `.env` (or a blank one), every capability shows `⚪ (off)` with a one-line hint on the setting that would turn it on.",
+        "rerun": "Run it again after adding one line to `.env` (e.g. `API_BASE_URL=https://jsonplaceholder.typicode.com`) and exactly that capability flips to `✅` — nothing else changes."
+      },
+      {
+        "label": "Flip one capability on and rerun, to see the spine react.",
+        "cmd": "cp .env.example .env\necho 'API_BASE_URL=https://jsonplaceholder.typicode.com' >> .env\nnpm run doctor",
+        "why": "The whole design in one before/after: add one setting and only the 'API testing' line flips from `⚪ (off)` to `✅ target · https://jsonplaceholder.typicode.com` — tracker, database, and AI stay exactly as they were, degraded or not."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "nothing",
+        "desc": "`loadConfig()` reads whatever is in `.env` (or the real environment) and never throws on missing values — run it with no `.env` at all and it still returns a complete, usable config with every capability off."
+      },
+      {
+        "name": "any subset of the env vars",
+        "desc": "ADO_ORG/ADO_PROJECT/ADO_PAT, API_BASE_URL/API_BEARER_TOKEN, DB_CONNECTION_STRING/DB_BRIDGE_DIR, GOOGLE_API_KEY/ANTHROPIC_API_KEY — fill in only the ones you have; each is independently optional."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console scorecard",
+        "desc": "One line per capability (ADO, API, DB, LLM) — a ✅/⚪ mark, on/off, and either where it's pointed (live) or exactly which setting would turn it on (off). Never prints a secret value."
+      },
+      {
+        "name": "offline-mode note",
+        "desc": "If ADO_ORG/ADO_PROJECT are set but ADO_PAT is not, an extra line explains the tracker is in OFFLINE (fixture) mode rather than failing."
+      }
+    ],
+    "rerun": "Safe and cheap to run any time, on any machine, in any state — it only reads env vars and mutates nothing. Add or remove a setting in `.env` and the next `npm run doctor` reflects it immediately.",
+    "integrate": "Import the seam directly: `import { loadConfig, requireCapability } from './src/core/config'`; call `loadConfig()` once at startup, gate optional behaviour behind `cfg.capabilities.ado` / `.api` / `.db` / `.llm`, and call `requireCapability(cfg, 'db')` at the one point an agent truly can't proceed without it — you get a clear, actionable error instead of a cryptic failure three calls deep. Every other plate in this toolkit (tracker, report, API, DB) is built on exactly this pattern."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: run the health check with nothing configured, then flip one capability on and watch only that line change.",
+    "script": [
+      "Open a terminal in the qa-agent-toolkit folder.",
+      "Say: 'This is the backbone every other plate in this toolkit sits on — it's the reason none of them need Azure to run.'",
+      "Run `node -v` and `npm install` briefly.",
+      "Run `npm run doctor` with no .env present; read each line out loud: ADO off, API off, DB off, LLM off — each with its one-line hint.",
+      "Say: 'Nothing crashed. That's the whole design — every agent asks this file what it can do before it tries to do it.'",
+      "Run `cp .env.example .env`; open the file briefly to show every section blank and clearly optional.",
+      "Add one line — `API_BASE_URL=https://jsonplaceholder.typicode.com` — to .env in the editor.",
+      "Rerun `npm run doctor`; point out only the API line flipped to ✅ 'target · https://jsonplaceholder.typicode.com' — everything else unchanged.",
+      "Say: 'That one line is also all it takes to make the API Tester plate go live instead of hitting the public sandbox.'",
+      "Close: 'Fill in as many or as few sections as your team actually has — the toolkit runs on whatever subset is real.'"
+    ]
+  }
+}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Toolkit — Field Guide to Software QA Agents</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="index.html">Contents</a>
+    <a href="toolkit.html">Toolkit</a>
+    <a href="guides.html">Guides</a>
+    <a href="deck.html">Slides</a>
+  </nav>
+</div></header>
+
+<section class="hero"><div class="wrap">
+  <div class="eyebrow hero__eyebrow">The reusable toolkit</div>
+  <h1 class="display">Four jobs every software team repeats — written once, reusable everywhere.</h1>
+  <p class="lead">The agents in this guide grew out of one project. Four of their jobs kept coming back on <em>every</em> project, so I pulled them into one clean, dependable toolkit that plugs into any software team — and runs with or without Microsoft's Azure cloud.</p>
+  <div class="hero__meta">
+    <div class="stat"><div class="num">4</div><div class="lbl">Reusable jobs</div></div>
+    <div class="stat"><div class="num">0</div><div class="lbl">Secrets in the code</div></div>
+    <div class="stat"><div class="num">☁︎</div><div class="lbl">Works without any cloud</div></div>
+  </div>
+</div></section>
+
+<!-- Two paths -->
+<section class="section"><div class="wrap">
+  <div class="section__head"><span class="section__no">Where to start</span><h2 class="display">Pick your path</h2></div>
+  <div class="paths">
+    <a class="path" href="index.html">
+      <h3 class="display">Just curious</h3>
+      <p>Meet all 38 agents in plain English — no coding needed. Each one explained by the chore it removes and what you get back.</p>
+      <span class="path__go">Open the field guide →</span>
+    </a>
+    <a class="path" href="deck.html">
+      <h3 class="display">Want the short talk</h3>
+      <p>A slide walk-through of the whole idea and every agent. Arrow keys to advance; press F for fullscreen. Built to be recorded.</p>
+      <span class="path__go">Open the slides →</span>
+    </a>
+  </div>
+</div></section>
+
+<!-- The four domains -->
+<section class="section"><div class="wrap">
+  <div class="section__head"><span class="section__no">What's inside</span><h2 class="display">The four building blocks</h2></div>
+  <p class="section__desc">Each block is a small, tested piece you can drop into a project. The number on the right is how much hand-written, copy-pasted code it replaces.</p>
+  <div class="domains">
+    <div class="domain">
+      <div><h3 class="display">Talk to the project tracker</h3><p>One connector for the team's shared to-do board (Azure DevOps) — create, link, and update cards, or run entirely offline against sample data when there's no cloud.</p></div>
+      <div class="domain__reuse"><b>~85</b><span>scripts unified into 1</span></div>
+    </div>
+    <div class="domain">
+      <div><h3 class="display">Build the reports people read</h3><p>One design kit that turns any tool's results into a clean, self-contained web page — dashboards, tables, and pass/fail grids that all look like one product.</p></div>
+      <div class="domain__reuse"><b>~90</b><span>page-builders unified into 1</span></div>
+    </div>
+    <div class="domain">
+      <div><h3 class="display">Test a live service</h3><p>One tester that calls an app's service counter (its API), keeps a record of every request and reply as evidence, and retries when the network hiccups.</p></div>
+      <div class="domain__reuse"><b>~96</b><span>scripts unified into 1</span></div>
+    </div>
+    <div class="domain">
+      <div><h3 class="display">Check the data is right</h3><p>One engine that compares what the app <em>says</em> against what its records actually hold — even for databases locked behind a company firewall, via a shared-folder relay.</p></div>
+      <div class="domain__reuse"><b>7</b><span>ways to compare, 1 engine</span></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- The clever idea -->
+<section class="primer"><div class="wrap">
+  <div class="eyebrow">The one clever idea</div>
+  <h2 class="display" style="margin-bottom:14px;">It notices what it's allowed to do, and adjusts.</h2>
+  <div class="beforeafter">
+    <div class="ba ba--before"><div class="ba__label">The usual way</div><p>Most automation assumes the whole cloud is present. Hand it to a new team without the right cloud accounts and it fails at the first step.</p></div>
+    <div class="ba__arrow">→</div>
+    <div class="ba ba--after"><div class="ba__label">This toolkit</div><p>On startup it checks which credentials exist and switches each of the four jobs on or off accordingly. Missing the cloud? The tracker runs against sample data, and everything else still works. Nothing crashes; it just does what it can.</p></div>
+  </div>
+</div></section>
+
+<!-- Quickstart -->
+<section class="section"><div class="wrap">
+  <div class="section__head"><span class="section__no">Try it</span><h2 class="display">Runs in a minute — no credentials required</h2></div>
+  <p class="section__desc">Every demo below works on a fresh machine with nothing configured. That's the point: the toolkit is real, and anyone can run it.</p>
+  <div class="term">
+<span class="p">$</span> npm install
+<span class="p">$</span> npm run doctor            <span class="c"># shows which parts are switched on</span>
+
+<span class="c"># Each demo runs with NO accounts or passwords:</span>
+<span class="p">$</span> npm run demo:ado          <span class="c"># find a task → file a bug → record results (offline)</span>
+<span class="p">$</span> npm run demo:report       <span class="c"># build a self-contained web dashboard</span>
+<span class="p">$</span> npm run demo:api          <span class="c"># test a public service, with evidence</span>
+<span class="p">$</span> npm run demo:db           <span class="c"># compare records seven different ways</span>
+  </div>
+</div></section>
+
+<!-- Reuse numbers -->
+<section class="section"><div class="wrap">
+  <div class="section__head"><span class="section__no">Why it exists</span><h2 class="display">The same plumbing, written by hand, over and over</h2></div>
+  <p class="section__desc">Before the toolkit, the identical low-level code was re-created on project after project. Counted across the original work:</p>
+  <div class="bignums">
+    <div class="bignum"><b>~85</b><span>places the same tracker sign-in code was copy-pasted — now one connector.</span></div>
+    <div class="bignum"><b>~90</b><span>report pages that each re-invented their own layout — now one design kit.</span></div>
+    <div class="bignum"><b>~96</b><span>scripts that re-wrote the same service-call boilerplate — now one tester.</span></div>
+  </div>
+</div></section>
+
+<!-- Layout -->
+<section class="section"><div class="wrap">
+  <div class="section__head"><span class="section__no">For engineers</span><h2 class="display">How it's laid out</h2></div>
+  <div class="tree">src/core/     config · types · llm · theme · ado · html · api · db   (the typed core)
+src/cli/      doctor                                                  (capability check)
+agents/       ado · api · db · report                                (composable agents)
+examples/     demo.ts per domain — all runnable offline
+fixtures/     synthetic sample data (no real records)
+docs/domains/ one reference doc per building block
+docs/site/    this field guide (contents · plates · slides)</div>
+  <p style="margin-top:18px; color: var(--ink-soft);">Written in TypeScript (strict). Credentials come from the environment only — nothing sensitive is ever stored in the code. Licensed MIT.</p>
+</div></section>
+
+<footer class="footer"><div class="wrap">The Toolkit · part of the Field Guide to Software QA Agents · built to plug into any project, with or without the cloud.</div></footer>
+</body>
+</html>

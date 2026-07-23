@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Requirements Sharpener — Agent 10</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s2">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">10<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Deciding what to test</span></div>
+        <h1>The Requirements Sharpener</h1>
+        <p class="lead">Rewrites a vague requirement into precise, testable Given/When/Then criteria grounded in the actual design screenshots — additively, never overwriting the original.</p>
+        <p class="kicker">Source file: story-ac-refinement-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Requirements are usually written before the design exists, so they stay fuzzy — &#39;the user can submit the form&#39; with no real button labels or error messages. This agent feeds the requirement plus the finished design screenshots to a multimodal LLM and gets back sharp criteria that quote the actual on-screen text and cite the screen each came from. The original acceptance criteria are read once and never written back — the sharpened set is stored alongside.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Making a requirement like &#39;show an error if the input is invalid&#39; testable means cross-referencing it against the design mockups by hand: the exact error wording, the precise button label, which states are disabled, what the empty screen reads — then rewriting each point. It&#39;s meticulous, and anything missed becomes a gap a tester hits later.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent pulls the requirement, the prior feature briefing, and the exported design package — including the screenshots as base64 image data — and sends them to a multimodal Gemini model that reads the pixels, not just descriptions. It returns Given/When/Then criteria that quote exact labels and messages and cite the source screen, added alongside the untouched original.</p></div>
+    </div>
+    <p>Vague requirements produce vague tests that miss real defects. Grounding every criterion in the actual design closes that gap before the first test is authored.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Fetches the requirement — title, description, original acceptance criteria — live from ADO.</span>
+          <span class="fc-node__fn">fetchStory()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Loads the prior feature briefing for this requirement, if present, to reuse its business rules and user flows.</span>
+          <span class="fc-node__fn">loadStoryIntelligence()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Loads the design package — frame-structure JSON, the on-screen text listing, and the screenshots themselves.</span>
+          <span class="fc-node__fn">loadFigmaContext()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Sends the requirement, the briefing, and the design screenshots to a multimodal LLM in one request, asking for sharper criteria.</span>
+          <span class="fc-node__fn">callGeminiMultimodal()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Parses back Given/When/Then criteria that quote exact labels and cite the source screen — stored alongside the untouched original.</span>
+          <span class="fc-node__fn">execute()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Serializes the result to JSON, Markdown, a Word document, and an import-ready xlsx with one row per criterion.</span>
+          <span class="fc-node__fn">buildExcel()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"fetchStory()","explain":"A thin read-and-normalize over the raw work item. Both rich-text fields — `System.Description` and `Microsoft.VSTS.Common.AcceptanceCriteria` — are HTML in ADO, so `cleanHtml` flattens them to the plain text a language model can actually reason over, and each field is `|| ''`-guarded so a missing value becomes an empty string rather than `undefined`. This `acceptanceCriteria` is the **original**, captured once here and never written back — the whole agent is additive, storing sharpened criteria alongside it. `parentId` is stringified for uniform handling (empty when there's no parent) and `adoUrl` is retained so downstream output can deep-link each criterion back to its source ticket.","code":"private async fetchStory(storyId) {\n  const f = await this.fetchWorkItemFields(storyId);\n  return {\n    id: storyId,\n    title: f['System.Title'] || '',\n    state: f['System.State'] || '',\n    description: cleanHtml(f['System.Description'] || ''), // ADO rich-text fields are HTML; cleanHtml flattens to plain text the model can read\n    acceptanceCriteria: cleanHtml(f['Microsoft.VSTS.Common.AcceptanceCriteria'] || ''), // this is the ORIGINAL AC, read once and never written back — the agent is additive\n    parentId: String(f['System.Parent'] || ''), // stringified for consistent downstream use; empty string when the story has no parent\n    adoUrl: `https://dev.azure.com/my-org/MyProject/_workitems/edit/${storyId}`, // deep link kept so every refined criterion can cite its source ticket\n  };\n}"},{"fn":"loadStoryIntelligence()","explain":"Best-effort enrichment from a prior Test-Scout briefing — its absence must not break the run, so a missing `intelPath` returns a fully-formed `{ found: false, ... }` shape instead of throwing. When a briefing exists, `businessRules` is defensively normalized because entries arrive in mixed shapes: the `.map` coerces a `{description}`, a `{name}`, or a bare string all down to text, `.filter(r => r && r.length > 10)` discards empties and trivially short fragments, and `.slice(0, 10)` caps the count. The caps are prompt-budget controls — 10 rules and an 800-char `summary` — deliberately small so this context grounds the model without crowding out the design screenshots, which are the higher-signal input for this agent.","code":"function loadStoryIntelligence(storyId) {\n  const intelPath = findIntelligenceFile(storyId);\n  if (!intelPath) return { found: false, businessRules: [], userFlowSteps: [] }; // no prior briefing found — return a valid empty shape (found:false) rather than throwing\n\n  const raw = JSON.parse(fs.readFileSync(intelPath, 'utf-8'));\n  const rules = (raw.businessRules || [])\n    .map(r => r.description || r.name || (typeof r === 'string' ? r : '')) // rules arrive in mixed shapes ({description}, {name}, or bare string) — normalize each to text\n    .filter(r => r && r.length > 10) // drop empties and trivially short fragments that add no signal\n    .slice(0, 10); // cap at 10 rules to bound the prompt size fed to the multimodal model\n\n  return {\n    storyTitle: raw.storyTitle || raw.title || '',\n    summary: (raw.summary || '').slice(0, 800), // summary trimmed to 800 chars — enough context without crowding out the design images\n    businessRules: rules,\n    found: true,\n    intelPath,\n  };\n}"},{"fn":"loadFigmaContext()","explain":"Assembles the multimodal payload with everything guarded and bounded. The text artifacts — frame-structure JSON and the on-screen text listing — are each `existsSync`-gated and hard-capped (`slice(0, 20000)` / `slice(0, 15000)`) so a large export can't blow the token budget, degrading to `''` when absent. Screenshots are loaded only when `includeImages` is set (the `--no-images` flag clears it) and the folder exists; the `.sort()` before `.slice(0, MAX_DESIGN_IMAGES)` makes the selection deterministic — the same 8 files every run, in filename order — rather than filesystem-arbitrary. Each image is `base64`-encoded for inline transport in the Gemini request, and `imageCount` is returned so the final result can honestly report how many screens actually grounded the criteria.","code":"function loadFigmaContext(figmaDir, includeImages) {\n  const framesJsonText = fs.existsSync(framesPath)\n    ? fs.readFileSync(framesPath, 'utf-8').slice(0, 20000) : ''; // 20k-char cap on the frame JSON — a token-budget guard; absent file => empty string, not a throw\n  const textContentMd = fs.existsSync(textPath)\n    ? fs.readFileSync(textPath, 'utf-8').slice(0, 15000) : ''; // on-screen text listing capped at 15k chars\n\n  const images = [];\n  if (includeImages && fs.existsSync(screensDir)) { // images are opt-in (--no-images clears includeImages) and skipped if the screens folder is missing\n    const pngs = fs.readdirSync(screensDir)\n      .filter(f => /\\.(png|jpg|jpeg)$/i.test(f)).sort().slice(0, MAX_DESIGN_IMAGES);\n    for (const filename of pngs) {\n      const buf = fs.readFileSync(path.join(screensDir, filename));\n      images.push({ filename, mimeType: 'image/png', base64: buf.toString('base64') }); // base64-encode each screenshot for inline transport in the multimodal request\n    }\n  }\n  return { framesJsonText, textContentMd, images, imageCount: images.length }; // imageCount is recorded so the result can report how many screens actually grounded the criteria\n}"},{"fn":"callGeminiMultimodal()","explain":"Hand-builds the Gemini `contents` payload as a single interleaved `parts` array so the model reasons over the real screens, not prose about them. Text goes first, then each image is pushed as an `inlineData` part immediately followed by a `[Design image attached above: \u003cfilename>]` text marker — that pairing is what lets the model cite *which* screen a criterion came from, the whole point of this agent. `generationConfig` uses `?? 8192`/`?? 0.2` defaults, the low temperature chosen so the model quotes exact on-screen labels rather than paraphrasing them. Extraction is defensively deep-chained — `data.candidates?.[0]?.content?.parts?.[0]?.text || ''` — so a safety-blocked or empty response returns an empty string the caller can handle, instead of throwing on an undefined path.","code":"async function callGeminiMultimodal(systemText, userText, images, options) {\n  const parts = [{ text: systemText + '\\n\\n' + userText }];\n\n  for (const img of images) {\n    parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } }); // each screenshot rides inline as an inlineData part — Gemini reads the pixels, not a description\n    parts.push({ text: `[Design image attached above: ${img.filename}]` }); // a text marker after each image so the model can name which screen a criterion came from\n  }\n\n  const response = await fetch(GEMINI_URL, {\n    method: 'POST',\n    body: JSON.stringify({\n      contents: [{ parts }],\n      generationConfig: { maxOutputTokens: options?.maxTokens ?? 8192, temperature: options?.temperature ?? 0.2 }, // temp 0.2: criteria must quote exact on-screen text, not paraphrase; ?? sets the defaults\n    }),\n  });\n\n  const data = await response.json();\n  return { answer: data.candidates?.[0]?.content?.parts?.[0]?.text || '', model: 'gemini-2.0-flash' }; // deep optional-chaining: a blocked/empty candidate yields '' instead of a crash\n}"},{"fn":"execute()","explain":"Assembles the per-story result record, and its ordering encodes the agent's core contract: `originalAC: story.acceptanceCriteria` is stored **verbatim, never overwritten**, and `refinedAC: parsed.refinedAC` sits beside it as an additive layer — the sharpened criteria never replace the source. Every field is parsed off `parseLLMJson(llm.answer)` rather than raw `JSON.parse`, and `parsed.summary || ''` defaults the optional summary so the record shape is uniform whether or not the model returned one. The record also carries provenance — `screenshotsUsed: figma.imageCount`, `intelligenceUsed`, `llmModel`, `llmTimeMs` — so each output is auditable: you can see exactly how many screens and which model produced these criteria, and `error: ''` marks a clean run in the results array.","code":"const parsed = parseLLMJson(llm.answer); // tolerant parse of the model JSON before we trust any field off it\nresults.push({\n  storyId, title: story.title, state: story.state, adoUrl: story.adoUrl,\n  feature,\n  originalAC: story.acceptanceCriteria,   // preserved verbatim, never overwritten\n  refinedAC: parsed.refinedAC,             // additive — cites design + intelligence sources\n  summary: parsed.summary || '', // summary is optional in the response — default to empty so the record shape stays stable\n  llmModel: llm.model, llmTimeMs: llm.timeMs,\n  screenshotsUsed: figma.imageCount, // provenance: how many screens actually informed these criteria\n  intelligenceUsed: true, error: '',\n});"},{"fn":"buildExcel()","explain":"Flattens the nested result set into the exact grain ADO's import expects: the outer loop walks `results`, the inner loop walks each story's `refinedAC`, and `ws.addRow` emits **one row per criterion** — not per story — so a story with five sharpened criteria becomes five importable rows. The column set (`storyId`, `acId`, Given/When/Then, `designs`) mirrors an ADO paste-back layout, and `designs: (ac.designReferences || []).join('\\n')` collapses each criterion's source-screen citations into one newline-separated cell, with the `|| []` guard so a criterion that cited nothing still writes cleanly. The file is timestamped like every other output, so each run is a distinct snapshot ready to paste straight back into the tool.","code":"private async buildExcel(results, ts) {\n  const ws = wb.addWorksheet('Refined AC');\n  ws.columns = [\n    { header: 'Story ID', key: 'storyId', width: 10 },\n    { header: 'AC #', key: 'acId', width: 8 },\n    { header: 'Given', key: 'given', width: 40 },\n    { header: 'When', key: 'when', width: 40 },\n    { header: 'Then', key: 'then', width: 40 },\n    { header: 'Design Refs', key: 'designs', width: 40 }, // the citations — which screens each criterion was grounded in\n  ];\n\n  for (const r of results) { // flatten: nested refinedAC arrays become one worksheet row PER criterion\n    for (const ac of r.refinedAC) { // one row per AC — the grain ADO import expects, not one row per story\n      ws.addRow({ storyId: r.storyId, acId: ac.id, given: ac.given, when: ac.when,\n        then: ac.then, designs: (ac.designReferences || []).join('\\n') });\n    }\n  }\n\n  const xlsxPath = path.join(this.outputDir, `StoryAC_Refinement_${ts}.xlsx`);\n  await wb.xlsx.writeFile(xlsxPath); // write the workbook; the paste-back-into-ADO deliverable\n  return xlsxPath;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A fuzzy &#39;submit the form&#39; requirement</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A requirement reading &#39;The user can submit feedback&#39;, plus a design folder with the feedback screen&#39;s empty, error, and success states.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Sharpened criteria such as &#39;Given the feedback box is empty, When the user taps Send, Then the Send button stays disabled and the hint reads &quot;Please enter feedback to continue&quot;&#39; — quoting the exact text from `02_error.png`, appended below the untouched original.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A character-limit rule from the briefing</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A requirement with no length rule, but a prior briefing noting &#39;feedback is capped at 500 characters&#39;.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A criterion fusing design and briefing: &#39;Given the user has typed 500 characters, When they type one more, Then input is blocked and a counter shows 500/500&#39; — citing both the design screen and the briefing&#39;s business rule.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Read access to <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> and a <strong>personal access token</strong> (<code>ADO_PAT</code>).</li><li>A Google Gemini API key — this agent needs a multimodal model, since it sends the design screenshots directly.</li><li>A folder of exported design files (frame-structure JSON, a text listing, and the screenshots).</li><li>Ideally a prior feature briefing from the Test Scout — the agent runs without one under <code>--allow-no-intelligence</code>.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed under Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the code and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> resolves the agent&#39;s dependencies — the ADO REST client, the xlsx/docx writers, and the Gemini client — into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency set changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the environment variables.</div>
+        <pre class="rb__cmd"><code>export ADO_PAT=your-access-token
+export GOOGLE_API_KEY=your-gemini-key</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup — the PAT to fetch the story, the Gemini key for the multimodal call that reads the requirement and the design screenshots together and writes sharper criteria.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Point it at the requirement and its design folder — dry-run first.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/story-ac-refinement-agent.ts \
+  --story-ids 6001 \
+  --figma-dir ./designs/feedback-screen \
+  --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--story-ids</code> is the requirement ticket number(s); <code>--figma-dir</code> is the exported design folder. <code>--dry-run</code> fetches everything and confirms the story and designs resolved, without an LLM call.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Fetches the story, checks for a prior briefing and usable design files, and skips the LLM step.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run for real.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/story-ac-refinement-agent.ts \
+  --story-ids 6001 \
+  --figma-dir ./designs/feedback-screen \
+  --word</code></pre>
+        <div class="rb__why"><span>Why</span> Drop <code>--dry-run</code>. Sends the requirement, the prior briefing (if found), and the screenshots to the multimodal model and gets back sharper Given/When/Then criteria. <code>--word</code> also writes a docx.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Generates the sharpened criteria and writes every output.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No change-tracking — recomputes fresh from the current requirement text and designs; re-run whenever the design updates.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">If there&#39;s no prior briefing, allow the agent to proceed without one.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/story-ac-refinement-agent.ts \
+  --story-ids 6001 \
+  --figma-dir ./designs/feedback-screen \
+  --allow-no-intelligence</code></pre>
+        <div class="rb__why"><span>Why</span> By default the agent requires a prior feature briefing (from the Test Scout) for its business rules. This flag proceeds on the requirement text and designs alone.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the sharpened criteria.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/story-ac-refinement/</code></pre>
+        <div class="rb__why"><span>Why</span> Outputs land as JSON, Markdown, an import-ready xlsx (one row per criterion), and — with --word — a docx. The original requirement wording is always preserved alongside, never overwritten.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--story-ids &lt;ids&gt;</dt><dd>Comma-separated requirement ticket number(s) to sharpen.</dd><dt>--figma-dir &lt;path&gt;</dt><dd>A folder of exported design files — frame-structure JSON, on-screen text listing, and screenshots.</dd><dt>--word / --dry-run / --no-images / --allow-no-intelligence</dt><dd>--word adds a docx; --dry-run skips the LLM call; --no-images sends text only (no screenshots); --allow-no-intelligence proceeds without a prior briefing.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>StoryAC_Refinement_&lt;timestamp&gt;.json / .md</dt><dd>Every requirement&#39;s original criteria alongside the sharpened Given/When/Then criteria, each citing the source screen and label.</dd><dt>StoryAC_Refinement_&lt;timestamp&gt;.xlsx</dt><dd>One row per sharpened criterion — Story ID, Given, When, Then, Design Refs — ready to paste back into ADO.</dd><dt>StoryAC_Refinement_&lt;timestamp&gt;.docx</dt><dd>A shareable Word document (only with --word).</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No change-tracking — every run re-reads the requirement and design folder fresh. Re-run whenever the design changes (a new screenshot, an updated label) or the requirement&#39;s wording is edited; the original text is never overwritten, so nothing is lost by re-running.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Feed it the briefing from the <strong>Test Scout</strong> for richer, rule-aware criteria. Its sharpened output is the ideal input to the <strong>Test-Plan Author</strong> — precise Given/When/Then criteria yield far more accurate drafted test cases than a vague one-line requirement.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: pass a vague requirement and its design folder, and watch precise, screenshot-grounded criteria come back.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 6</div>
+        <h3 class="display">Fetches the story</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, when the agent starts on a story.</dd>
+          <dt>Takes in</dt><dd>A story ID.</dd>
+          <dt>Shows out</dt><dd>Its title, description, and original acceptance criteria, via the ADO REST API.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 6</div>
+        <h3 class="display">Checks for a prior briefing</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Next, per story.</dd>
+          <dt>Takes in</dt><dd>The story ID.</dd>
+          <dt>Shows out</dt><dd>Any test-intelligence summary — business rules, user-flow steps — found in prior feature folders; proceeds without one under <code>--allow-no-intelligence</code>.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 6</div>
+        <h3 class="display">Loads the design package</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, for the whole batch.</dd>
+          <dt>Takes in</dt><dd>A folder of exported design files.</dd>
+          <dt>Shows out</dt><dd>The frame structure, every on-screen text string, and up to 8 screenshots as base64 image data.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 6</div>
+        <h3 class="display">Queries the multimodal LLM</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per story.</dd>
+          <dt>Takes in</dt><dd>The story, the briefing summary, and the design text and screenshots in one request.</dd>
+          <dt>Shows out</dt><dd>Given/When/Then criteria quoting exact button labels and error text and citing the source screen, via Gemini 2.0 Flash reading the images directly.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 6</div>
+        <h3 class="display">Keeps the original untouched</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When persisting each story&#39;s result.</dd>
+          <dt>Takes in</dt><dd>The model&#39;s newly generated criteria.</dd>
+          <dt>Shows out</dt><dd>The sharpened criteria stored alongside — never replacing — the story&#39;s <code>originalAC</code>.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="5">
+        <div class="uh-slide__no">6 / 6</div>
+        <h3 class="display">Writes the outputs</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once, at end of run.</dd>
+          <dt>Takes in</dt><dd>Every story&#39;s refined criteria.</dd>
+          <dt>Shows out</dt><dd>JSON, Markdown, a one-row-per-criterion xlsx ready to import into ADO, and a Word document with <code>--word</code>.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button><button class="uh-dot" data-uh-dot="5" aria-label="Slide 6"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-test-case-reviewer.html">← The Test-Case Reviewer</a>
+      <a href="the-build-watcher.html">The Build Watcher →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

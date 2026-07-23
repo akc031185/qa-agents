@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Test-Suite Organizer — Agent 12</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s3">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">12<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Keeping the project tracker up to date</span></div>
+        <h1>The Test-Suite Organizer</h1>
+        <p class="lead">Bulk-organizes an ADO test suite — files test cases into suites, repairs broken TestedBy links, normalizes titles to a naming convention, and reassigns testers.</p>
+        <p class="kicker">Source file: ado-suite-manager-agent.ts</p>
+      </div>
+    </div>
+
+    <p>A team keeps hundreds of test cases organized in suites under an ADO Test Plan. This agent maintains that structure at scale: it adds test cases to suites, audits each for a missing or reversed <code>TestedBy</code> link to its parent story, normalizes titles to the <code>TC_US&lt;storyId&gt;_</code> convention, and drives tester ownership across the work item, the test case, and its test point.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>By hand, keeping a suite tidy is soul-crushing. Someone opens suite after suite, checks each test case&#39;s title against the convention, confirms it&#39;s linked to the right story in the right direction, and records its owner — across hundreds of items. Titles drift, links point the wrong way, and reassigning work when someone leaves means editing dozens of items one at a time.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent does the whole sweep in one pass. It lists suite contents, adds test cases, and — most usefully — audits every case for three defects: a missing <code>TestedBy-Reverse</code> link, a reversed (<code>TestedBy-Forward</code>) link, and a title that breaks the naming convention. It reports each, and on approval fixes them. It also reads a feature&#39;s stories to auto-assign each test case to its author, and bulk-reassigns ownership when it changes.</p></div>
+    </div>
+    <p>When every test case is filed, named, and owned correctly, a lead can trust the Test Plan at a glance instead of second-guessing whether anything is where it claims to be.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For ownership, it derives each story&#39;s tester by walking every story&#39;s child work items (via <code>Hierarchy-Forward</code> relations) and reading the <code>AssignedTo</code> of the child Task titled &#39;QA_Test Creation&#39;, building a storyId → tester map.</span>
+          <span class="fc-node__fn">buildStoryTesterMap()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For the audit, it walks every test case in a suite and flags three defects: no <code>TestedBy</code> link to its story, a reversed link, or a title that breaks the naming convention. Story ID is parsed from the title.</span>
+          <span class="fc-node__fn">validateLinksMode()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">It prints every defect first, then — only on approval — repairs the links and normalizes titles to the convention.</span>
+          <span class="fc-node__fn">normalizeTitle()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For a bulk reassignment (e.g. someone leaves), it updates three targets in order: the &#39;QA_Test Creation&#39; Task&#39;s <code>AssignedTo</code>, each linked test case&#39;s <code>AssignedTo</code>, and the suite&#39;s test-point tester.</span>
+          <span class="fc-node__fn">reassignMode()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For filing, it adds test cases to the named suite in batches of 200, sleeping between batches to stay under ADO API rate limits.</span>
+          <span class="fc-node__fn">addTestCases()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"buildStoryTesterMap()","explain":"Ownership isn't stored on the story directly — it lives on a child **Task**, so this walks the hierarchy to find it. For each story it pulls `Hierarchy-Forward` relations (parent → child), batch-fetches those children with only the four fields it needs, then scans for the one Task whose title contains `qa_test creation` and reads its `System.AssignedTo`. The `break` on first match makes that Task authoritative — later children aren't considered — and `System.AssignedTo` is an **identity object**, not a string, so it's run through `extractDisplayName` rather than used raw. Stories with no children, or none matching, are simply skipped, leaving them absent from the map.","code":"private async buildStoryTesterMap(featureId: number): Promise\u003cRecord\u003cnumber, string>> {\n  const storyIds = await this.client.getStoryIdsByFeature(featureId);\n  const storyTester: Record\u003cnumber, string> = {};\n\n  for (const storyId of storyIds.sort((a, b) => a - b)) {\n    const wi = await this.client.getWorkItemWithRelations(storyId);\n    // Hierarchy-Forward = parent -> child; these are the story's direct children.\n    const childIds = this.client.extractRelationIds(wi.relations || [], 'System.LinkTypes.Hierarchy-Forward');\n    if (childIds.length === 0) continue; // no children -> story stays absent from the map\n\n    // Batch-fetch only the fields we need; ADO returns each work item's fields under child.fields.\n    const children = await this.client.getWorkItemsBatch(childIds, [\n      'System.Id', 'System.Title', 'System.WorkItemType', 'System.AssignedTo',\n    ]);\n\n    for (const child of children) {\n      const f = child.fields;\n      const title = (f['System.Title'] || '').toLowerCase();\n      // The authoring owner lives on the 'QA_Test Creation' Task, not on the story itself.\n      if (f['System.WorkItemType'] === 'Task' && title.includes('qa_test creation')) {\n        // System.AssignedTo is an identity OBJECT, not a string - extract the display name.\n        storyTester[storyId] = this.client.extractDisplayName(f['System.AssignedTo']);\n        break; // first matching Task wins; it's authoritative for this story\n      }\n    }\n  }\n  return storyTester;\n}"},{"fn":"validateLinksMode()","explain":"The direction of a `TestedBy` link is the whole game. From a **test case's** side, the correct link to its story is `TestedBy-Reverse` (story is tested-by this case); `TestedBy-Forward` on a test case means someone linked it backwards. So `hasCorrectLink` checks Reverse, `hasWrongLink` checks Forward, and the two combine into distinct verdicts: neither present → `missingLink`, only the backwards one → `wrongLink`. All of this is gated on `storyId` being parseable from the title via `extractStoryIdFromTitle` — a title the parser can't read yields no story ID, so the case is left un-audited rather than falsely flagged. The naming check is independent: `!title.startsWith(correctPrefix)` (where `correctPrefix` is `TC_US\u003cstoryId>_`) sets `needsRename`, and any of the three defects pushes an issue.","code":"for (const tc of suiteTCs) {\n  const tcId = tc.workItem?.id;\n  const title = tc.workItem?.name || '';\n  // Story ID is parsed out of the title text; if it can't be read, the case is left un-audited below.\n  const storyId = this.extractStoryIdFromTitle(title);\n\n  const wi = await this.client.getWorkItemWithRelations(tcId);\n  // From a TEST CASE's side, the correct link to its story is TestedBy-Reverse...\n  const testedByReverse = this.client.extractRelationIds(wi.relations || [], 'Microsoft.VSTS.Common.TestedBy-Reverse');\n  // ...and a TestedBy-Forward on the test case means it was linked backwards.\n  const testedByForward = this.client.extractRelationIds(wi.relations || [], 'Microsoft.VSTS.Common.TestedBy-Forward');\n\n  let missingLink = false, wrongLink = false, needsRename = false;\n  if (storyId) { // only audit cases whose story ID we could parse\n    const hasCorrectLink = testedByReverse.includes(storyId);\n    const hasWrongLink = testedByForward.includes(storyId);\n    if (!hasCorrectLink && !hasWrongLink) missingLink = true; // no link either direction\n    if (hasWrongLink && !hasCorrectLink) wrongLink = true;    // linked, but backwards\n\n    // Naming check is independent of the link check.\n    const correctPrefix = `TC_US${storyId}_`;\n    if (!title.startsWith(correctPrefix)) needsRename = true;\n  }\n  if (missingLink || wrongLink || needsRename) {\n    issues.push({ tcId, title, storyId, missingLink, wrongLink, needsRename });\n  }\n}"},{"fn":"normalizeTitle()","explain":"This is a deterministic prefix-repair, ordered most-specific first. The early `startsWith(correctPrefix)` return is the idempotency guard — an already-correct title is returned untouched, which is what makes re-running safe. Then it strips known-wrong prefixes: a `TC_US\u003cwrong-number>_` or `TC_UC\u003cnumber>_` prefix (the `_?` allows the stray-underscore variant, `[\\s_]` eats either a space or underscore separator) is **replaced** with the correct one, so the wrong story number is discarded rather than kept. A `US\u003cnumber>_` title is only missing the `TC_` tag, so it's prepended, not replaced. The final fallback assumes no recognizable prefix at all and simply prepends `correctPrefix`, preserving the original descriptive text.","code":"private normalizeTitle(title: string, storyId: number): string {\n  const correctPrefix = `TC_US${storyId}_`;\n  if (title.startsWith(correctPrefix)) return title; // already correct - idempotency guard, makes re-runs safe\n\n  // TC_US\u003cwrong-number>_ : _? allows a stray underscore, [\\s_] eats space-or-underscore; replace drops the wrong number.\n  if (title.match(/^TC_US_?\\d+[\\s_]/)) {\n    return title.replace(/^TC_US_?\\d+[\\s_]+/, correctPrefix);\n  }\n  // TC_UC... : common typo of TC_US; same replace, discarding the bad prefix.\n  if (title.match(/^TC_UC_?\\d+[\\s_]/)) {\n    return title.replace(/^TC_UC_?\\d+[\\s_]+/, correctPrefix);\n  }\n  // US\u003cnumber>_ : only the TC_ tag is missing, so prepend rather than replace.\n  if (title.match(/^US\\d+_/)) {\n    return 'TC_' + title;\n  }\n  // No recognizable prefix - prepend the correct one, keeping the original descriptive text.\n  return correctPrefix + title;\n}"},{"fn":"reassignMode()","explain":"Ownership in ADO lives in **three separate places**, and changing one doesn't touch the others — that's why the reassignment fans out. The Task and each test case are work items, so their `System.AssignedTo` is updated with a JSON-Patch `replace` op (`replace`, not `add`, because the field already holds a value). Test points are *not* work items — they belong to the Test Plan/suite and carry their own `tester` identity — so they go through the separate `updateTestPoints` API keyed by point ID, not work-item ID. The point update filters to only points whose `testCaseReference.id` is in `tcNewTester`, so points for cases outside this reassignment are left alone; miss step 3 and the plan's execution view would still show the old owner even after the work items were patched.","code":"private async reassignMode(planId: number, suiteId: number, reassignMapStr: string, featureId: number, dryRun: boolean) {\n  // Step 1: update the QA_Test Creation task's AssignedTo.\n  // 'replace' (not 'add') because the field already holds an owner.\n  await this.client.updateWorkItem(qaTaskId, [\n    { op: 'replace', path: '/fields/System.AssignedTo', value: newTester },\n  ]);\n\n  // Step 2: update every linked checklist's AssignedTo (same replace pattern, per TC)\n  // ...\n\n  // Step 3: test points are NOT work items - they live on the plan/suite with their own\n  // tester identity, so they use a separate API keyed by POINT id, not work-item id.\n  const allPoints = await this.client.getTestPointsPaginated(suiteId, planId);\n  const pointUpdates = allPoints\n    // Only touch points whose test case is in this reassignment; leave the rest alone.\n    .filter(pt => tcNewTester[pt.testCaseReference?.id])\n    .map(pt => ({ id: pt.id, tester: { displayName: tcNewTester[pt.testCaseReference.id] } }));\n  await this.client.updateTestPoints(planId, suiteId, pointUpdates);\n}"},{"fn":"addTestCases()","explain":"Two guardrails do the real work here. `Array.from(new Set(ids))` collapses duplicate IDs first, so a test case listed twice isn't added twice — and since adding an already-present case is a no-op in ADO, the whole operation stays idempotent. The `for` loop then slices the IDs into `BATCH_SIZE` (200) chunks and `sleep`s `BATCH_DELAY_MS` **between** batches — the `if (i + BATCH_SIZE \u003c unique.length)` guard skips the pause after the final chunk, so it never sleeps needlessly. That throttle is deliberate: ADO rate-limits bulk suite writes, and firing hundreds of adds back-to-back risks HTTP 429s. The `dryRun` short-circuit returns before any write, making a preview truly read-only.","code":"private async addTestCases(planId: number, suiteId: number, ids: number[], dryRun: boolean, configId?: number): Promise\u003cvoid> {\n  // De-dupe first: adding an already-present case is a no-op in ADO, so this keeps the op idempotent.\n  const unique = Array.from(new Set(ids));\n  if (dryRun) return; // preview is truly read-only - bail before any write\n\n  let added = 0;\n  for (let i = 0; i \u003c unique.length; i += BATCH_SIZE) {\n    const batch = unique.slice(i, i + BATCH_SIZE);\n    await this.client.addTestCasesToSuite(planId, suiteId, batch, configId);\n    added += batch.length;\n    // Throttle BETWEEN batches to stay under ADO rate limits (bulk writes can 429);\n    // the guard skips the pause after the last chunk.\n    if (i + BATCH_SIZE \u003c unique.length) await this.sleep(BATCH_DELAY_MS);\n  }\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Audit a suite for link/naming defects</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Validate every test case in the &#39;Checkout Redesign&#39; suite for bad links and off-convention titles — dry run.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>24 clean. 3 defects: #211 has no TestedBy link, #214&#39;s link is reversed, and #217 is titled &#39;Login test 3&#39; instead of the `TC_US..._` convention. Dry run — nothing written. Approve to fix.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Auto-assign testers from authorship</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>For the &#39;Payments&#39; feature, set each test case&#39;s owner to its author.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Resolved 5 testers across 40 test cases from their &#39;QA_Test Creation&#39; tasks. Set Alex on 12, Priya on 14, and so on — 40 `AssignedTo` updates, 0 errors.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Bulk-reassign when someone leaves</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Move all of story #305&#39;s tests from Sam to Jordan.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Patched the authoring Task to Jordan, reassigned 9 test cases, and updated their 9 test points. Done.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Azure DevOps Test Plans access and a <strong>PAT</strong> scoped to edit work items and test points.</li><li>The Test Plan ID and suite ID you want to organize — both visible in the ADO URL when you open the suite.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the engine that runs the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript run under Node — a one-time per-machine install.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> One-time setup per machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent and install its dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the ADO client and xlsx reader into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Cold install — a minute or two.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless <code>package.json</code> changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target org, project, and PAT (env vars).</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup: which ADO org/project to hit and the PAT that authorizes the writes.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Audit first with --dry-run.</div>
+        <pre class="rb__cmd"><code>npm run ado:suite:validate -- --plan-id 1201 --suite-id 1202 --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--dry-run</code> prints every test case with a missing link, reversed link, or off-convention title, but writes nothing. Review the list before letting it write.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Reads every test case in the suite and reports defects.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Approve by re-running without --dry-run.</div>
+        <pre class="rb__cmd"><code>npm run ado:suite:validate -- --plan-id 1201 --suite-id 1202</code></pre>
+        <div class="rb__why"><span>Why</span> Same audit, but now it repairs the <code>TestedBy</code> links and normalizes the titles it flagged.</div>
+        
+        <div class="rb__run rb__run--again"><span>Re-run</span> Idempotent — anything already correct is skipped; only remaining defects get fixed.</div>
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--plan-id &lt;id&gt; --suite-id &lt;id&gt;</dt><dd>Which Test Plan and suite to operate on.</dd><dt>--validate-links [--dry-run]</dt><dd>Audits (and, without --dry-run, repairs) missing/reversed <code>TestedBy</code> links and off-convention titles.</dd><dt>--assign-testers / --reassign-map</dt><dd>Sets or bulk-reassigns test case ownership to a tester.</dd><dt>--input &lt;xlsx&gt;</dt><dd>A list of test case IDs to add to the suite.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console audit report</dt><dd>Every defect found — missing link, reversed link, or off-convention title — with a before/after for each rename.</dd><dt>updated tracker items</dt><dd>Once approved: the test case&#39;s <code>TestedBy</code> link and/or title corrected directly in ADO; no local file is produced.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Idempotent — every pass only reports (and, if approved, fixes) remaining defects; anything already correct is skipped, so the output shrinks as the backlog clears.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Run the <code>--dry-run</code> audit as a weekly health-check job and forward the report only when it&#39;s non-empty — a clean suite yields an empty report, which is itself useful signal.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-minute screen recording: audit a suite of test cases, then approve the fixes.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Resolving test ownership</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When you assign owners or request a per-tester breakdown.</dd>
+          <dt>Takes in</dt><dd>A feature ID.</dd>
+          <dt>Shows out</dt><dd>A storyId → tester map, read off each story&#39;s &#39;QA_Test Creation&#39; Task <code>AssignedTo</code>.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Auditing the suite</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>On a validate run, before any write.</dd>
+          <dt>Takes in</dt><dd>Every test case currently in the suite.</dd>
+          <dt>Shows out</dt><dd>A defect list: missing links, reversed links, and off-convention titles.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Normalizing titles</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Only after approval — never on a dry run.</dd>
+          <dt>Takes in</dt><dd>A test case&#39;s current title and its story ID.</dd>
+          <dt>Shows out</dt><dd>A normalized title such as <code>TC_US42015_Something</code>.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Bulk reassignment</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When ownership changes, e.g. someone leaves.</dd>
+          <dt>Takes in</dt><dd>A story → new-owner map.</dd>
+          <dt>Shows out</dt><dd>Three targets patched in order: the authoring Task, each test case&#39;s <code>AssignedTo</code>, and each test point&#39;s tester.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Adding cases to a suite</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>When you add test cases, in batches of 200.</dd>
+          <dt>Takes in</dt><dd>A list of test case IDs.</dd>
+          <dt>Shows out</dt><dd>Those test cases appear in the target suite in ADO.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-build-watcher.html">← The Build Watcher</a>
+      <a href="the-results-poster.html">The Results Poster →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Test Scout — Agent 05</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s2">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">05<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Deciding what to test</span></div>
+        <h1>The Test Scout</h1>
+        <p class="lead">Collapses a feature&#39;s scattered artifacts — ADO work items, design docs, meeting transcripts — into one structured, testable briefing.</p>
+        <p class="kicker">Source file: test-intelligence-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Kills the per-story ramp-up where a tester reconstructs a feature from ADO, Figma, specs, and a meeting recording. One command aggregates all of it into a structured briefing — flows, business rules, edge cases, integration points, open questions, confidence score — so the whole team tests against one model instead of re-deriving it story by story.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>A tester picks up a story with a three-line description. The real detail is spread across a Figma deck, a spec doc, an hour of recording, and child work items. Reconstructing a testable model by hand is slow and brittle — one missed decision silently changes the expected behavior.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>Point it at a story ID and a document folder. It walks the ADO work-item tree, extracts text (pdf-parse for PDFs, mammoth for Word, a VTT parser for transcripts), sends transcripts to Gemini Flash for demonstrated behavior and decisions, then merges everything into a content-hashed JSON briefing: purpose, flows, business rules, edge cases, integration points, open questions, and a 0–100 confidence score. Re-runs are incremental — only changed sources are re-parsed.</p></div>
+    </div>
+    <p>A misunderstood feature produces the wrong test cases, and the defect ships however green they are. Shared understanding up front is the highest-leverage point in the QA cycle.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Pulls the feature&#39;s ticket and its smaller child tickets from the team&#39;s shared work board, keeping the ones about how the feature looks and behaves and skipping the plumbing.</span>
+          <span class="fc-node__fn">categorizeWorkItem()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Opens the supporting files in the feature folder — design mock-ups (PDF), written specs (Word), and recorded meeting transcripts.</span>
+          <span class="fc-node__fn">loadFeatureFolderContext()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Feeds the meeting transcripts to an AI reader that pulls out the demonstrated behaviour, the decisions made, and the open questions.</span>
+          <span class="fc-node__fn">analyzeTranscriptWithLLM()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Merges everything into one structured briefing — purpose, user flows, rules, edge cases, integration points — and gives it a confidence score.</span>
+          <span class="fc-node__fn">buildFeatureIntelligence()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Saves the briefing so the next agent in the line (the Test-Plan Author) can build test cases straight from it.</span>
+          <span class="fc-node__fn">saveVersion()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"categorizeWorkItem()","explain":"Pure keyword routing, no LLM — the same ticket always lands in the same bucket, which keeps the briefing's scope auditable. It concatenates `title` and `description` and lowercases once into `combined`, then checks `IGNORE_KEYWORDS` **first**: order is deliberate — a plumbing ticket that also says 'form' must be dropped before the UI check can claim it, so the ignore pass short-circuits with `return 'ignore'`. Only then does it scan `uiKeywords`, then `funcKeywords`, returning on the first hit, so **first match wins**. The final `return 'other'` is a keep, not a skip — an unmatched ticket still lands in the briefing, just uncategorized, so nothing silently disappears.","code":"function categorizeWorkItem(title, description) {\n  const combined = `${title} ${description}`.toLowerCase();  // lowercase once so every includes() test below is case-insensitive\n\n  // Ignore pass runs FIRST and wins ties: a ticket mentioning both infra and UI is dropped here, not kept\n  for (const keyword of IGNORE_KEYWORDS) {\n    if (combined.includes(keyword.toLowerCase())) return 'ignore'; // short-circuit — never reaches the keep checks below\n  }\n  // Screens/visuals -> 'ui'; first match wins, so the order of these buckets IS the precedence\n  const uiKeywords = ['ui','screen','page','modal','button','form','layout','design'];\n  for (const keyword of uiKeywords)\n    if (combined.includes(keyword)) return 'ui';\n  // Behaviour/logic -> 'functionality', checked only after UI so a form-validation ticket reads as UI\n  const funcKeywords = ['feature','logic','implement','validation','workflow'];\n  for (const keyword of funcKeywords)\n    if (combined.includes(keyword)) return 'functionality';\n\n  return 'other'; // NOT a skip — unmatched tickets are still kept in the briefing, just uncategorized\n}"},{"fn":"loadFeatureFolderContext()","explain":"Aggregates every artifact into one flat `sources` array where each entry carries a `type` tag, so downstream extraction can treat a PDF, a story export, and a transcript uniformly. It seeds the array with `loadLocalAdoStories(config.adoDir)` first, then probes a fixed list of conventional design-folder names — `design`, `figma`, `designs`, `wireframes` — because teams don't agree on one name; the `fs.existsSync(dir)` guard means a missing folder is silently skipped rather than throwing. Each loaded design doc is tagged `'design'` so a later stage knows how to parse it. Transcripts are deliberately **not** loaded here — they need LLM analysis rather than plain extraction, so they're handled in a separate pass.","code":"async function loadFeatureFolderContext(config) {\n  const sources = []; // one flat list — every doc becomes a uniform { type, content, ... } entry regardless of origin\n\n  // 1. Local story exports (ADO work items previously saved to disk) seed the list\n  sources.push(...loadLocalAdoStories(config.adoDir));\n\n  // 2. Design docs live under any of several conventional folder names — probe each; teams don't agree on one\n  for (const name of ['design','figma','designs','wireframes']) {\n    const dir = path.join(config.basePath, name);\n    if (fs.existsSync(dir)) // existsSync guard: a folder the team never created is skipped, not thrown on\n      sources.push(...await loadDirectoryContext(dir, 'design')); // tag 'design' so later extraction knows how to read it\n  }\n  // 3. Transcripts are loaded elsewhere — they need LLM analysis, not plain text extraction\n  return sources;\n}"},{"fn":"analyzeTranscriptWithLLM()","explain":"The transcript is the one source the rule-based extractors can't handle, so it's the only place an LLM is used here. The prompt pins the model to a QA-analyst role and hard-caps its inputs — `featureContext.substring(0, 2000)` and `transcript.substring(0, 6000)` — a deliberate token-budget guard so an hour-long recording can't overflow the context window or spike cost; the head of each carries the demoed behavior. It demands a fixed JSON shape (`demonstratedFeatures`, `testableScenarios`, `businessRules`, `edgeCases` with a `priority` enum) so the output slots straight into the briefing. `parseLLMJson` rather than `JSON.parse` because models routinely wrap JSON in markdown fences or prose — the tolerant parser salvages the object instead of throwing.","code":"async function analyzeTranscriptWithLLM(transcript, featureContext) {\n  // substring caps are a token-budget guard: 2k of context + 6k of transcript — the head of each carries\n  // the demoed behavior, and a long recording can't overflow the context window or spike cost\n  const prompt = `You are a QA analyst extracting testable\ninformation from a meeting/demo transcript.\n\nFEATURE CONTEXT:\n${featureContext.substring(0, 2000)}\n\nTRANSCRIPT:\n${transcript.substring(0, 6000)}\n\nExtract as JSON:\n{\n  \"demonstratedFeatures\": [\"...\"],\n  \"testableScenarios\": [{ \"scenario\": \"...\", \"steps\": [\"...\"] }],\n  \"businessRules\": [\"...\"],\n  \"edgeCases\": [{ \"scenario\": \"...\", \"priority\": \"high|medium|low\" }]\n}`;\n  const res = await callGeminiFlash(prompt); // Gemini Flash: the cheap/fast tier, ample for extraction-style work\n  return parseLLMJson(res.answer); // tolerant parse — models wrap JSON in markdown fences/prose; this salvages it\n}"},{"fn":"buildFeatureIntelligence()","explain":"Two extraction strategies converge into one object. The four `extract*` calls are pure rule-based passes over **every** source, so UI components, flows, rules, and edge cases are recovered deterministically without a model. The transcript-only loop then mines `walkthrough` data the rules can't infer: it regex-slices the `## Decisions Made` markdown section out of each transcript's content — the lookahead `(?=\\n##|$)` stops the capture at the next heading or end-of-string so it grabs exactly that section — and `parseList` turns the bullet block into entries. Finally `score(sources)` weights how many source types were present into the `confidenceScore`, so a briefing built from three artifacts is marked more trustworthy than one from a single thin ticket.","code":"async function buildFeatureIntelligence(storyId, storyTitle, sources) {\n  // Rule-based, deterministic passes over EVERY source — no model call, so these are stable across runs\n  const uiComponents  = extractUIComponents(sources);\n  const userFlows     = extractUserFlows(sources);\n  const businessRules = extractBusinessRules(sources);\n  const edgeCases     = extractEdgeCases(sources);\n\n  // Transcript-only: mine decisions the rule passes can't infer, by slicing the '## Decisions Made' section\n  const walkthrough = { decisionsRecorded: [], questionsRaised: [] }; // accumulator for decisions/open-questions surfaced across all transcripts\n  for (const ts of sources.filter(s => s.type === 'transcript')) {\n    const decisions = ts.content.match(/## Decisions Made\\n([\\s\\S]*?)(?=\\n##|$)/);\n    if (decisions) walkthrough.decisionsRecorded.push(...parseList(decisions[1])); // decisions[1] = the captured section body; parseList splits its bullets\n  }\n  return { storyId, storyTitle, userFlows, businessRules,\n           edgeCases, walkthrough, confidenceScore: score(sources) }; // score() weights how many source TYPES were present — thin input yields a lower score\n}"},{"fn":"saveVersion()","explain":"The briefing is the hand-off artifact, so persistence is deliberately plain and durable. `getVersionFilePath` derives a stable per-story path so re-runs overwrite the same file rather than piling up copies. `fs.mkdirSync(..., { recursive: true })` creates the whole output directory tree in one call and is a no-op if it already exists, so the first run on a fresh checkout doesn't fail on a missing folder. It writes `JSON.stringify(version, null, 2)` — pretty-printed at 2-space — so the file stays diff-friendly and human-readable, and because `version` already carries the content hashes, the next run can tell what actually changed.","code":"function saveVersion(outputDir, storyId, version) {\n  const versionFile = getVersionFilePath(outputDir, storyId); // stable per-story path, so a re-run overwrites in place instead of piling up copies\n  fs.mkdirSync(path.dirname(versionFile), { recursive: true }); // recursive: builds the whole tree, no-op if it exists — safe on a fresh checkout\n  fs.writeFileSync(versionFile, JSON.stringify(version, null, 2)); // 2-space pretty-print keeps the briefing diff-friendly; version carries the content hashes\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A new &#39;save draft&#39; feature with thin paperwork</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A feature ticket that just says &#39;Users can save a draft&#39;, plus a folder holding two screen mock-ups and a 40-minute recorded design meeting.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A briefing that spells out the flow (click Save Draft, see a &#39;Draft saved&#39; banner, drafts appear under a Drafts tab), the rule (drafts expire after 30 days), an edge case (saving with an empty title should be blocked), and one open question the meeting never resolved: &#39;What happens to a draft if the user logs out?&#39;</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A messy meeting transcript</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>An hour-long walkthrough recording where the team argued about button placement and settled on a final design.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A short list of decisions (&#39;Continue button moved to bottom-right&#39;, &#39;error banner is red, not amber&#39;), the testable scenarios that were demonstrated, and the follow-up questions nobody answered.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Read access to your <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> project and a <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate" target="_blank" rel="noopener">personal access token</a> (Work Items: Read).</li><li>A folder for the feature with its documents — design PDFs, spec <code>.docx</code> files, and any meeting-transcript (<code>.vtt</code>/<code>.docx</code>) files.</li><li>A Gemini API key for the transcript-summarization step; without it the agent still runs, rule-based only.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the engine that runs the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a small TypeScript program; Node is the runtime that executes it. This is the one thing you install once per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Needed only the first time on a new computer.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Get the agent&#39;s code and install the libraries it depends on.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> downloads the helper libraries the agent uses — the work-board client, the PDF reader, the Word reader, and the AI client — into a local <code>node_modules</code> folder.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Skips straight past — already installed, unless the library list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Tell it which systems to talk to (environment variables).</div>
+        <pre class="rb__cmd"><code>export ADO_ORG=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token
+export GOOGLE_API_KEY=your-gemini-key   # optional</code></pre>
+        <div class="rb__why"><span>Why</span> The agent reads these at startup to know which work board to open, which token proves it&#39;s allowed, and which AI to use. Nothing is hard-coded — swap these and it points at a different project.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Point it at one feature and run it.</div>
+        <pre class="rb__cmd"><code>npm run intelligence:folder -- \
+  --story 4001 \
+  --folder ./features/save-draft</code></pre>
+        <div class="rb__why"><span>Why</span> This is the actual run. <code>npm run intelligence:folder</code> launches the agent&#39;s built-in &quot;read a feature folder&quot; task — one of the named shortcuts defined in its <code>package.json</code> (think of it as pressing a labelled button that runs the real program underneath). The lone <code>--</code> is npm&#39;s way of saying &quot;everything after this belongs to the agent, not to npm&quot;, so the two options are passed straight through: <code>--story</code> is the feature&#39;s ticket number and <code>--folder</code> is where its documents live. Hitting Enter starts the whole read-and-summarize.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Reads every source from scratch and builds the briefing.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Only re-reads the documents that actually changed (it fingerprints each one), then writes a short changelog of what&#39;s different.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the briefing it produced.</div>
+        <pre class="rb__cmd"><code>open ./output/intelligence/story-4001.json
+# and the readable summary:
+open ./output/intelligence/story-4001.md</code></pre>
+        <div class="rb__why"><span>Why</span> The agent saves its work to disk. The <code>.json</code> is the structured briefing (for the next agent to consume); the <code>.md</code> is the same thing formatted for a human to read.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--story &lt;id&gt;</dt><dd>The feature&#39;s ticket number on the work board.</dd><dt>--folder &lt;path&gt;</dt><dd>A folder holding the feature&#39;s design PDFs, spec Word docs, and meeting transcripts.</dd><dt>environment variables</dt><dd>Which board/project to read, the access token, and (optionally) the AI key.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>story-&lt;id&gt;.json</dt><dd>The structured briefing — purpose, user flows, rules, edge cases, open questions, and a confidence score.</dd><dt>story-&lt;id&gt;.md</dt><dd>The same briefing formatted for a person to read.</dd><dt>changelog (on re-run)</dt><dd>A short list of what changed since last time, so you don&#39;t re-read the whole thing.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> The second run is fast and quiet: the agent stored a fingerprint of every document it read, so it only re-summarizes the ones that actually changed and prints a changelog. Run it on a schedule and the briefing stays current on its own.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> The <code>.json</code> output is the hand-off to the next agent in the line — the <strong>Test-Plan Author</strong> — which turns the briefing straight into test cases. Drop this step into your CI pipeline so every new feature ticket automatically gets a briefing waiting for the tester.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: point the agent at a feature and watch the briefing appear.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 6</div>
+        <h3 class="display">Reads the shared work board</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, the moment the agent starts on a feature.</dd>
+          <dt>Takes in</dt><dd>A single story ID.</dd>
+          <dt>Shows out</dt><dd>The parent story plus its child tickets, filtered down to the ones about behaviour and screens (via the Azure DevOps REST API — the team&#39;s shared work-and-ticket board).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 6</div>
+        <h3 class="display">Parses the local documents</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after the tickets are pulled.</dd>
+          <dt>Takes in</dt><dd>The PDFs, Word docs, and meeting-transcript files sitting in the feature folder.</dd>
+          <dt>Shows out</dt><dd>Plain, searchable text — using pdf-parse for PDFs, mammoth for Word, and VTT/DOCX parsers for transcripts.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 6</div>
+        <h3 class="display">Summarizes transcripts with an AI model</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once for each recorded meeting it finds.</dd>
+          <dt>Takes in</dt><dd>The transcript text and a short summary of the feature.</dd>
+          <dt>Shows out</dt><dd>A structured list of demonstrated features, decisions made, and open questions (produced by the Gemini Flash model).</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 6</div>
+        <h3 class="display">Merges into one &#39;intelligence&#39; file</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every source has been read.</dd>
+          <dt>Takes in</dt><dd>All the extracted pieces together.</dd>
+          <dt>Shows out</dt><dd>A single structured JSON briefing, stamped with content hashes for change-tracking and a 0–100 confidence score.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 6</div>
+        <h3 class="display">Understanding first, test cases later</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Only if you explicitly ask for it.</dd>
+          <dt>Takes in</dt><dd>An opt-in flag.</dd>
+          <dt>Shows out</dt><dd>By default the agent stops at understanding; it will not write test cases unless told to — so it is safe to run just to learn a feature.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="5">
+        <div class="uh-slide__no">6 / 6</div>
+        <h3 class="display">Its output can become an HTML page — via any LLM</h3>
+        <div class="uh-sample">
+          <div class="uh-sample__text"><dl class="uh-io">
+            <dt>When it runs</dt><dd>An optional step after the briefing is saved.</dd>
+            <dt>Takes in</dt><dd>The <code>.json</code> briefing (for the next agent to consume) or the human-readable <code>.md</code>.</dd>
+            <dt>Shows out</dt><dd>Because the briefing is plain, structured text, you can hand it to any LLM and ask for a polished HTML page, a slide, or a one-pager — no special integration needed. The sample beside this was generated straight from <code>story-4001.json</code>.</dd>
+          </dl></div>
+          <figure class="uh-sample__shot">
+            <img alt="A sample HTML briefing page generated from the agent&#39;s JSON output" src="../assets/samples/the-test-scout-output.png">
+            <figcaption>Sample: the briefing turned into an HTML page by an LLM.</figcaption>
+          </figure>
+        </div>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button><button class="uh-dot" data-uh-dot="5" aria-label="Slide 6"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-bug-to-test-writer.html">← The Bug-to-Test Writer</a>
+      <a href="the-test-plan-author.html">The Test-Plan Author →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

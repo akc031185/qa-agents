@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Screen-Size Checker — Agent 18</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s4">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">18<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Checking the screens look right</span></div>
+        <h1>The Screen-Size Checker</h1>
+        <p class="lead">Captures every screen at nine viewport profiles via Playwright device emulation and reports capture coverage as a pass/fail grid plus a single percentage.</p>
+        <p class="kicker">Source file: responsive-testing-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Emulates nine viewport profiles — a 1920×1080 desktop plus four phones in portrait and landscape — captures each mapped screen at each, then checks the captures dir for the expected PNG per screen-per-viewport. Output is a grid (screens × viewports) with a mark where a capture exists and a dash where it&#39;s missing, plus an overall coverage percentage. A missing cell means the screen failed to render at that viewport.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>By hand: open the browser device toolbar, pick a profile, reload, navigate to a screen, screenshot, repeat per profile and per screen. Nine profiles × dozens of screens is hundreds of manual captures — tedious, slow, and non-deterministic across testers.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One run captures every screen at every viewport and emits a coverage grid — mark where the capture landed, dash where it didn&#39;t — with total coverage as a single percentage.</p></div>
+    </div>
+    <p>A dash in the grid is an early signal that a screen breaks at that viewport — caught before a user on that exact device hits it.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Selects the viewport set — the full run is nine profiles (desktop + four phones, portrait and landscape); a quick run drops the landscape profiles.</span>
+          <span class="fc-node__fn">getViewports()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Runs one Playwright project per viewport — Chromium for desktop/Android profiles, WebKit for iPhone profiles — capturing every mapped screen at that emulated device.</span>
+          <span class="fc-node__fn">runCaptures()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For each screen × viewport, checks the captures dir for the expected <code>&lt;screenId&gt;-&lt;viewport&gt;.png</code> and tallies existing vs missing.</span>
+          <span class="fc-node__fn">buildReport()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Renders the coverage grid — screens down the rows, viewports across the header, <code>Y</code>/<code>-</code> per cell — plus a &#39;Missing Captures&#39; list naming every incomplete screen and its missing viewports.</span>
+          <span class="fc-node__fn">generateMarkdown()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Serializes the report to JSON and Markdown, and with <code>--word</code> emits a <code>.docx</code> laying out each screen&#39;s captures side by side per viewport.</span>
+          <span class="fc-node__fn">writeReports()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"getViewports()","explain":"Static profile list filtered by one flag. Each entry pins an explicit `width`×`height` **and** a Playwright `project` name — the `project` is what actually applies device emulation, while the width/height are what the grid labels. `includeLandscape` true returns all nine; false filters out `type === 'landscape'`, leaving desktop plus the upright phones — the common-case sweep that skips the slower sideways captures. The `type` tag, not the dimensions, is the filter key, so adding a new portrait phone needs no change here.","code":"const ALL_VIEWPORTS: ViewportInfo[] = [\n  // Each profile pins an explicit width×height AND the Playwright project name that emulates it\n  { project: 'desktop',       label: 'Desktop Chrome',  width: 1920, height: 1080, type: 'desktop' },\n  { project: 'mobile-chrome', label: 'Pixel 7',         width: 412,  height: 915,  type: 'portrait' },\n  { project: 'mobile-safari', label: 'iPhone 15 Pro Max', width: 430, height: 932, type: 'portrait' },\n  // ...6 more upright/sideways phone profiles\n];\n\nfunction getViewports(includeLandscape: boolean): ViewportInfo[] {\n  if (includeLandscape) return ALL_VIEWPORTS;\n  // Quick run: drop the sideways profiles, keeping desktop + upright phones (the common-case coverage)\n  return ALL_VIEWPORTS.filter(v => v.type !== 'landscape');\n}"},{"fn":"runCaptures()","explain":"Builds the `playwright test` argv by expanding the selected viewports into one **`--project=` flag each** — the project name is the hook into `responsive.config.ts`, which binds it to a device profile and its engine (**Chromium** for desktop/Android, **WebKit** for iPhone, so iOS rendering matches the real Safari engine). `--grep @design-capture` restricts the run to the tagged capture spec, keeping the rest of the suite out. It runs with `stdio: 'inherit'` so Playwright's progress streams live, under a **600s** ceiling. As with the sibling agents, a **non-zero exit is expected** — some screens legitimately fail to capture — so it is logged `warn`, and the missing PNGs are inferred by the existence check downstream rather than treated as a hard error.","code":"function runCaptures(input: ResponsiveInput, viewports: ViewportInfo[]): void {\n  const configPath = path.join(browserDir, 'responsive.config.ts');\n  // One --project flag per selected viewport; the config maps each project name to its device + engine\n  const projectArgs = viewports.map(v => `--project=${v.project}`).join(' ');\n  // --grep targets only the tagged capture spec so unrelated tests in the suite don't run\n  const args = ['npx', 'playwright', 'test', `--config=${configPath}`,\n                '--grep', '@design-capture', projectArgs];\n  if (input.headed) args.push('--headed');\n\n  try {\n    // stdio:inherit streams Playwright's live progress to the console; 600s ceiling for the full sweep\n    execSync(args.join(' '), { cwd: browserDir, stdio: 'inherit', timeout: 600000 });\n  } catch (error: any) {\n    // Non-zero exit is expected if some captures fail — handled below\n    log(`Capture completed with exit code ${error.status || 1}`, 'warn');\n  }\n}"},{"fn":"buildReport()","explain":"Walks the full **screen × viewport matrix** and, for each cell, reconstructs the expected filename via `VIEWPORT_LABEL_MAP[vp.project]` — the map converts the Playwright project name into the same slug the capture spec used to write the PNG, so a mismatch here would silently read every cell as missing. `fs.existsSync` **is** the pass/fail test: no image comparison, just presence, because a screen that crashed at a viewport simply never produces its file. It rolls up `capturedViewports` per screen and the run-wide `totalCaptures` (`screens × viewports`, the denominator) and `capturedCount` (the numerator) that yield the single coverage percentage.","code":"function buildReport(viewports: ViewportInfo[], screenFilter: string[]): ResponsiveReport {\n  const screens = screenFilter.map(screenId => {\n    const captures = viewports.map(vp => {\n      // VIEWPORT_LABEL_MAP turns the project name into the filename slug the capture spec wrote\n      const filename = `${screenId}-${VIEWPORT_LABEL_MAP[vp.project]}.png`;\n      // Existence on disk IS the pass signal — a missing file means the screen failed to render there\n      const exists = fs.existsSync(path.join(capturesDir, filename));\n      return { screenId, viewport: vp.label, path: filename, exists };\n    });\n    return { id: screenId, captures,\n             // Per-screen coverage: how many of its viewports produced a file\n             capturedViewports: captures.filter(c => c.exists).length,\n             totalViewports: viewports.length };\n  });\n\n  return { timestamp: new Date().toISOString(), viewports, screens,\n           totalScreens: screenFilter.length,\n           // Denominator and numerator for the headline coverage percentage\n           totalCaptures: screens.length * viewports.length,\n           capturedCount: screens.reduce((n, s) => n + s.capturedViewports, 0) };\n}"},{"fn":"generateMarkdown()","explain":"Renders two views of the same data. The grid uses **only the first token** of each viewport label (`label.split(' ')[0]`) as its column header to keep the table narrow, then emits one row per screen with `Y`/`-` cells in the **same order** as the header — the alignment is positional, so the header and cell arrays must iterate the same `viewports`. The second pass filters to screens where `capturedViewports \u003c totalViewports` and lists each one's failed viewports **by name** under `Missing Captures`, turning the grid's dashes into an actionable checklist. When no screen is incomplete, that section is omitted entirely rather than printed empty.","code":"function generateMarkdown(report: ResponsiveReport): string {\n  const lines: string[] = [];\n  // Header row: first token of each viewport label (e.g. \"Pixel\", \"iPhone\") keeps columns narrow\n  const vpHeaders = report.viewports.map(v => v.label.split(' ')[0]).join(' | ');\n  lines.push(`| Screen | ${vpHeaders} |`);\n\n  for (const screen of report.screens) {\n    // Y where the capture exists, - where it's missing — one cell per viewport, same order as the header\n    const cells = screen.captures.map(c => c.exists ? 'Y' : '-');\n    lines.push(`| ${screen.id} | ${cells.join(' | ')} |`);\n  }\n\n  // Second section names only the incomplete screens so gaps are actionable, not buried in the grid\n  const missing = report.screens.filter(s => s.capturedViewports \u003c s.totalViewports);\n  if (missing.length > 0) {\n    lines.push('## Missing Captures');\n    for (const s of missing) {\n      // List the specific viewports that failed for this screen, by human label\n      const gaps = s.captures.filter(c => !c.exists).map(c => c.viewport);\n      lines.push(`- **${s.id}**: ${gaps.join(', ')}`);\n    }\n  }\n  return lines.join('\\n');\n}"},{"fn":"writeReports()","explain":"Derives one timestamp — ISO with `:` and `.` replaced by `-` and sliced to `yyyy-mm-ddThh-mm-ss` so it's **filesystem-safe, lexically sortable, and unique** — and reuses it across all sibling outputs so the `.json`, `.md`, and optional `.docx` from one run share a suffix. JSON is always written pretty-printed at **2-space** indent (diff-friendly); the Markdown is the rendered grid. The `.docx` is the only conditional branch, gated on `generateWord`: it awaits `generateWordDoc`, which **embeds the actual PNGs** rather than linking them, and only then is its path added to the returned map — so callers can tell which artifacts actually exist.","code":"async function writeReports(report: ResponsiveReport, generateWord: boolean) {\n  // Colons/dots stripped and truncated to yyyy-mm-ddThh-mm-ss — filesystem-safe, sortable, unique per run\n  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);\n\n  const jsonPath = path.join(reportsDir, `responsive-report-${ts}.json`);\n  // 2-space pretty-print so the JSON stays diff-friendly and human-readable\n  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2));\n\n  const mdPath = path.join(reportsDir, `responsive-report-${ts}.md`);\n  fs.writeFileSync(mdPath, generateMarkdown(report));\n\n  const paths = { json: jsonPath, markdown: mdPath };\n  if (generateWord) {\n    const wordPath = path.join(reportsDir, `responsive-report-${ts}.docx`);\n    await generateWordDoc(report, wordPath); // embeds the actual PNGs\n    paths.word = wordPath;\n  }\n  return paths;\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Full sweep across all nine viewports</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>25 screens requested at every viewport profile.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A 25 × 9 grid, an &#39;88% coverage&#39; headline, and a &#39;Missing Captures&#39; list naming the three screens that failed to render at the smallest phone viewport.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Sign-in flow, portrait only</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Run scoped to the login and welcome screens, landscape profiles excluded.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A compact grid showing both screens captured at desktop and every portrait phone viewport, coverage 100%.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Screen that fails to render in landscape</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Full run including landscape viewports.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Grid marks the screen captured in portrait but a dash in landscape, listing that screen+viewport under &#39;Missing Captures&#39; for follow-up.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>The target app running at a reachable URL (dev or QA) — the agent captures it live at each viewport.</li><li>~10 min on first run: <code>npx playwright install</code> downloads the Chromium and WebKit engines before any capture.</li><li>The screen list and per-screen navigation already wired into the agent (no per-run setup for this part).</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime for the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program executed by Node. One-time install per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed once per new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install dependencies — once for the agent, once for the Playwright package it drives.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+cd Playwright
+npm install
+npx playwright install   # downloads the actual Chromium + WebKit browser engines</code></pre>
+        <div class="rb__why"><span>Why</span> The agent lives in the project root; the capture layer lives in a sibling <code>Playwright</code> dir with its own deps. <code>npx playwright install</code> fetches the engines — Chromium for desktop/Android, WebKit for iPhone — not bundled with the npm package.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads deps plus the browser engines — the slow part (5-10 min).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless a dependency or browser version changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target URL.</div>
+        <pre class="rb__cmd"><code>export APP_URL=https://your-app-url/home</code></pre>
+        <div class="rb__why"><span>Why</span> <code>APP_URL</code> is the live app opened at each viewport. Unset, it falls back to a built-in default that won&#39;t be your app.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run it.</div>
+        <pre class="rb__cmd"><code>npm run responsive:test -- --word</code></pre>
+        <div class="rb__why"><span>Why</span> The full run: captures every mapped screen at nine viewports (desktop + four phones, portrait and landscape) and writes the coverage grid. <code>--word</code> additionally emits a <code>.docx</code> with the captures embedded.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Captures every screen at every viewport from scratch.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> <code>--capture-only</code> refreshes captures only; <code>--report-only</code> rebuilds the grid from on-disk captures without re-capturing.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the generated report.</div>
+        <pre class="rb__cmd"><code>open outputs/mobile/reports/responsive-report-&lt;timestamp&gt;.md</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.md</code> holds the coverage grid — <code>Y</code> per captured screen × viewport cell, <code>-</code> per gap — plus the explicit missing-captures list.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>APP_URL (environment variable)</dt><dd>URL of the running app to capture.</dd><dt>--screens &lt;list&gt;</dt><dd>Comma-separated screen ids to scope the run to a subset instead of the full set.</dd><dt>--landscape, --capture-only, --report-only, --headed, --word</dt><dd>Flags to add landscape viewports, split capture/report phases, run headed (visible browser), or emit a <code>.docx</code>.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>responsive-report-&lt;timestamp&gt;.json / .md</dt><dd>Machine-readable and rendered coverage grid plus the overall percentage.</dd><dt>responsive-report-&lt;timestamp&gt;.docx (optional)</dt><dd><code>.docx</code> with the captures embedded; emitted only with <code>--word</code>.</dd><dt>outputs/mobile/captures/*.png</dt><dd>Raw captures, one per screen per viewport — reused by <code>--report-only</code> on a later run.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> <code>--report-only</code> skips capture and rebuilds the grid from existing captures — useful to re-derive the numbers without a re-capture. A flagless run always re-captures every screen at every viewport, since coverage shifts with every build.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Run the nine-viewport sweep as a pre-release build gate; a dropping coverage percentage, or a screen gaining a new <code>-</code> in the grid, is a regression worth blocking on.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>2-3 min screen recording: watch the agent capture every screen at nine viewport profiles and build the coverage grid.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Selecting viewport profiles</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, before capture.</dd>
+          <dt>Takes in</dt><dd>The <code>includeLandscape</code> flag.</dd>
+          <dt>Shows out</dt><dd>Either five (desktop + portrait phones) or all nine explicit width×height profiles.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Capturing every screen per viewport</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After profiles are selected (skipped with <code>--report-only</code>).</dd>
+          <dt>Takes in</dt><dd>The mapped screen list plus the selected profiles.</dd>
+          <dt>Shows out</dt><dd>Playwright screenshots using two engines to match real devices — Chromium for desktop/Android, WebKit (Safari&#39;s engine) for iPhone profiles.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Checking capture existence</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After capture finishes.</dd>
+          <dt>Takes in</dt><dd>The expected screen × viewport filenames.</dd>
+          <dt>Shows out</dt><dd>A captured/missing flag per cell of the matrix.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Building the coverage grid</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after the existence check.</dd>
+          <dt>Takes in</dt><dd>All per-cell captured/missing flags.</dd>
+          <dt>Shows out</dt><dd>A <code>Y</code>/<code>-</code> grid, an overall coverage percentage, and an explicit missing-captures list.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Writing the report</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, once the grid is built.</dd>
+          <dt>Takes in</dt><dd>The finished grid and its totals.</dd>
+          <dt>Shows out</dt><dd>A JSON file, a Markdown report, and — with <code>--word</code> — a <code>.docx</code> with the PNGs embedded.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-design-matcher.html">← The Design Matcher</a>
+      <a href="the-phone-tester.html">The Phone Tester →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

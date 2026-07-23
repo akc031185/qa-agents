@@ -1,0 +1,190 @@
+{
+  "slug": "the-bug-filer",
+  "plate": 1,
+  "name": "The Bug Filer",
+  "techName": "ado-bug-agent.ts",
+  "category": "find",
+  "oneLiner": "Files a typed, deduplicated ADO Bug work item per test failure — title, repro steps, severity, screenshot, parent link — in one pass.",
+  "lead": "Consumes a `TestFailure[]` from your runner and files each failure as a fully-populated Azure DevOps Bug via the REST API. Every field is set — title, description table, `Microsoft.VSTS.TCM.ReproSteps`, severity, priority, tags — the screenshot is attached, and the bug is linked under its parent user story. Idempotent: it searches for an existing open bug before creating.",
+  "chore": "Manual triage means opening the tracker and hand-keying each failure into a new ticket: title, error, repro steps, severity, browser, screenshot, parent link. Across a dozen failures it's slow, and fatigue produces vague titles, missing screenshots, and duplicate filings.",
+  "instead": "One consistently-structured Bug work item per failure, filed the moment it lands — identical field layout every time, no duplicates, no blank fields. Severity and priority are assigned by deterministic keyword rules, so the same failure always grades the same way.",
+  "whyItMatters": "A clearly-written bug filed instantly gets fixed sooner. A vague or forgotten one regresses to production. Deterministic filing removes the human variance that lets that happen.",
+  "howItWorks": [
+    {
+      "step": "Iterates the `TestFailure[]` and, per failure, branches to create, update, or skip — then returns a tallied `AgentResponse`.",
+      "fn": "createBugsFromFailures()",
+      "explain": "The orchestrator. Failures are processed sequentially, not in parallel, so the dedup gate stays consistent — two failures of the same test in one batch can't race and both file a bug. For each, `findExistingBug` runs first; a match routes to `updateBug` (append a recurrence note) or a plain skip based on `updateExisting`, and the `continue` guarantees it never also creates. Only a genuine miss reaches `createBug`. `dryRun` is the safety valve: the full decide path runs, the write doesn't — so CI can preview the exact create/update/skip breakdown before anything touches the board.",
+      "code": "async createBugsFromFailures(\n  failures: TestFailure[],\n  options: { userStoryId?: string; dryRun?: boolean; updateExisting?: boolean } = {}\n): Promise<AgentResponse> {\n  const results: CreatedBug[] = [];\n\n  for (const failure of failures) {\n    // Dedup gate first — never file blind. One WIQL round-trip per failure.\n    const existingBug = await this.findExistingBug(failure);\n\n    if (existingBug) {\n      // Known failure: append a recurrence comment, or skip entirely.\n      if (options.updateExisting) {\n        await this.updateBug(existingBug.id, failure);\n        results.push({ ...existingBug, action: 'updated' });\n      } else {\n        results.push({ ...existingBug, action: 'skipped-existing' });\n      }\n      continue; // never fall through to create\n    }\n\n    // New failure. dryRun runs the full decide path but suppresses the POST,\n    // so you can preview exactly what would be filed with zero side effects.\n    if (!options.dryRun) {\n      const bug = await this.createBug(failure, options.userStoryId);\n      results.push(bug);\n    }\n  }\n  // ...tally created / updated / skipped for the AgentResponse summary\n  return { success: true, bugs: results } as AgentResponse;\n}"
+    },
+    {
+      "step": "Runs a WIQL query for an open Bug whose title already contains this test case and browser — the dedup gate.",
+      "fn": "findExistingBug()",
+      "explain": "The dedup gate, written in WIQL — ADO's SQL-like work-item query language, available only over POST `/wit/wiql`. The dedup key is deliberately `testCase` **and** `browser`: the same test failing on two browsers files two bugs, because the repro differs. The `<> 'Closed'` / `<> 'Resolved'` clauses are the load-bearing part — an already-fixed bug is invisible to this query, so a **regression** files a fresh ticket instead of reopening stale history. WIQL returns ids only, so a hit costs a second `getBug` call to hydrate the title and URL. One caveat it exposes: `failure.testCase` is interpolated straight into the query, so titles are normalized upstream — an unescaped quote would break the WIQL.",
+      "code": "private async findExistingBug(failure: TestFailure) {\n  // Dedup key = test case + browser. Both must be in the title so the same\n  // test failing on Chrome vs Firefox stays two separate bugs (distinct repros).\n  const wiql = `\n    SELECT [System.Id], [System.Title], [System.State]\n    FROM WorkItems\n    WHERE [System.WorkItemType] = 'Bug'\n      AND [System.State] <> 'Closed'      -- ignore already-fixed bugs, so a\n      AND [System.State] <> 'Resolved'    -- regression opens a fresh ticket\n      AND [System.Title] CONTAINS '${failure.testCase}'\n      AND [System.Title] CONTAINS '${failure.browser}'\n  `;\n\n  // WIQL is POST-only and returns work-item IDs, never fields.\n  const response = await fetch(`${this.baseUrl}/wit/wiql?api-version=7.0`, {\n    method: 'POST',\n    headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n    body: JSON.stringify({ query: wiql }),\n  });\n\n  const result = await response.json();\n  if (result.workItems?.length > 0) {\n    // Hit → hydrate the first match (getBug = GET /wit/workitems/{id}) so the\n    // caller gets a usable { id, url, title } instead of a bare id.\n    const bugId = result.workItems[0].id;\n    const bugDetails = await this.getBug(bugId);\n    return { id: bugId, url: bugDetails._links.html.href, title: bugDetails.fields['System.Title'] };\n  }\n  return null; // Miss → caller proceeds to createBug.\n}"
+    },
+    {
+      "step": "Grades severity from keywords in the test case and error text — deterministic, no LLM.",
+      "fn": "determineSeverity()",
+      "explain": "Deterministic severity mapping — no LLM, no heuristics that drift. It lowercases the test name and error, then checks keyword tiers in priority order and returns on the first match: `smoke`/`critical` in the test name short-circuits to `1 - Critical` (a smoke failure blocks everything downstream); a `navigate`/`login`/`auth` test or a `timeout` error → `2 - High`; `regression` → `3 - Medium`; everything else falls through to `4 - Low`. Order matters — first match wins, so a 'critical login smoke' test grades Critical, not High. Because it's pure keyword matching, the same failure grades identically across runs and machines, which is what makes the filed severities auditable.",
+      "code": "private determineSeverity(failure: TestFailure): BugDetails['severity'] {\n  const testCase = failure.testCase.toLowerCase();\n  const error = failure.error.toLowerCase();\n\n  // Tiers are checked top-down; the FIRST match wins, so order = precedence.\n\n  // Critical: smoke or explicitly-critical tests — these gate the whole suite.\n  if (testCase.includes('critical') || testCase.includes('smoke')) {\n    return '1 - Critical';\n  }\n\n  // High: auth/navigation core paths, or any timeout (usually a real hang).\n  if (\n    testCase.includes('navigate') ||\n    testCase.includes('login') ||\n    testCase.includes('auth') ||\n    error.includes('timeout')\n  ) {\n    return '2 - High';\n  }\n\n  // Medium: regression coverage — important, not blocking.\n  if (testCase.includes('regression')) {\n    return '3 - Medium';\n  }\n\n  // Low: everything else (UI validation, formatting, cosmetic).\n  return '4 - Low';\n}"
+    },
+    {
+      "step": "Assembles the typed `BugDetails` — title, description, repro steps, severity, priority, area/iteration path, tags.",
+      "fn": "buildBugDetails()",
+      "explain": "Assembles the entire work-item payload as one typed `BugDetails` object before any network call — so the create step is a straight serialize-and-POST with nothing computed inline. The title template is load-bearing: it's the exact string the dedup gate greps for, so it must stay stable — change it and `findExistingBug` stops matching and you get duplicates. `areaPath` routes the bug onto the right team's backlog; it prefers `ADO_AREA_PATH` and falls back to a `<project>\\\\MyTeam` default, so the same code drops into any project by setting one env var. Severity and priority come from the deterministic keyword graders, not from the caller — so a bug can't be accidentally mis-graded.",
+      "code": "private buildBugDetails(failure: TestFailure, parentStoryId?: string): BugDetails {\n  // Grades computed up front so the payload is fully deterministic.\n  const severity = this.determineSeverity(failure);\n  const priority = this.determinePriority(failure);\n\n  return {\n    // Title IS the dedup key (see findExistingBug) — keep this template stable.\n    title: `[Automation] ${failure.testCase} failed on ${failure.browser}`,\n    description: this.formatDescription(failure),   // HTML, human-readable\n    reproSteps: this.formatReproSteps(failure),     // HTML, numbered steps\n    severity,\n    priority,\n    // areaPath routes the bug to a team's backlog; env override → project default.\n    areaPath: process.env.ADO_AREA_PATH || `${this.project}\\\\MyTeam`,\n    iterationPath: process.env.ADO_ITERATION_PATH,  // optional sprint assignment\n    tags: this.buildTags(failure),\n  };\n}"
+    },
+    {
+      "step": "POSTs the JSON-Patch document to create the `$Bug`, then links the parent story and attaches the screenshot.",
+      "fn": "createBug()",
+      "explain": "The write. ADO work-item creation isn't a plain JSON POST — it's a JSON-Patch document (`application/json-patch+json`), an array of `add` ops keyed by field reference name (`System.Title`, `Microsoft.VSTS.TCM.ReproSteps`, `Microsoft.VSTS.Common.Severity`…), sent to the `$Bug` work-item-type endpoint. Tags are joined with `; ` because that's ADO's on-the-wire delimiter. The bug is created in one call; the parent link and screenshot are two follow-up calls that only fire when there's a story id or an attachment — so a failure with no screenshot still files cleanly. The screenshot is what turns 'the test failed' into a triageable bug, which is the entire reason to do this automatically.",
+      "code": "private async createBug(failure: TestFailure, parentStoryId?: string): Promise<CreatedBug> {\n  const bugDetails = this.buildBugDetails(failure, parentStoryId);\n\n  // ADO create = JSON-Patch: an array of add-ops, one per field.\n  const patchDocument = [\n    { op: 'add', path: '/fields/System.Title', value: bugDetails.title },\n    { op: 'add', path: '/fields/System.Description', value: bugDetails.description },\n    { op: 'add', path: '/fields/Microsoft.VSTS.TCM.ReproSteps', value: bugDetails.reproSteps },\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Severity', value: bugDetails.severity },\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: bugDetails.priority },\n    { op: 'add', path: '/fields/System.Tags', value: bugDetails.tags?.join('; ') || '' },\n  ];\n\n  // Note the content-type (json-patch+json) and the $Bug work-item-type in the path.\n  const response = await fetch(`${this.baseUrl}/wit/workitems/$Bug?api-version=7.0`, {\n    method: 'POST',\n    headers: { Authorization: this.authHeader, 'Content-Type': 'application/json-patch+json' },\n    body: JSON.stringify(patchDocument),\n  });\n\n  const bug = await response.json();\n\n  // Two best-effort follow-ups, only after the bug exists:\n  if (parentStoryId || failure.userStoryId) {\n    await this.linkToUserStory(bug.id, parentStoryId || failure.userStoryId!); // parent link\n  }\n  if (failure.screenshot) {\n    await this.addAttachment(bug.id, failure.screenshot, 'screenshot.png');    // attach evidence\n  }\n\n  return { id: bug.id, url: bug._links.html.href, title: bugDetails.title, action: 'created' };\n}"
+    },
+    {
+      "step": "On a dedup hit with `updateExisting`, POSTs a timestamped comment to the existing bug instead of filing a duplicate.",
+      "fn": "updateBug()",
+      "explain": "The 'seen it again' path. Instead of filing a duplicate, it POSTs an HTML comment to the matched bug's `comments` endpoint, stamping the recurrence with an ISO timestamp, the browser, and the error. The error runs through `escapeHtml` first — failure messages are untrusted text that routinely contain `<`/`>` from selectors or markup, and unescaped they'd corrupt the comment HTML. Keeping every recurrence on one work item is what makes 'this bug has failed 14 times since Tuesday' answerable — fragmenting it across duplicates destroys that signal. The `comments` API is still `-preview`, so the version is pinned deliberately.",
+      "code": "private async updateBug(bugId: number, failure: TestFailure): Promise<void> {\n  // Recurrence note, not a new bug: append an HTML comment to the existing one\n  // so every repeat of this failure stays on a single work item.\n  const comment = `\n<h3>Test Failed Again</h3>\n<p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>\n<p><strong>Browser:</strong> ${failure.browser}</p>\n<p><strong>Error:</strong></p>\n<pre>${this.escapeHtml(failure.error)}</pre>\n  `; // error is escaped — failure text is untrusted and often contains < >\n\n  // comments is a -preview endpoint, so the api-version is pinned to it.\n  await fetch(`${this.baseUrl}/wit/workitems/${bugId}/comments?api-version=7.0-preview`, {\n    method: 'POST',\n    headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n    body: JSON.stringify({ text: comment }),\n  });\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Smoke test times out on mobile Safari",
+      "input": "`TestFailure`: testCase `mobile-login-smoke`, browser `mobile Safari`, error `Timed out waiting for the Sign In button`, plus a screenshot path.",
+      "output": "New Bug `[Automation] mobile-login-smoke failed on mobile Safari`, graded `1 - Critical` (the `smoke` keyword), tagged `mobile`, screenshot attached, linked under the Login story."
+    },
+    {
+      "caption": "Same failure recurs mid-sprint",
+      "input": "A repeat of a test that already has an open bug from Monday, run with `--update-existing`.",
+      "output": "WIQL dedup hits the existing bug; instead of a duplicate it POSTs a timestamped comment — browser, error, ISO time — appending to the recurrence history on that one work item."
+    },
+    {
+      "caption": "Low-severity CSS regression",
+      "input": "`TestFailure`: testCase `profile-page-spacing`, error `Expected 16px margin, got 8px`.",
+      "output": "New Bug graded `4 - Low` (no critical/high/regression keywords) with repro steps, linked under the Profile story — filed without inflating the priority queue."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Authenticates to the ADO REST API",
+      "whenRuns": "On every invocation, per failure.",
+      "input": "The `TestFailure` — test case, browser, error, optional screenshot.",
+      "output": "PAT-authenticated calls to the Azure DevOps work-item REST API (v7.0)."
+    },
+    {
+      "heading": "WIQL dedup gate",
+      "whenRuns": "Before any write, per failure.",
+      "input": "Test case + browser.",
+      "output": "An existing open Bug (title `CONTAINS` both terms) or null — the branch that prevents double-filing."
+    },
+    {
+      "heading": "Keyword severity/priority grading",
+      "whenRuns": "While assembling `BugDetails`.",
+      "input": "Lowercased test case and error text.",
+      "output": "One of four severity/priority tiers, assigned deterministically — no LLM, no run-to-run drift."
+    },
+    {
+      "heading": "JSON-Patch create + link + attach",
+      "whenRuns": "Once per net-new failure.",
+      "input": "The assembled `BugDetails`.",
+      "output": "A new Bug work item, hierarchy-linked to its parent story, with the screenshot attached."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "An Azure DevOps org/project and a **PAT** with work-item write (create Bug) scope.",
+      "A `TestFailure[]` JSON array from your runner — `testCase`, `browser`, `error`, optional `screenshot` path.",
+      "No LLM key — severity and priority are deterministic keyword rules, not a model."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript on Node. One-time per machine.",
+        "firstRun": "First time only, on a new machine."
+      },
+      {
+        "label": "Clone and install dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the ADO client and helpers into `node_modules`.",
+        "firstRun": "Full install, a minute or two.",
+        "rerun": "No-op once installed, unless the dependency list changed."
+      },
+      {
+        "label": "Export the ADO target (environment variables).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token\nexport ADO_AREA_PATH=\"My Project\\\\MyTeam\"   # optional",
+        "why": "Read at startup to resolve the org/project and authenticate. Swap them to retarget a different project."
+      },
+      {
+        "label": "Dry-run to preview the create/skip decisions.",
+        "cmd": "npm run ado:bugs -- \\\n  --story 4001 \\\n  --failures '[{\"testCase\":\"login-smoke\",\"browser\":\"chromium\",\"error\":\"Timed out waiting for the Sign In button\"}]' \\\n  --dry-run",
+        "why": "`--dry-run` runs the full WIQL-search and decide flow but suppresses the write — validates your `--failures` JSON shape first."
+      },
+      {
+        "label": "Run for real.",
+        "cmd": "npm run ado:bugs -- \\\n  --story 4001 \\\n  --failures '[{\"testCase\":\"login-smoke\",\"browser\":\"chromium\",\"error\":\"Timed out waiting for the Sign In button\"}]'",
+        "why": "Drops `--dry-run` and files one Bug per failure, severity/priority auto-graded.",
+        "firstRun": "Files a net-new Bug for every failure with no matching open bug.",
+        "rerun": "Same failure hits the WIQL dedup gate: skipped, or — with `--update-existing` — a timestamped comment instead of a duplicate."
+      },
+      {
+        "label": "Open the filed bug.",
+        "cmd": "# the agent prints each ticket's link to the console, e.g.:\n# Created: #6002  https://dev.azure.com/my-org/My%20Project/_workitems/edit/6002",
+        "why": "No local artifact — the Bug work item on ADO is the output; the console prints its url."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--failures <json>",
+        "desc": "`TestFailure[]` JSON — testCase, browser, error, optional screenshot path."
+      },
+      {
+        "name": "--story <id>",
+        "desc": "Parent user story ID to hierarchy-link every new bug under."
+      },
+      {
+        "name": "--dry-run",
+        "desc": "Run the search/decide flow but suppress the write."
+      },
+      {
+        "name": "--update-existing",
+        "desc": "Comment on a dedup match instead of skipping it."
+      },
+      {
+        "name": "environment variables",
+        "desc": "Org/project target and the PAT."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "Bug work items",
+        "desc": "Created (or commented-on) directly in ADO — no local files written."
+      },
+      {
+        "name": "console summary",
+        "desc": "created / updated / skipped / errored counts, plus each new bug's url."
+      }
+    ],
+    "rerun": "Idempotent by construction: each failure hits the WIQL dedup gate (open Bug whose title CONTAINS the test case and browser) before any write, so a repeat failure never becomes a duplicate — it's skipped, or appended as a comment under `--update-existing`.",
+    "integrate": "Wire it as the terminal step of a CI test job: emit the runner's failures as JSON, pipe into `--failures`, set `--story` from the build's linked feature. Add `--update-existing` on nightly/regression runs so a flaky failure accretes history on one bug instead of piling up duplicates."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 2-3 minute screen recording: a `TestFailure` becomes a filed, linked ADO Bug, live.",
+    "script": [
+      "Open a terminal beside the team's work board so viewers can watch the ticket appear.",
+      "Say: 'This agent turns a failed test straight into a properly filled-out bug ticket. Watch.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's already done); explain it's grabbing the tracker client.",
+      "Show the `export ADO_ORGANIZATION / ADO_PROJECT / ADO_PAT` lines; say this is the only client-specific config.",
+      "Run the command with `--dry-run` first; point out it shows what it would file without touching the tracker.",
+      "Run it again without `--dry-run`; narrate as the console prints 'Created: #6002' with a link.",
+      "Switch to the browser, open that link — show the ticket's title, severity, repro steps, and screenshot already filled in.",
+      "Re-run the exact same failure; show it now says 'skipped-existing' instead of filing a duplicate.",
+      "Close: 'One failure, one clean ticket, no duplicates — every time.'"
+    ]
+  }
+}

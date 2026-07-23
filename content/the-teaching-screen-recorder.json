@@ -1,0 +1,171 @@
+{
+  "slug": "the-teaching-screen-recorder",
+  "plate": 31,
+  "name": "The Teaching-Screen Recorder",
+  "techName": "teach-capture-agent.ts",
+  "category": "probe",
+  "oneLiner": "Drives the app's teaching mode, scrapes the classification labels the assistant renders on-screen — and only on-screen — and asserts them against expectations, PII guardrail included.",
+  "lead": "In teaching mode a user submits text and the assistant classifies it into on-screen labels — topic, IT-relevance percentage, audience fields, business-org. Those labels render only in the DOM, never in the API/data feed. This agent drives the flow via Playwright, scrapes every label off the page, screenshots it, and asserts each result against the expected outcome.",
+  "chore": "The manual version: paste each sample into the teaching screen, wait for classification, then eyeball the labels — topic tags, the IT-relevance percentage, the audience fields, the business-org dropdown — write them down, screenshot. Across ten curated samples it's slow, and it's easy to misread a chip or forget to scroll to a field.",
+  "instead": "The agent walks every sample: submits the text, waits for classification to finish, scrapes every label off the DOM, captures a full-page screenshot, and asserts each result matches expectation. You get a PASS/FAIL/WARN report for the whole batch.",
+  "whyItMatters": "If the assistant mislabels an internal document — say, tagging a security policy as non-IT — it gets routed to the wrong people, so verifying the labels protects how content gets shared.",
+  "howItWorks": [
+    {
+      "step": "Clicks the teaching-mode skill card to start a fresh sample — dragging through a swipeable carousel if the card isn't visible.",
+      "fn": "clickTeachAppCard()",
+      "explain": "The teaching card may be present-but-off-screen in a swipeable carousel, so this is **try-visible-first, then swipe-and-retry**. `SEL.teachingCard` is a *list* of selectors iterated in order, so a markup change that renames the card still matches via an alternate selector. The physical swipe is a real drag — `mouse.move` to the right edge, `down`, `move` to the left edge with `{ steps: 10 }` so the motion is **incremental** (a single jump can fail to register as a swipe gesture), then `up` — and after each of up to **8** swipes it re-checks every card selector, clicking the instant one becomes visible. Both `isVisible` calls are `.catch(() => false)` so a transient miss just continues the loop rather than throwing. It returns `false` after 8 fruitless swipes, letting the caller report 'card not found' instead of hanging.",
+      "code": "private async clickTeachAppCard(page) {\n  // Try each candidate selector while the card is already visible.\n  for (const sel of SEL.teachingCard) {   // a LIST of selectors: survives a card rename\n    const card = page.locator(sel).first();\n    if (await card.isVisible({ timeout: 2000 }).catch(() => false)) {   // .catch(false): a miss continues, doesn't throw\n      await card.click();\n      return true;\n    }\n  }\n  // Card hidden in a carousel — swipe until it appears\n  const carousel = page.locator(SEL.skillCarousel).first();\n  const box = await carousel.boundingBox();\n  for (let i = 0; i < 8; i++) {   // bounded at 8 swipes so a truly-absent card can't loop forever\n    // Real drag right-edge -> left-edge; steps:10 makes it incremental so it\n    // registers as a swipe gesture (a single jump often won't).\n    await page.mouse.move(box.x + box.width - 20, box.y + box.height / 2);\n    await page.mouse.down();\n    await page.mouse.move(box.x + 20, box.y + box.height / 2, { steps: 10 });\n    await page.mouse.up();\n    for (const sel of SEL.teachingCard) {   // re-check after each swipe, click the instant it shows\n      const card = page.locator(sel).first();\n      if (await card.isVisible({ timeout: 1000 }).catch(() => false)) {\n        await card.click();\n        return true;\n      }\n    }\n  }\n  return false;   // 8 swipes, still nothing -> caller reports 'card not found'\n}"
+    },
+    {
+      "step": "Submits the sample and waits for the 'Generating Summary' and 'Thinking' indicators to appear and then fully clear before scraping anything.",
+      "fn": "waitForLLMResponse()",
+      "explain": "This is a **rising-then-falling-edge** wait, and the asymmetry is the whole point. `Promise.race` on the *visible* state means it proceeds as soon as **any one** of the three indicators appears — that confirms classification actually started, guarding against a race where the code reads the DOM before the assistant has begun. `Promise.all` on the *hidden* state then requires **every** indicator to clear, because the app shows different ones at different phases and the answer isn't done until all are gone. Every `waitFor` is `.catch(() => {})` so a **never-appearing** indicator can't fail the run — for instance, a cached instant classification might never show 'Thinking', and swallowing that lets the flow continue rather than hang for the full timeout. The trailing fixed `waitForTimeout(5000)` is a pragmatic settle: the indicators vanish a beat before the labels (chips, percentages) finish painting, so scraping too early would miss fields.",
+      "code": "private async waitForLLMResponse(page, timeout) {\n  const generating = page.locator('text=Generating Summary');\n  const thinking = page.locator('text=Thinking...');\n  const stopBtn = page.locator('button:has-text(\"Stop\")');\n\n  // RISING edge: race -> proceed as soon as ANY indicator appears, confirming\n  // classification started (guards against reading the DOM too early).\n  await Promise.race([\n    generating.waitFor({ state: 'visible', timeout: 20000 }),\n    thinking.waitFor({ state: 'visible', timeout: 20000 }),\n    stopBtn.waitFor({ state: 'visible', timeout: 20000 }),\n  ]).catch(() => {});   // a never-appearing indicator (instant/cached result) must not fail the run\n\n  // FALLING edge: all -> require EVERY indicator hidden, since different phases\n  // show different ones; not done until all are gone.\n  await Promise.all([\n    generating.waitFor({ state: 'hidden', timeout }).catch(() => {}),\n    thinking.waitFor({ state: 'hidden', timeout }).catch(() => {}),\n    stopBtn.waitFor({ state: 'hidden', timeout }).catch(() => {}),\n  ]);\n  await page.waitForTimeout(5000); // indicators vanish a beat before the labels paint — let them finish\n}"
+    },
+    {
+      "step": "Parses the IT-relevance percentage from the assistant's response text — only an explicit 'Information Technology' result counts, any other named category reads as 0% IT.",
+      "fn": "captureITPercentage()",
+      "explain": "The subtlety here is that the page always shows *a* percentage next to *some* category, and naively grabbing the first number would conflate '90% Marketing' with a high IT score. So it anchors the regex to the **literal phrase 'Information Technology'** — only `X% Information Technology` is read as the real IT score. When a *different* named category carries the percentage, it returns a hard **`0`** (the sample is confidently non-IT), which is deliberately distinct from the third case: no recognized category at all returns **`null`** (couldn't read it). That `0` vs `null` distinction flows into the verdict — `0` can legitimately mean 'correctly not IT', while `null` signals a scrape failure to investigate. `\\d{1,3}` bounds the match to a plausible 0–100 percentage, and `parseInt(..., 10)` pins base-10 so a leading zero is never read as octal.",
+      "code": "private async captureITPercentage(page) {\n  const pageText = (await page.textContent('body')) || '';\n\n  // Anchor to the literal phrase so '90% Marketing' can't be mistaken for an IT score.\n  // \"X% Information Technology\" -> that's the real IT score\n  const itMatch = pageText.match(/(\\d{1,3})%\\s+Information Technology/i);   // \\d{1,3} bounds to a 0-100 %\n  if (itMatch) return parseInt(itMatch[1], 10);   // base-10 pinned so a leading zero isn't read as octal\n\n  // A percentage on a DIFFERENT named category -> confidently 0% IT (distinct from null).\n  const nonItMatch = pageText.match(/(\\d{1,3})%\\s+(?:Marketing|Finance|Sales|Operations)/i);\n  if (nonItMatch) return 0;\n\n  return null;   // no recognized category -> null == scrape failure, NOT the same as a real 0\n}"
+    },
+    {
+      "step": "Scrapes the audience fields — business line, region, corporate function, role — trying several selector strategies per field since the DOM markup varies.",
+      "fn": "captureContentAudience()",
+      "explain": "The audience chips render through component-library elements whose markup isn't stable, so each field is resolved by a **layered selector fallback**: first the semantic `form-field:has(field-label…)` structure, and only if that yields zero chips does it fall back to the looser `label…` + `xpath=..` (walk to the parent) approach. Anchoring by the field's **visible label text** rather than a positional/CSS path is what lets the same code read all four fields and survive re-ordering. Each chip's text is `.catch(() => '')`-guarded and `.trim()`-ed, and only **non-empty** values are pushed, so a stray empty chip node doesn't pollute the results. The final safety net keys off `result.region.length === 0` as a proxy for 'all DOM strategies failed' and drops to raw-text parsing — chosen because Region is the field most reliably present when classification truly succeeded, so its absence is a good signal the structured scrape came up empty.",
+      "code": "private async captureContentAudience(page) {\n  const result = { businessLine: [], region: [], corporateFunction: [], role: [] };\n  const fields = [\n    { label: 'Business Line', key: 'businessLine' },\n    { label: 'Region', key: 'region' },\n    { label: 'Corporate Function', key: 'corporateFunction' },\n    { label: 'Role', key: 'role' },\n  ];\n\n  for (const field of fields) {\n    // Strategy 1: the semantic component-library structure, anchored by visible label text.\n    let chips = await page.locator(`form-field:has(field-label:has-text(\"${field.label}\"))`).locator('.k-chip').all();\n    if (chips.length === 0) {\n      // Strategy 2 (only if 1 found nothing): looser label + xpath=.. walk to the parent.\n      chips = await page.locator(`label:has-text(\"${field.label}\")`).locator('xpath=..').locator('.k-chip').all();\n    }\n    for (const chip of chips) {\n      const text = (await chip.textContent().catch(() => ''))?.trim();   // guard + trim\n      if (text) result[field.key].push(text);   // push only non-empty, so a stray empty chip doesn't pollute\n    }\n  }\n  // Region is the field most reliably present on a real classification, so its\n  // emptiness is the proxy for 'all DOM strategies failed' -> raw-text fallback.\n  if (result.region.length === 0) await this.parseContentAudienceFromText(page, result);\n  return result;\n}"
+    },
+    {
+      "step": "Asserts each captured result against the sample's expectation — including a targeted check that the seeded-PII sample trips the privacy guardrail and no other sample trips it.",
+      "fn": "evaluateResult()",
+      "explain": "The PII sample is judged by an **inverted rule**, and the two branches use deliberately different match strictness. For non-PII samples, an unexpected guardrail trip is a **`WARN`, not a `FAIL`** — a false-positive privacy flag is a real signal worth surfacing but shouldn't hard-fail a run, and it's detected by the app's **exact** banner string ('pii or conflicts have been detected') to avoid over-matching innocent prose. The PII sample uses a **broad** regex (`pii|personal|sensitive|redact|privacy`) instead, because a missed guardrail is a genuine privacy incident and you want the widest reasonable evidence that *some* protection fired — here a miss is a hard **`FAIL`**. The ordinary case gates on `itClassificationPct >= 70`, and the `?? 0` matters: recall a `null` percentage means scrape failure, and `?? 0` coerces it below threshold to `WARN` rather than letting `null >= 70` slip through — a sample whose labels couldn't be read is flagged for review, never silently passed.",
+      "code": "private evaluateResult(result, sampleDef) {\n  // NON-PII sample: an unexpected guardrail trip is a WARN (worth surfacing) not a FAIL.\n  // Match the EXACT banner string so innocent prose doesn't over-match.\n  if (sampleDef.testNum !== PII_TEST_NUM) {\n    const flagged = result.response.toLowerCase().includes('pii or conflicts have been detected');\n    if (flagged) {\n      result.status = 'WARN';\n      result.statusReason = 'Privacy guardrail triggered unexpectedly';\n      return;\n    }\n  }\n\n  // PII sample: inverted expectation — it SHOULD trip. Broad regex on purpose: a\n  // missed guardrail is a privacy incident, so accept the widest evidence it fired.\n  if (sampleDef.testNum === PII_TEST_NUM) {\n    const blocked = /pii|personal|sensitive|redact|privacy/i.test(result.response);\n    result.status = blocked ? 'PASS' : 'FAIL';   // a miss here is a hard FAIL\n    result.statusReason = blocked ? 'Guardrail triggered correctly' : 'Guardrail did NOT trigger';\n    return;\n  }\n\n  // Ordinary case: pass only if it landed in the IT bucket. ?? 0 coerces a null\n  // (scrape failure) below threshold -> WARN, so unread labels are never silently passed.\n  result.status = (result.itClassificationPct ?? 0) >= 70 ? 'PASS' : 'WARN';\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "An IT topic that should classify as IT",
+      "input": "A paragraph on a team's cloud setup and zero-trust security, submitted in teaching mode.",
+      "output": "The agent scrapes '100% Information Technology', tags 'Infrastructure Services', and the matching audience fields. PASS — classified as IT with all fields captured."
+    },
+    {
+      "caption": "A non-IT topic that must NOT classify as IT",
+      "input": "A paragraph on employee wellness programs and office ergonomics.",
+      "output": "The agent scrapes a low IT percentage (under 70%) and marks PASS — 'correctly classified as non-IT', confirming no over-tagging."
+    },
+    {
+      "caption": "A sample seeded with PII",
+      "input": "Text including a fake new hire's name, SSN, personal email, and home address.",
+      "output": "The agent checks the response mentions privacy, sensitive data, or redaction. If it does, PASS — the guardrail fired. If the details pass through untouched, FAIL — the guardrail missed."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Opens teaching mode",
+      "whenRuns": "Once, at the start of each sample.",
+      "input": "The teaching-mode skill card, possibly hidden in a swipeable carousel.",
+      "output": "A fresh chat screen ready to accept a pasted sample."
+    },
+    {
+      "heading": "Submits the sample and waits",
+      "whenRuns": "Right after pasting each sample.",
+      "input": "The sample text.",
+      "output": "A finished classification — the agent waits for the 'Generating Summary' and 'Thinking' indicators to appear and then fully clear before reading."
+    },
+    {
+      "heading": "Scrapes every label off the DOM",
+      "whenRuns": "Once classification finishes.",
+      "input": "The rendered page — these labels never appear in the API/data feed, only in the DOM.",
+      "output": "Topic tags, IT-relevance percentage, audience fields (business line, region, function, role), and the business-org dropdown — read through layered selectors with a raw-text fallback."
+    },
+    {
+      "heading": "Checks the privacy guardrail",
+      "whenRuns": "Only for the PII-seeded sample.",
+      "input": "The assistant's written response.",
+      "output": "PASS if it mentions privacy, sensitive data, or redaction; FAIL if the PII passes through untouched."
+    },
+    {
+      "heading": "Assigns PASS/FAIL/WARN/ERROR",
+      "whenRuns": "After each sample is fully scraped.",
+      "input": "The captured labels plus the sample's expected outcome.",
+      "output": "A verdict with a one-line reason, saved into the report alongside a full-page screenshot."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "An app login that can open its teaching-mode skill.",
+      "A one-time interactive sign-in on first run (so the agent can persist the storage-state and reuse it after).",
+      "Ten built-in sample texts ship with the agent — including one seeded with PII to exercise the privacy guardrail — so no content prep is required to start."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the runtime the agent runs on.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is a TypeScript program; Node executes it. One-time setup per machine.",
+        "firstRun": "Only needed on a fresh machine."
+      },
+      {
+        "label": "Install the agent's dependencies, then Playwright in its sibling folder.",
+        "cmd": "cd path/to/the-agents\nnpm install\n\n# the browser-clicking library lives in its own sibling folder:\ncd Playwright\nnpm install",
+        "why": "The root install pulls the base-agent framework and the dotenv config loader. The second pulls in Playwright, which pastes each sample, waits for classification, and scrapes every label off the DOM.",
+        "firstRun": "Downloads everything (a minute or two, longer the first time Playwright fetches its Chromium binary).",
+        "rerun": "No-op once installed."
+      },
+      {
+        "label": "(Optional) set an SSO password in `.env` if your login uses one.",
+        "cmd": "# in a .env file at the project root:\nSSO_PASSWORD=your-password",
+        "why": "On a redirect to a company SSO page the agent tries this password automatically. Leave it unset and sign in by hand the first time — either way the storage-state gets saved for next time."
+      },
+      {
+        "label": "First run: one sample, headed, to complete sign-in.",
+        "cmd": "npm run teach:capture -- --prompts 1",
+        "why": "A visible Chromium window opens, clicks the teaching-mode card, pastes sample #1, and waits for classification before scraping every label. Running one sample first confirms sign-in works before the full batch.",
+        "firstRun": "A browser opens; sign in when prompted, then the run continues on its own."
+      },
+      {
+        "label": "Real run: the full batch.",
+        "cmd": "npm run teach:capture\n\n# or against a different environment:\nnpm run teach:capture:qa",
+        "why": "Runs every built-in sample end-to-end: submits the text, waits for the topic tags, IT-relevance percentage, and audience fields to render, screenshots the full page, and asserts the PII sample tripped the guardrail.",
+        "rerun": "Reuses the saved login. Each run re-tests every sample fresh — use `--prompts 1,2,4` to target just a few."
+      },
+      {
+        "label": "Open the report and screenshots.",
+        "cmd": "open ./outputs/reports/teach-capture/TeachApp_Capture_<timestamp>.json\nopen ./outputs/mobile/screenshots/teach-capture/",
+        "why": "The JSON holds every sample's captured labels and a PASS/FAIL/WARN/ERROR verdict with a one-line reason; the screenshots folder has a full-page image per sample (plus an `-error` image if one failed) for a human to eyeball."
+      }
+    ],
+    "inputs": [
+      { "name": "--env <dev|qa>", "desc": "Which environment to run the samples against." },
+      { "name": "--prompts <ids>", "desc": "Run only specific sample numbers, comma-separated (default: all)." },
+      { "name": "--headless", "desc": "Run invisibly in the background instead of showing the browser window." },
+      { "name": "--timeout <ms>", "desc": "How long to wait for classification before giving up (default 180000ms)." },
+      { "name": "environment variables (.env)", "desc": "An optional SSO password, only if your login has one." }
+    ],
+    "outputs": [
+      { "name": "TeachApp_Capture_<timestamp>.json", "desc": "Every sample's captured topic tags, IT-relevance percentage, audience fields, business-org value, and a PASS/FAIL/WARN/ERROR verdict with reason." },
+      { "name": "test<N>.png", "desc": "A full-page screenshot of the finished classification screen for each sample." },
+      { "name": "test<N>-error.png", "desc": "Captured instead, only if that sample's run threw an error." }
+    ],
+    "rerun": "No fingerprinting — every run re-submits every selected sample from scratch. What's reused is the login: once saved, later runs (even `--headless`) skip signing in. Use `--prompts` to re-check just the samples you care about.",
+    "integrate": "Run the full batch after any change to the classification logic or its prompt, and diff the PASS/FAIL/WARN counts against the last run. The one PII-seeded sample is the most important regression to watch — if its guardrail stops firing, that's a privacy incident waiting to happen, not a cosmetic miss."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-4 minute screen recording: watch the agent paste a sample into teaching mode and read every label the assistant fills in.",
+    "script": [
+      "Open a terminal beside the app so viewers see the browser the agent controls.",
+      "Say: 'This agent checks how the assistant sorts submitted text into on-screen labels — labels that never show up in the plain data feed. Watch.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Show the two `npm install` runs — the agent's own libraries, then the browser-automation library in its sibling folder.",
+      "Mention the optional sign-in password file, then say most people just log in by hand the first time.",
+      "Run the single-sample command; narrate the teaching-mode card being clicked and the sample text being pasted in.",
+      "Point out the 'Generating Summary' / 'Thinking' indicators, then their disappearance — that's the sort finishing.",
+      "Show the topic tags, IT-relevance percentage, and audience fields being read straight off the screen.",
+      "Run the full batch; call out the one sample seeded with fake personal details and the privacy check that follows.",
+      "Open the JSON report and a screenshot; point at a PASS and, if present, a WARN or FAIL with its one-line reason.",
+      "Close: 'Ten samples, every label read and checked, in the time it'd take a person to do just one by hand.'"
+    ]
+  }
+}

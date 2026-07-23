@@ -1,0 +1,158 @@
+{
+  "slug": "the-task-creator",
+  "plate": 15,
+  "name": "The Task Creator",
+  "techName": "create-ado-tasks.ts",
+  "category": "tracker",
+  "oneLiner": "Batch-creates ADO Task work items from an in-file plan — each fully populated and parented under its user story via a Hierarchy link.",
+  "lead": "When a batch of work is planned — each item with title, description, owner, and acceptance criteria — someone still has to key it into ADO. This agent does that data entry: it POSTs each Task fully populated and parents it under the correct user story via a `Hierarchy-Reverse` link, so nothing is orphaned.",
+  "chore": "Creating a dozen tasks by hand is repetitive and error-prone. Per task: open a blank form, paste title, description, and acceptance criteria, set priority, add tags, then link the parent — sometimes two parents. Twelve times over, it's easy to drop a link, mistype a tag, or skip the acceptance criteria entirely.",
+  "instead": "The agent holds the plan and creates each Task in one run — title, description, acceptance criteria, priority, and tags all set. It links each to its first parent during creation, and PATCHes extra `Hierarchy-Reverse` links for any task with multiple parents. It closes with a summary table of what got created and where it landed.",
+  "whyItMatters": "Consistent, fully-linked tasks mean the agreed plan lands in ADO exactly as intended, with nothing dropped.",
+  "howItWorks": [
+    {
+      "step": "For each task it builds the full field set — title, description, acceptance criteria, priority, tags — and POSTs it as a Task in one request, with the first parent's `Hierarchy-Reverse` link attached inline.",
+      "fn": "createTask()",
+      "explain": "A Task is created with a **JSON-Patch document** — an array of `add` ops keyed by ADO **reference name** (`System.Title`, `Microsoft.VSTS.Common.AcceptanceCriteria`, etc.), not UI labels. Two ADO quirks are handled inline: description and acceptance-criteria fields render **HTML**, so literal newlines are converted to `<br>` or they'd collapse to one line; and priority is stored numerically, so `priorityMap` translates a `High`/`Medium` label to ADO's 1–4, defaulting to `2` for anything unmapped. The first parent is linked **during creation** by appending a `Hierarchy-Reverse` relation (from the child's side, *Reverse* points up to the parent — Forward would nest the story under the task instead), so the Task is never momentarily orphaned. Note the endpoint `wit/workitems/$Task` — the literal `$` prefix on the type name is required by the create API — and the content type must be `application/json-patch+json`, not plain JSON.",
+      "code": "async function createTask(task: TaskDefinition): Promise<{ id: number; url: string } | null> {\n  // JSON-Patch: one 'add' op per field, keyed by ADO reference name (not the UI label).\n  const patchDocument = [\n    { op: 'add', path: '/fields/System.Title', value: task.title },\n    // Description/AcceptanceCriteria render as HTML in ADO -> convert newlines to <br> or they collapse to one line.\n    { op: 'add', path: '/fields/System.Description', value: task.description.replace(/\\n/g, '<br>') },\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.AcceptanceCriteria', value: task.acceptanceCriteria.replace(/\\n/g, '<br>') },\n    // Priority is numeric in ADO; map the label to 1-4, default 2 for anything unmapped.\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: priorityMap[task.priority] || 2 },\n    { op: 'add', path: '/fields/System.Tags', value: task.tags },\n  ];\n\n  if (task.parentUS.length > 0) {\n    patchDocument.push({\n      op: 'add',\n      path: '/relations/-', // '-' appends to the relations array\n      value: {\n        // Hierarchy-REVERSE = child -> parent (nests THIS task under the story); Forward would invert it.\n        rel: 'System.LinkTypes.Hierarchy-Reverse',\n        url: `https://dev.azure.com/my-org/_apis/wit/workItems/${task.parentUS[0]}`,\n        attributes: { comment: `Child of US ${task.parentUS[0]}` },\n      },\n    });\n  }\n\n  // $Task: the literal '$' prefix on the type is required by the create endpoint;\n  // content type MUST be application/json-patch+json, not plain application/json.\n  const response = await fetch(`${BASE_URL}/wit/workitems/$Task?api-version=7.0`, {\n    method: 'POST',\n    headers: { Authorization: authHeader, 'Content-Type': 'application/json-patch+json' },\n    body: JSON.stringify(patchDocument),\n  });\n  const result = await response.json();\n  return { id: result.id, url: result._links?.html?.href };\n}"
+    },
+    {
+      "step": "When a task has multiple parents, it PATCHes each extra `Hierarchy-Reverse` link with its own follow-up request.",
+      "fn": "linkToParent()",
+      "explain": "A work item's create call attaches only the *first* parent link, so additional parents are added afterward one at a time. This is why it's a **PATCH** to `wit/workitems/{taskId}` (updating an existing item) rather than the `POST .../$Task` create — but the body is the same single `add` op on `/relations/-`, appending another `Hierarchy-Reverse` relation to the parent. It returns the bare `response.ok` boolean rather than throwing, so the caller can record one bad parent link as a per-task failure and keep going instead of aborting the whole batch. Same `application/json-patch+json` content type the create call needs.",
+      "code": "async function linkToParent(taskId: number, parentId: string): Promise<boolean> {\n  // Same single 'add' op on /relations/- as creation, just applied afterward for parents 2..N.\n  const patchDocument = [{\n    op: 'add',\n    path: '/relations/-',\n    value: {\n      rel: 'System.LinkTypes.Hierarchy-Reverse', // child -> parent, same as the inline first link\n      url: `https://dev.azure.com/my-org/_apis/wit/workItems/${parentId}`,\n      attributes: { comment: `Child of US ${parentId}` },\n    },\n  }];\n\n  // PATCH the EXISTING task (not $Task create); json-patch content type still required.\n  const response = await fetch(`${BASE_URL}/wit/workitems/${taskId}?api-version=7.0`, {\n    method: 'PATCH',\n    headers: { Authorization: authHeader, 'Content-Type': 'application/json-patch+json' },\n    body: JSON.stringify(patchDocument),\n  });\n  return response.ok; // return the boolean, don't throw - lets the caller flag one bad link and continue\n}"
+    },
+    {
+      "step": "It prints a summary table — task, new work item ID, parent(s), and Created/Failed — plus each item's URL.",
+      "fn": "main()",
+      "explain": "The driver loop encodes the two-phase linking: `createTask` attaches parent `[0]` inline, so the follow-up loop starts at **index 1** to PATCH only the *extra* parents, and `linked` seeds with `parentUS[0]` because that first link already succeeded as part of creation. Link tracking is granular — a parent ID is pushed into `linked` only when `linkToParent` returns `ok`, so a task can end up created-but-partially-linked, and that shows up honestly in the summary rather than being reported as fully done. A failed `createTask` records a null-ID row instead of crashing the batch, so one bad task never stops the rest. The final pass prints a Markdown table where `status` is derived purely from whether an `adoId` exists (`Created` vs `Failed`) and `N/A`/`-` stand in for the missing ID and empty parent list.",
+      "code": "for (const task of tasks) {\n  const created = await createTask(task);\n  if (created) {\n    // parentUS[0] was linked inline during creation, so seed 'linked' with it and start the loop at 1.\n    const linked: string[] = [task.parentUS[0]];\n    for (let i = 1; i < task.parentUS.length; i++) {\n      const ok = await linkToParent(created.id, task.parentUS[i]);\n      // Only record a parent as linked if its PATCH actually succeeded -> partial links show honestly.\n      if (ok) linked.push(task.parentUS[i]);\n    }\n    results.push({ task, adoId: created.id, url: created.url, linked });\n  } else {\n    // Failed create -> null-ID row, so one bad task doesn't crash the whole batch.\n    results.push({ task, adoId: null, url: null, linked: [] });\n  }\n}\n\n// Print summary table - status is derived purely from whether an adoId came back.\nconsole.log('| Task | ADO ID | Parent US | Status |');\nfor (const r of results) {\n  const status = r.adoId ? 'Created' : 'Failed';\n  // N/A / '-' stand in for a missing ID and an empty parent list respectively.\n  console.log(`| ${r.task.id} | ${r.adoId || 'N/A'} | ${r.linked.join(', ') || '-'} | ${status} |`);\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Create a planned batch of tasks",
+      "input": "An in-file plan of 6 tasks, each with description, acceptance criteria, owner, and parent story.",
+      "output": "Created all 6 Tasks (#701–#706), each `Hierarchy-Reverse`-linked to its parent story. Printed a summary table with each URL."
+    },
+    {
+      "caption": "A task with two parents",
+      "input": "A task parented under both story #204 and story #207.",
+      "output": "Created the task with the #204 link inline, then PATCHed the second link to #207. Both `Hierarchy-Reverse` links confirmed."
+    },
+    {
+      "caption": "One link PATCH fails",
+      "input": "Create the batch; one parent ID is invalid.",
+      "output": "5 of 6 tasks fully linked. One task created but its link PATCH to the bad parent returned non-OK — flagged in the summary for manual fix."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Populating the Task fields",
+      "whenRuns": "Once per planned task, first.",
+      "input": "A task's title, description, acceptance criteria, priority, and tags.",
+      "output": "A single POST that creates the Task, fully populated."
+    },
+    {
+      "heading": "Linking the first parent",
+      "whenRuns": "Inline in the same POST that creates the task.",
+      "input": "The task's primary parent story ID.",
+      "output": "The new Task appears nested under that story in ADO."
+    },
+    {
+      "heading": "PATCHing extra parents",
+      "whenRuns": "Right after creation, only for tasks with more than one parent.",
+      "input": "The new task's ID and each additional parent ID.",
+      "output": "One more `Hierarchy-Reverse` link per extra parent, each confirmed independently."
+    },
+    {
+      "heading": "Printing the summary",
+      "whenRuns": "After every task in the batch has been attempted.",
+      "input": "Each task's outcome — created or failed — and its links.",
+      "output": "A markdown summary table (task, new work item ID, parent, status) plus each item's URL."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Azure DevOps access and a **PAT** scoped to create work items.",
+      "The planned batch written out — title, description, acceptance criteria, priority, tags, and parent story ID(s) per item."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the engine that runs the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript run under Node — a one-time per-machine install.",
+        "firstRun": "One-time setup per machine."
+      },
+      {
+        "label": "Clone the agent and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the one dependency this script needs to talk to the ADO REST API.",
+        "firstRun": "Cold install — a minute or two.",
+        "rerun": "No-op unless `package.json` changed."
+      },
+      {
+        "label": "Set the write PAT (env var).",
+        "cmd": "export ADO_PAT_WRITE=your-access-token",
+        "why": "The one secret the script needs. Unlike the other agents, this one hard-codes its target org/project and the task plan in the source file rather than taking flags — see the next step."
+      },
+      {
+        "label": "Edit the source and fill in your batch.",
+        "cmd": "# in agents/create-ado-tasks.ts, near the top:\nconst ADO_ORGANIZATION = 'my-org';\nconst ADO_PROJECT = 'My Project';\n\n// further down, replace the `tasks` array with your own planned batch:\nconst tasks: TaskDefinition[] = [\n  { id: 'T1', title: '...', assignedTo: '...', parentUS: ['4001'], description: '...', acceptanceCriteria: '...', tags: '...', priority: 'High' },\n  // ...\n];",
+        "why": "This script targets one specific batch, not a generic importer — the org/project and the `tasks` array are constants in the file. Editing them here is this agent's 'input' step."
+      },
+      {
+        "label": "Run it and read the printed summary table.",
+        "cmd": "npm run ado:tasks",
+        "why": "Creates every task in your `tasks` array, links each to its parent(s), and prints a table of what was created and where it landed — plus each new item's URL.",
+        "firstRun": "Creates the whole batch from scratch.",
+        "rerun": "Non-idempotent — re-running creates a duplicate batch. Re-run only after clearing or editing the `tasks` array."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "the `tasks` array (in-file)",
+        "desc": "Each planned item's title, description, acceptance criteria, priority, tags, and one or more parent story IDs."
+      },
+      {
+        "name": "ADO_ORGANIZATION / ADO_PROJECT (in-file constants)",
+        "desc": "Which ADO org/project to create the tasks in."
+      },
+      {
+        "name": "ADO_PAT_WRITE (environment variable)",
+        "desc": "The PAT authorizing the script to create work items."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "new Tasks in ADO",
+        "desc": "Each fully populated and nested under its parent story (or stories) via `Hierarchy-Reverse`."
+      },
+      {
+        "name": "console summary table",
+        "desc": "Task, new work item ID, parent, and status (Created/Failed) for every item, plus each URL."
+      }
+    ],
+    "rerun": "Non-idempotent — each run creates brand-new tasks with no memory of prior runs, so re-running the same `tasks` array duplicates the whole batch. Clear the array (or comment out already-created items) before re-running.",
+    "integrate": "Treat this as a one-off migration script per planning batch, not a scheduled service — copy it, swap in the next batch's `tasks`, run once, then set it aside until the next planning round."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 2-3 minute screen recording: fill in a planned batch and create it in ADO.",
+    "script": [
+      "Open the script file and the terminal side by side.",
+      "Say: 'This one is simpler — the plan lives right in the file. Let's fill it in and run it.'",
+      "Run `node -v` and `npm install` (or note it's already done).",
+      "Scroll to the `tasks` array; point out one item's title, description, done-checklist, and parent story ID.",
+      "Set `export ADO_PAT_WRITE=...`; say this is the only secret it needs.",
+      "Run `npm run ado:tasks`; narrate the created lines as each task appears.",
+      "Point out the second-parent case — one task linking to two stories — and its two confirmation lines.",
+      "Read the printed summary table out loud — task, new ID, parent, status.",
+      "Open one of the printed links in the browser to show the task nested under its story.",
+      "Close: 'One run, whole plan on the board, nothing typed by hand.'"
+    ]
+  }
+}

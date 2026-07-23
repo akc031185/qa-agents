@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The API Tester — Agent 36</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s8">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">36<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip chip--toolkit">The reusable toolkit — works on any project</span></div>
+        <h1>The API Tester</h1>
+        <p class="lead">One typed REST client that probes a live service, retries transient failures, and captures request/response evidence on every call.</p>
+        <p class="kicker">Source file: src/core/api.ts</p>
+      </div>
+    </div>
+
+    <p>A single <code>ApiClient</code> any agent uses to call a live HTTP service and capture proof of exactly what was sent and returned. It attaches auth headers from config, retries transient failures with backoff instead of throwing, and normalizes every response into an <code>EvidenceStep</code> the report builder renders. It replaces ~96 check scripts that each re-implemented the same fetch, auth, retry, and evidence plumbing.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The prior setup had ~96 check scripts, each re-implementing the same request plumbing: how to call, how to attach the bearer/subscription header, what to do on a network hiccup, and how to record the result. Repetitive, subtly error-prone, and a single transient failure could crash a whole run.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>One client built from an <code>ApiConfig</code>. It attaches <code>Authorization: Bearer</code> and <code>Ocp-Apim-Subscription-Key</code> for you, retries on transient failure with linear backoff (default 4 attempts) instead of throwing, and stamps every call into an <code>EvidenceStep</code> carrying the exact request and response. Assertion helpers — <code>expectStatus</code>, <code>expectJsonPath</code> — turn a response into a typed pass/fail. Nothing is tied to a specific service.</p></div>
+    </div>
+    <p>When a service misbehaves, the captured <code>EvidenceStep</code> shows the exact request, status, and response body side by side — a provable finding, not a vague &#39;it&#39;s broken&#39;. And a flaky network degrades to a clean <code>code: 0</code> result instead of crashing the suite.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">The constructor builds itself from an <code>ApiConfig</code>, assembling the <code>Authorization</code> and subscription headers every later call reuses — nothing hard-coded to one service.</span>
+          <span class="fc-node__fn">ApiClient()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>request</code> issues the call and, on transient failure, waits <code>backoffMs * (attempt + 1)</code> and retries — up to the configured count — then returns a <code>code: 0</code> result instead of throwing.</span>
+          <span class="fc-node__fn">request()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>step</code> packages one <code>ApiResponse</code> into an <code>EvidenceStep</code> — method + URL, trimmed body, status, trimmed response — ready to render as a coloured panel.</span>
+          <span class="fc-node__fn">step()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>expectStatus</code> asserts the HTTP status against one or a set of expected codes and records the verdict with the actual value, so a mismatch is provable at a glance.</span>
+          <span class="fc-node__fn">expectStatus()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t"><code>probe</code> groups a set of checks under one name; any error the probe body throws is caught and logged as a failing step rather than crashing the run.</span>
+          <span class="fc-node__fn">probe()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"ApiClient()","explain":"Everything the client needs to authenticate is baked in **once** from the `ApiConfig`, so no downstream call re-attaches headers. The `baseUrl` is stripped of trailing slashes so joining a path never produces a double `//`. Both auth schemes are optional and additive: a `bearerToken` adds `Authorization: Bearer …` and a `subscriptionKey` adds the APIM `Ocp-Apim-Subscription-Key` header — set neither and the client just talks to an open endpoint. Retry, backoff, and timeout come from `opts` with defaults **4 attempts, 1500 ms linear, 120 s**, so resilience is tunable without touching request code.","code":"constructor(api: ApiConfig, opts: ApiClientOptions = {}) {\n  // Strip trailing slashes so a path join never produces a double '//'.\n  this.baseUrl = (api.baseUrl || '').replace(/\\/+$/, '');\n  this.headers = { 'Content-Type': 'application/json' };\n  // Bearer + APIM subscription headers are both optional and additive.\n  if (api.bearerToken) this.headers['Authorization'] = `Bearer ${api.bearerToken}`;\n  if (api.subscriptionKey) this.headers['Ocp-Apim-Subscription-Key'] = api.subscriptionKey;\n  this.retries = opts.retries ?? 4; // defaults: 4 attempts, 1500ms linear backoff, 120s.\n  this.backoffMs = opts.backoffMs ?? 1500;\n  this.timeoutMs = opts.timeoutMs ?? 120000;\n}"},{"fn":"request()","explain":"The resilience core: it loops up to `retries` attempts, and `Math.max(1, retries)` guarantees at least one try even if a caller passes 0. A **successful fetch — even a 4xx/5xx — returns immediately** as a typed `ApiResponse` carrying `code`, the raw text body, and an echo of the request; an HTTP error status is data to assert on, not an exception. Only a *thrown* fetch (network/DNS/timeout) triggers a retry, sleeping `backoffMs * (attempt + 1)` for **linear** growing backoff, and only while another attempt remains. If every attempt throws, it returns a sentinel `code: 0` / `raw: 'fetch failed…'` result instead of throwing — so one dead endpoint degrades to a clean failing step rather than crashing the run.","code":"async request\u003cT = unknown>(method: HttpMethod, path: string, body?: unknown, opts: RequestOptions = {}): Promise\u003cApiResponse\u003cT>> {\n  const url = this.resolve(path);\n  const retries = opts.retries ?? this.retries;\n  // Math.max(1, retries) guarantees at least one attempt even if retries is 0.\n  for (let attempt = 0; attempt \u003c Math.max(1, retries); attempt++) {\n    try {\n      const res = await this.doFetch(url, { method, headers: this.headers, body: /* ... */ undefined });\n      const raw = await res.text();\n      // Any HTTP status (incl. 4xx/5xx) is a SUCCESS here — return it to assert on.\n      return { code: res.status, raw, request: { method, url, body } /* ... */ } as ApiResponse\u003cT>;\n    } catch (err) {\n      // Only a THROWN fetch retries; linear backoff, and only if attempts remain.\n      if (attempt \u003c retries - 1) await sleep(this.backoffMs * (attempt + 1));\n    }\n  }\n  // Every attempt threw: return a sentinel code:0 result, never an uncaught throw.\n  return { code: 0, raw: `fetch failed: ...`, request: { method, url, body } } as ApiResponse\u003cT>;\n}"},{"fn":"step()","explain":"Normalizes any `ApiResponse` into the shared `EvidenceStep` the report builder renders, and `kind: 'api'` tags it so the renderer colours it as an API panel. The request body is stringified only when present (an object is `JSON.stringify`d, a string passes through, null/undefined become `''`), and both request and response bodies are `trim`med to **800 chars** so a huge payload can't bloat the report. `respOverride` is the hook assertions use: `expectStatus`/`expectJsonPath` pass a synthesized `→ actual (expected …)` string into `resp` instead of the raw body, so the evidence shows the comparison rather than just the payload. `verdict` defaults to `'info'`, so a bare `step()` records without judging pass or fail.","code":"export function step(resp: ApiResponse, does: string, verdict: Verdict = 'info', respOverride?: unknown): EvidenceStep {\n  const q = resp.request;\n  // Stringify the request body only when present: object->JSON, string as-is, null->''.\n  const bodyStr = q.body == null ? '' : typeof q.body === 'string' ? q.body : JSON.stringify(q.body);\n  return {\n    kind: 'api', // tags the panel so the report builder colours it as API evidence.\n    does: does || '',\n    req: `${q.method} ${q.url}`.trim(),\n    body: trim(bodyStr, 800), // cap at 800 chars so a huge payload can't bloat the report.\n    code: resp.code,\n    // respOverride lets an assertion show its comparison string instead of the raw body.\n    resp: trim(respOverride !== undefined ? respOverride : resp.raw, 800),\n    verdict,\n  };\n}"},{"fn":"expectStatus()","explain":"A thin assertion over `step()`: it accepts either a single expected code or an array (normalized to a list via `Array.isArray`), and passes when `list.includes(resp.code)`. The verdict it hands `step()` is `'pass'`/`'fail'`, which is what turns the evidence panel green or red. Its real value is the `respOverride` string `→ {actual} (expected {list})`, writing **real-vs-expected side by side** into the evidence so a mismatch like `→ 500 (expected 201)` is provable at a glance rather than a vague failure. Its sibling `expectJsonPath` applies the identical pattern to a value pulled from a JSON path.","code":"export function expectStatus(resp: ApiResponse, expected: number | number[], does?: string): EvidenceStep {\n  // Accept one code or many; normalize to a list so includes() works either way.\n  const list = Array.isArray(expected) ? expected : [expected];\n  const ok = list.includes(resp.code); // pass if the actual status is any expected one.\n  const label = does || `Expect status ${list.join(' or ')}`;\n  // respOverride writes real-vs-expected into the panel (e.g. -> 500 (expected 201)).\n  return step(resp, label, ok ? 'pass' : 'fail', `→ ${resp.code} (expected ${list.join('|')})`);\n}"},{"fn":"probe()","explain":"A **safety harness** around a group of related checks: it builds a `ProbeContext` whose `add`/`step`/`expectStatus` collectors all push into one local `steps` array, hands it to the probe body, and — critically — wraps the body in `try/catch` so an unexpected throw becomes a **failing `kind: 'note'` step** (`probe \"{name}\" threw`) instead of aborting the run. After the body it counts steps with `verdict === 'fail'` and returns a single `AgentResult` where `ok` is `failures === 0`, tagged `api-probe:{name}`, with every collected `EvidenceStep` attached. So one probe equals one composable result, and a bug in one probe can't take down the others.","code":"export async function probe(name: string, client: ApiClient, fn: (ctx: ProbeContext) => Promise\u003cvoid> | void): Promise\u003cAgentResult\u003c{ probe: string }>> {\n  const steps: EvidenceStep[] = [];\n  // Collectors all funnel into the one local steps[]; the body just calls them.\n  const ctx: ProbeContext = { client, add: s => steps.push(s), step: (...a) => steps.push(step(...a)), expectStatus: (...a) => steps.push(expectStatus(...a)) } as ProbeContext;\n  try {\n    await fn(ctx);\n  } catch (err) { // an unexpected throw becomes a failing step, not a crashed run.\n    steps.push({ kind: 'note', does: `probe \"${name}\" threw`, resp: String(err), verdict: 'fail' });\n  }\n  // ok iff nothing failed; the whole probe rolls up into one composable AgentResult.\n  const failures = steps.filter(s => s.verdict === 'fail').length;\n  return { agent: `api-probe:${name}`, ok: failures === 0, summary: `${name}: ${steps.length} step(s), ${failures} failing`, data: { probe: name }, steps };\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Probe a public no-auth service</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A probe that `GET`s todo #1 from a public sandbox and asserts `expectStatus(200)` and `id === 1`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A passing `AgentResult`: &#39;1 probe, 3 steps, 0 failing&#39;, each step carrying the exact request and response — proof the client works with none of your own infrastructure.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Catch a broken endpoint</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>`expectStatus(201)` on a create call that actually returns 500.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>A red `FAIL` step reading &#39;→ 500 (expected 201)&#39; with the full request and error body attached — provable at a glance.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Survive a flaky network</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A call made while the connection is briefly dropping.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The client retries with backoff and either succeeds or records a clean `code: 0` &#39;fetch failed&#39; step — the run continues instead of crashing the suite.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--live">
+      You can run this yourself, end to end — every command below is real.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Node.js (installed in step 1 below) — nothing else.</li><li>No credentials, board, database, or API key are needed for the demo below — that is the point of this module. A <code>.env</code> only matters later, if you point it at something real.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The toolkit is TypeScript on Node. One install per machine; no other runtime required.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time on a new machine only.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/qa-agent-toolkit
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the toolkit&#39;s only dependency (<code>dotenv</code>) into <code>node_modules</code>. No DB driver, no cloud SDK, no auth library — which is why the demos run credential-free.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (seconds — the dependency list is tiny).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">(Optional) copy the env template — only to go live later.</div>
+        <pre class="rb__cmd"><code>cp .env.example .env
+# then open .env and fill in ONLY the section you need</code></pre>
+        <div class="rb__why"><span>Why</span> Skippable for the demo — every capability is off by default and the demo targets a public sandbox regardless. <code>.env</code> matters only once you point the toolkit at a real board, service, or database.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the capability check.</div>
+        <pre class="rb__cmd"><code>npm run doctor</code></pre>
+        <div class="rb__why"><span>Why</span> Prints a one-line scorecard per capability (tracker, API, database, AI) — on/off with a reason. With an empty <code>.env</code> everything reads <code>(off)</code>, which is expected: the demo sets its own target in-code.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run the API demo — probe a public, no-auth test service.</div>
+        <pre class="rb__cmd"><code>npm run demo:api</code></pre>
+        <div class="rb__why"><span>Why</span> Points the real <code>ApiClient</code> at a public credential-free API (jsonplaceholder.typicode.com) and runs two probes — a GET and a POST — each with several <code>expectStatus</code> / <code>expectJsonPath</code> checks. Real client, retries and evidence capture included; only the target is a public sandbox.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Makes two real HTTP calls and prints an <code>EvidenceStep</code> per check.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> The GET is idempotent (same todo, same answer). The POST hits jsonplaceholder&#39;s sandbox, which never actually persists — so reruns are equally safe and the same checks pass.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Read the evidence.</div>
+        <pre class="rb__cmd"><code># printed straight to the terminal — no file written:
+#   ✓ [pass] Todo endpoint returns 200
+#   ✓ [pass] Response carries the requested id
+#   ...
+#   Evidence summary: 8 steps, 6 pass, 0 fail, overall PASS.</code></pre>
+        <div class="rb__why"><span>Why</span> Each check prints the exact request sent, the status, and the response — that receipt is the point: a mismatch shows real-vs-expected side by side instead of a vague &#39;it failed&#39;.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>nothing</dt><dd>The demo constructs its own <code>ApiConfig</code> in-code pointing at a public API (jsonplaceholder.typicode.com) — no <code>.env</code>, token, or subscription key. If the network is unreachable it degrades gracefully and says so rather than crashing.</dd><dt>API_BASE_URL / API_BEARER_TOKEN / API_SUBSCRIPTION_KEY (optional)</dt><dd>Set these in <code>.env</code> to point the same <code>ApiClient</code> + probe helpers at your own live service instead.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>console evidence log</dt><dd>One block per probe step: what it did, the exact request (method + URL), the status, and a trimmed response body, followed by a pass/fail verdict per check.</dd><dt>summary line</dt><dd>&#39;Evidence summary: 8 steps, 6 pass, 0 fail, overall PASS.&#39; — or a graceful &#39;network unavailable — client wiring verified&#39; if the machine has no internet.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Safe to rerun freely: the GET is a read against a fixed public record, and the POST hits a sandbox that never stores what you send — jsonplaceholder just echoes back a fake id. Point the same client at a real API and reruns reflect that service&#39;s current state.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Import directly: <code>import { ApiClient } from &#39;./src/core/api&#39;</code>, construct it with your own <code>ApiConfig</code> (<code>baseUrl</code>, <code>bearerToken</code>, <code>subscriptionKey</code>), and write probes with <code>runApiProbes()</code> (<code>./agents/api</code>) using <code>ctx.step()</code> / <code>ctx.expectStatus()</code> / <code>ctx.expectJsonPath()</code> exactly as <code>examples/api/demo.ts</code> does — every probe returns a normal <code>AgentResult</code> with evidence steps, ready to feed straight into the report builder.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: run the API demo live against a public test service and watch request/response evidence print in real time.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Builds from an ApiConfig</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, in the constructor.</dd>
+          <dt>Takes in</dt><dd>A <code>baseUrl</code> and optional <code>bearerToken</code> / <code>subscriptionKey</code>.</dd>
+          <dt>Shows out</dt><dd>A ready client with auth headers pre-attached — nothing hardcoded to one service.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Calls with retries</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Every <code>request</code> an agent issues.</dd>
+          <dt>Takes in</dt><dd>A method (GET/POST/...), a path, and optional body.</dd>
+          <dt>Shows out</dt><dd>A normalized <code>ApiResponse</code> — status, raw text, timing — where even total failure returns <code>code: 0</code> instead of throwing.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">Stamps an evidence step</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>As soon as a response (or failure) returns.</dd>
+          <dt>Takes in</dt><dd>The <code>ApiResponse</code> plus a description of the call&#39;s intent.</dd>
+          <dt>Shows out</dt><dd>An <code>EvidenceStep</code> with the exact request, status, and trimmed response — ready for the report builder.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Asserts pass/fail</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>On each <code>expectStatus</code> / <code>expectJsonPath</code> check.</dd>
+          <dt>Takes in</dt><dd>The expected status or JSON-path value.</dd>
+          <dt>Shows out</dt><dd>A pass or fail step with real-vs-expected spelled out in the <code>resp</code> field.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Rolls a probe into one result</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per named scenario.</dd>
+          <dt>Takes in</dt><dd>A probe body that issues calls and records checks.</dd>
+          <dt>Shows out</dt><dd>One <code>AgentResult</code> — <code>ok</code> plus every <code>EvidenceStep</code> — with any thrown error caught into a failing step.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-report-builder.html">← The Report Builder</a>
+      <a href="the-database-verifier.html">The Database Verifier →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

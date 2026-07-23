@@ -1,0 +1,189 @@
+{
+  "slug": "the-test-case-importer",
+  "plate": 14,
+  "name": "The Test-Case Importer",
+  "techName": "ado-testcase-creator-agent.ts",
+  "category": "tracker",
+  "oneLiner": "Bulk-creates ADO test cases from an xlsx of steps — grouping rows, encoding steps, linking to the parent story — and files them into a suite.",
+  "lead": "Testers draft in a spreadsheet — one row per step, with action and expected result. This agent reads it with `xlsx`, groups rows into test cases by title, and creates each as a structured ADO Test Case work item: steps, priority, `TestedBy` link, and owner all set. It emits a before/after mapping of every row to its new work item ID.",
+  "chore": "Hand-copying tests from a spreadsheet into ADO is mind-numbing. Per test case: open a blank form, type the title, add each step and expected result one by one, set priority, link it to the story, save — then repeat dozens of times. Slow, and skipped steps or wrong links creep in as attention drifts.",
+  "instead": "The agent reads the whole spreadsheet at once, groups rows into complete test cases, and creates each fully formed — every step, expected results, priority, `TestedBy` link to the parent story, and owner. It writes before/after mapping spreadsheets tracing each row to its new work item ID, and can add the batch straight into a suite.",
+  "whyItMatters": "A hundred test cases into ADO in minutes instead of a day means testers spend their time testing, not typing into forms.",
+  "howItWorks": [
+    {
+      "step": "It reads the xlsx (one row per step) and groups rows sharing a `Title` into a single test case, preserving step order.",
+      "fn": "loadTestCasesFromExcel()",
+      "explain": "The spreadsheet is one-row-per-step, but ADO wants one-work-item-per-test-case, so this **groups by `Title`** using a Map: the first row for a title seeds the test case (capturing `Priority` and `Story ID` once, since those repeat identically down the step rows), and every row for that title appends a step. `{ defval: '' }` forces `sheet_to_json` to emit blank cells as `''` rather than omitting the key, so `row['Action']` is always safe to `.trim()`. Two deliberate defaults keep malformed input from producing broken cases: a missing `Priority` falls back to `P2`, and a blank `Expected Result` becomes the generic assertion `Verify action completes successfully` — a step with no expected result is meaningless in ADO. Rows with an empty `Title` are skipped entirely, so spacer rows don't create phantom cases. Map insertion order preserves the sheet's row order, which is what keeps steps sequential.",
+      "code": "private loadTestCasesFromExcel(filePath: string): { testCases: TestCaseDefinition[]; rawRows: any[] } {\n  const workbook = XLSX.readFile(filePath);\n  const sheet = workbook.Sheets[workbook.SheetNames[0]]; // first sheet only\n  // defval: '' emits blank cells as '' instead of omitting the key, so row['Action'] etc. are always safe to .trim().\n  const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });\n\n  // Group one-row-per-step into one-test-case-per-Title; Map preserves sheet order -> steps stay sequential.\n  const testCaseMap = new Map<string, TestCaseDefinition>();\n  for (const row of rows) {\n    const title = row['Title'];\n    if (!title) continue; // skip spacer/blank-title rows so they don't create phantom cases\n\n    // First row for a title seeds the case; Priority/Story ID repeat down the step rows, so capture once.\n    if (!testCaseMap.has(title)) {\n      testCaseMap.set(title, {\n        title,\n        priority: row['Priority'] || 'P2', // default priority when the cell is blank\n        storyId: String(row['Story ID'] || ''),\n        steps: [],\n      } as any);\n    }\n    testCaseMap.get(title)!.steps.push({\n      stepNum: parseInt(row['Step #'] || '1', 10),\n      action: String(row['Action'] || '').trim(),\n      // A blank expected result is meaningless in ADO, so substitute a generic assertion.\n      expectedResult: String(row['Expected Result'] || '').trim() || 'Verify action completes successfully',\n    });\n  }\n  return { testCases: [...testCaseMap.values()], rawRows: rows };\n}"
+    },
+    {
+      "step": "It creates each Test Case work item with its steps, priority, and a `TestedBy-Reverse` link to its parent story.",
+      "fn": "createTestCase()",
+      "explain": "Creating an ADO work item is a **JSON-Patch document** — an array of `add` ops, one per field, each keyed by its internal **reference name** (`System.Title`, `Microsoft.VSTS.TCM.Steps`, `Microsoft.VSTS.Common.Priority`), never the friendly label shown in the UI. The steps go in as a single field whose value is the serialized XML from `stepsToXml`, and `parsePriority` converts a `P2`-style string to the numeric 1–4 ADO stores. Both `AssignedTo` and the story link are conditional so a case with no owner or no story ID is still valid. The link uses `path: '/relations/-'` (the `-` appends to the relations array) with `rel: TestedBy-Reverse`: from the **test case's** side, *Reverse* is the direction that reads 'this case tests that story' — using Forward here would link it backwards. The relation's `url` must be a full REST API work-item URL, not just the ID.",
+      "code": "private async createTestCase(tc: TestCaseDefinition, assignedTo?: string): Promise<{ id: number; url: string } | null> {\n  const stepsXml = this.stepsToXml(tc.steps);\n\n  // A work item is created via a JSON-Patch doc: one 'add' op per field, keyed by ADO REFERENCE NAME (not the UI label).\n  const patches: JsonPatchOperation[] = [\n    { op: 'add', path: '/fields/System.Title', value: tc.title },\n    { op: 'add', path: '/fields/Microsoft.VSTS.TCM.Steps', value: stepsXml }, // steps live in ONE field as serialized XML\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: this.parsePriority(tc.priority) }, // 'P2' -> numeric 1-4\n  ];\n  // Conditional: a case with no owner is still valid, so only add AssignedTo when we have one.\n  if (assignedTo) patches.push({ op: 'add', path: '/fields/System.AssignedTo', value: assignedTo });\n\n  if (tc.storyId) {\n    patches.push({\n      op: 'add',\n      path: '/relations/-', // '-' appends to the relations array\n      value: {\n        // TestedBy-REVERSE: from the test case's side this reads 'this case tests that story'; Forward would link it backwards.\n        rel: 'Microsoft.VSTS.Common.TestedBy-Reverse',\n        url: `https://dev.azure.com/my-org/_apis/wit/workItems/${tc.storyId}`, // must be a full REST work-item URL, not a bare ID\n        attributes: { comment: `Tests US ${tc.storyId}` },\n      },\n    });\n  }\n  const result = await this.client.createWorkItem('Test Case', patches);\n  return { id: result.id, url: result._links?.html?.href };\n}"
+    },
+    {
+      "step": "Steps are serialized into ADO's `Microsoft.VSTS.TCM.Steps` XML format, so they render as a numbered step list like a hand-authored test case.",
+      "fn": "stepsToXml()",
+      "explain": "The `Microsoft.VSTS.TCM.Steps` field has a peculiar, undocumented-in-practice shape that this reproduces exactly: a `<steps>` element wrapping one `<step type=\"ValidateStep\">` each (`ValidateStep` is what gives a step its verifiable *expected result* column, versus a plain action step), and inside every step **two** `parameterizedString`s — first the action, then the expected result, in that order. The tricky part is the **double encoding**: each step's text is really HTML (`<DIV><P>...</P></DIV>`), but it lives inside XML, so the angle brackets are written as entities (`&lt;`/`&gt;`) — the field stores escaped HTML as text. That's also why the user's own text is run through `escapeXml` first: an unescaped `<` or `&` in an action would corrupt the surrounding XML. The `id=\"0\" last=\"N\"` header and per-step `id` are the numbering ADO renders as the step list.",
+      "code": "private stepsToXml(steps: TestStep[]): string {\n  // steps header: last=N is the step count ADO uses to number the rendered list.\n  let xml = '<steps id=\"0\" last=\"' + steps.length + '\">';\n  for (const step of steps) {\n    // Escape the user's text first - a raw < or & in an action would corrupt the surrounding XML.\n    const action = this.escapeXml(step.action);\n    const expected = this.escapeXml(step.expectedResult);\n    // ValidateStep (not plain action) is what gives the step a verifiable expected-result column.\n    xml += `<step id=\"${step.stepNum}\" type=\"ValidateStep\">`;\n    // TWO parameterizedStrings per step, in order: [0] action, [1] expected result.\n    // Double-encoded: the value is HTML (<DIV><P>) but lives inside XML, so its brackets are entity-escaped (&lt;/&gt;).\n    xml += `<parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;${action}&lt;/P&gt;&lt;/DIV&gt;</parameterizedString>`;\n    xml += `<parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;${expected}&lt;/P&gt;&lt;/DIV&gt;</parameterizedString>`;\n    xml += `<description/></step>`;\n  }\n  xml += '</steps>';\n  return xml;\n}"
+    },
+    {
+      "step": "It writes a second 'with IDs' xlsx stamping each created test case's new work item ID and URL onto every original step row.",
+      "fn": "createStepsMappingWithIds()",
+      "explain": "This is the audit trail. It **un-groups** the created cases back to the original one-row-per-step shape — the inverse of the load step — so every input row reappears, now stamped with the `adoId` and `adoUrl` of the work item it became, giving a row-level trace from spreadsheet to live test case. `result.adoId || undefined` matters: a failed creation leaves `adoId` empty, and coercing it to `undefined` makes `json_to_sheet` emit a blank cell rather than a misleading `null` or `0`, so failed rows are visibly un-stamped. The output filename carries `getTimestamp()` so re-runs never overwrite a prior mapping — each import keeps its own dated receipt.",
+      "code": "private createStepsMappingWithIds(results: TestCaseResult[], outputDir: string): string {\n  const rows: StepMapping[] = [];\n  // Un-group back to one-row-per-step (inverse of the load step) so every input row reappears...\n  for (const result of results) {\n    for (const step of result.testCase.steps) {\n      rows.push({\n        title: result.testCase.title,\n        stepNum: step.stepNum,\n        action: step.action,\n        expectedResult: step.expectedResult,\n        // ...now stamped with what it became. || undefined -> a FAILED creation leaves a blank cell, not a misleading 0/null.\n        adoId: result.adoId || undefined,\n        adoUrl: result.url || undefined,\n      });\n    }\n  }\n  const worksheet = XLSX.utils.json_to_sheet(rows);\n  const workbook = XLSX.utils.book_new();\n  XLSX.utils.book_append_sheet(workbook, worksheet, 'Steps With IDs');\n  // Timestamp in the filename so each import keeps its own dated receipt instead of overwriting the last.\n  const filePath = path.join(outputDir, `ADO_Steps_Mapping_WithIDs_${this.getTimestamp()}.xlsx`);\n  XLSX.writeFile(workbook, filePath);\n  return filePath;\n}"
+    },
+    {
+      "step": "If a plan and suite are given, it adds the whole created batch to that suite in one call.",
+      "fn": "addTestCasesToSuite()",
+      "explain": "Filing into a suite is **opt-in and separate from creation** — a test case exists in the project the moment it's created; adding it to a suite is a distinct ADO operation, so this whole block is guarded on `planId`, `suiteId`, and `createdIds.length > 0` all being present. Only the *successfully* created IDs (`createdIds`) are passed, so a case that failed to create is never filed. It hands the whole batch to `addTestCasesToSuite` in one call rather than looping, and `configId || undefined` lets ADO fall back to the suite's default test configuration when none was specified rather than sending an empty value.",
+      "code": "// Filing into a suite is opt-in and separate from creation - guard on plan+suite being set AND something created.\nif (input.planId && input.suiteId && createdIds.length > 0) {\n  await this.client.addTestCasesToSuite(\n    input.planId,\n    input.suiteId,\n    createdIds, // only the successfully created IDs - a failed creation is never filed\n    input.configId || undefined, // undefined -> ADO uses the suite's default test configuration\n  );\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Import a batch of drafted test cases",
+      "input": "An xlsx with 3 test cases across 11 step rows, for the 'Search Filters' feature.",
+      "output": "Created 3 Test Cases: #512, #513, #514 — each with steps, `TestedBy` link, and author as owner. Wrote a mapping stamping every row with its new work item ID."
+    },
+    {
+      "caption": "Preview with --dry-run",
+      "input": "Same xlsx, dry run first.",
+      "output": "Would create 3 test cases (11 steps). Listed each title, step count, and parent story — nothing written to ADO."
+    },
+    {
+      "caption": "Import and add to a suite",
+      "input": "Import the xlsx and add the new test cases to the 'Sprint 7 Regression' suite.",
+      "output": "Created 3 test cases and added all 3 to the 'Sprint 7 Regression' suite in one run."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Parsing the xlsx",
+      "whenRuns": "First, when you point it at the Excel file.",
+      "input": "An xlsx, one row per step.",
+      "output": "Test cases grouped by `Title`, each with its ordered step list."
+    },
+    {
+      "heading": "Writing the 'before' mapping",
+      "whenRuns": "Right after parsing, before any work item is created.",
+      "input": "The grouped test cases.",
+      "output": "A mapping xlsx showing every test case exactly as it's about to be created."
+    },
+    {
+      "heading": "Creating each Test Case",
+      "whenRuns": "Once per test case, in order.",
+      "input": "A test case's title, steps, priority, and parent story ID.",
+      "output": "A new Test Case work item, steps encoded in the `Microsoft.VSTS.TCM.Steps` XML format."
+    },
+    {
+      "heading": "Writing the 'with IDs' mapping",
+      "whenRuns": "After every test case has been attempted.",
+      "input": "Each test case's creation result, success or failure.",
+      "output": "A second 'with IDs' xlsx mapping every original row to its new work item ID and URL."
+    },
+    {
+      "heading": "Adding to a suite (optional)",
+      "whenRuns": "Only if `planId`/`suiteId` were given.",
+      "input": "The list of newly created test case IDs.",
+      "output": "The new test cases appear in that suite in ADO."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Azure DevOps Test Plans access and a **PAT** scoped to create test cases.",
+      "An xlsx of drafted tests: one row per step, columns Title, Step #, Action, Expected Result, Priority, and Story ID."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the engine that runs the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript run under Node — a one-time per-machine install.",
+        "firstRun": "One-time setup per machine."
+      },
+      {
+        "label": "Clone the agent and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the `xlsx` reader and ADO client into `node_modules`.",
+        "firstRun": "Cold install — a minute or two.",
+        "rerun": "No-op unless `package.json` changed."
+      },
+      {
+        "label": "Set the target org, project, and PAT (env vars).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token",
+        "why": "Read at startup: which ADO org/project to create the test cases in and the PAT that authorizes it."
+      },
+      {
+        "label": "Preview the grouping with --dry-run.",
+        "cmd": "npm run ado:testcases:create -- --input ./drafted-tests.xlsx --dry-run",
+        "why": "`--dry-run` groups rows into test cases and lists each one's title, step count, and parent story — nothing written to ADO. Verify the grouping before committing.",
+        "firstRun": "Parses the whole xlsx fresh."
+      },
+      {
+        "label": "Create the test cases, optionally adding them to a suite.",
+        "cmd": "npm run ado:testcases:create -- --input ./drafted-tests.xlsx --plan-id 1101 --suite-id 1102",
+        "why": "Same grouping, but now each test case is created in ADO — steps, priority, and `TestedBy` link in place — and, because `--plan-id`/`--suite-id` were given, added to that suite in the same run.",
+        "rerun": "Non-idempotent — re-running the same xlsx creates a duplicate batch. Re-run only on a fresh or updated spreadsheet."
+      },
+      {
+        "label": "Open the before/after mapping workbooks.",
+        "cmd": "open ./ADO_Steps_Mapping_<timestamp>.xlsx\nopen ./ADO_Steps_Mapping_WithIDs_<timestamp>.xlsx",
+        "why": "Both land next to your input file. The first is a snapshot of what was about to be created; the second stamps the real work item ID and URL onto every row, so any step traces back to what it became."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "--input <xlsx>",
+        "desc": "xlsx with Title, Step #, Action, Expected Result, Priority, and Story ID columns — one row per step."
+      },
+      {
+        "name": "--plan-id <id> --suite-id <id>",
+        "desc": "Optional: add the newly created test cases to this suite."
+      },
+      {
+        "name": "--stories <ids>",
+        "desc": "Optional: only create the test cases belonging to these parent stories."
+      },
+      {
+        "name": "--dry-run",
+        "desc": "Preview the grouped test cases without creating anything."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ADO_Steps_Mapping_<timestamp>.xlsx",
+        "desc": "A 'before' snapshot of every test case about to be created, saved next to the input file."
+      },
+      {
+        "name": "ADO_Steps_Mapping_WithIDs_<timestamp>.xlsx",
+        "desc": "The same rows, now stamped with each test case's new work item ID and URL."
+      },
+      {
+        "name": "new test cases in ADO",
+        "desc": "Each fully built — steps, priority, and a `TestedBy` link to its parent story."
+      }
+    ],
+    "rerun": "Non-idempotent — every run creates brand-new work items, so re-running an unchanged xlsx duplicates the batch. Re-run only after editing the spreadsheet, and use `--stories` to scope a re-run to just the changed rows.",
+    "integrate": "Hand testers the before/after mapping as a receipt — the `WithIDs` file is the audit trail proving which drafted row became which live test case, and it's the natural input to the results-poster once those cases are executed."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 3-minute screen recording: import a batch of drafted test cases from an xlsx.",
+    "script": [
+      "Open a terminal beside the drafted-tests spreadsheet.",
+      "Say: 'This turns a spreadsheet of test steps into real checklists in the tracker.'",
+      "Show the spreadsheet — point out the Title, Step #, Action, Expected Result, and Story ID columns.",
+      "Run `node -v` and `npm install` (or note it's already done).",
+      "Show the `export ADO_...` lines — the only project-specific part.",
+      "Run the `--dry-run` command; read out the grouped tests it lists — titles, step counts, parent stories.",
+      "Run the same command without `--dry-run` and with `--plan-id`/`--suite-id`; narrate each test being created.",
+      "Open the `WithIDs` spreadsheet it produced; show the new tracker ID next to each row.",
+      "Switch to the browser tracker and open one of the new checklists — show its steps rendered as a numbered list.",
+      "Close: 'That's a day of typing turned into one command.'"
+    ]
+  }
+}

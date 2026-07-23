@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Source-Link Inspector — Agent 29</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s6">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">29<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Investigating the app&#39;s data &amp; behavior</span></div>
+        <h1>The Source-Link Inspector</h1>
+        <p class="lead">Verifies the assistant&#39;s cited sources actually resolve, by clicking each reference open and confirming a real blob: URL appears.</p>
+        <p class="kicker">Source file: blob-reference-capture-agent.ts</p>
+      </div>
+    </div>
+
+    <p>When the assistant answers, it lists the documents it cited. This agent verifies those citations resolve: it confirms each cited <code>.docx</code>/<code>.txt</code> produces a working <code>blob:</code> URL a user could open, not just a filename with nothing behind it. Two phases — a fast API pass to send questions and extract citation IDs, then a Playwright pass that only opens conversations that actually cited something.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>The manual version: ask the assistant dozens of questions one at a time, and for each cited answer open the References panel, click each listed document, and watch whether a real file opens. Doing this by hand for a hundred questions is slow, and it&#39;s easy to lose track of which answers had solid sources and which had dead ones.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent runs every question, opens each answer&#39;s reference list, clicks into the <code>.docx</code>/<code>.txt</code> entries, and records the exact <code>blob:</code> URL each resolves to. You get one workbook: every question, its citation count, and which citations resolve to a real file.</p></div>
+    </div>
+    <p>A cited source with no real file behind it means the reader can&#39;t verify the claim — which quietly erodes trust in every answer.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Loads the golden question list — each question&#39;s id, text, category, and optional reference content.</span>
+          <span class="fc-node__fn">loadPrompts()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Sends each question straight to the chat API (fast, no browser) and extracts the citation IDs from the answer text.</span>
+          <span class="fc-node__fn">extractCitationIds()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For every answer with at least one citation, launches Playwright Chromium, reusing a cached login if present.</span>
+          <span class="fc-node__fn">launchBrowser()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Opens the conversation&#39;s References panel, clicks each <code>.docx</code>/<code>.txt</code> entry, and checks whether a real <code>blob:</code> URL appears — the tell that the file genuinely resolves.</span>
+          <span class="fc-node__fn">captureRefsFromUI()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Writes a multi-tab workbook: a Summary tab, an All Results tab, and a Blob References tab of just the citations that resolved.</span>
+          <span class="fc-node__fn">writeExcel()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"loadPrompts()","explain":"This normalizes an **externally-authored** golden file into the one record shape the rest of the agent depends on, so downstream code never has to know the file's quirks. `data.prompts || []` means a file that's valid JSON but missing the `prompts` key yields an empty run instead of a crash on `.map`. `id || promptId` accepts **either field name** so two versions of the golden schema both load, and `category`/`referenceContent` default to empty strings so later string operations (filtering, comparison) never hit `undefined`. Note `prompt` itself is intentionally *not* defaulted — a question with no prompt text is a genuine authoring error worth surfacing rather than silently blanking.","code":"function loadPrompts(goldenPath) {\n  const data = JSON.parse(fs.readFileSync(goldenPath, 'utf-8'));\n  // || [] -> a file missing the prompts key yields an empty run, not a .map crash.\n  return (data.prompts || []).map(p => ({\n    id: p.id || p.promptId,                         // accept either field name across schema versions\n    prompt: p.prompt,                               // deliberately NOT defaulted — a missing prompt is a real error\n    category: p.category || '',                     // default '' so later string ops never see undefined\n    referenceContent: p.referenceContent || '',\n  }));\n}"},{"fn":"extractCitationIds()","explain":"This is the **phase-1/phase-2 gate**: the count of IDs it returns decides whether an answer is worth opening in a browser at all, so it's tuned to be precise, not loose. The regex matches the app's exact citation marker — a **bracketed UUID** in canonical `8-4-4-4-12` hex form — which is specific enough that ordinary prose won't false-positive as a citation. `|| []` makes a citation-free answer return cleanly (empty array → that answer skips phase 2 entirely). The same document is often cited multiple times in one answer, so `[...new Set(ids)]` **de-duplicates** — you check each unique source once, not once per mention. The `[\\[\\]]` strip removes the surrounding brackets the regex captured so the bare UUID is returned.","code":"function extractCitationIds(answer) {\n  // Match the app's exact citation marker: a bracketed UUID in canonical\n  // 8-4-4-4-12 hex form — specific enough that ordinary prose won't false-match.\n  const matches = answer.match(\n    /\\[([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\]/gi\n  ) || [];   // no citations -> [] -> this answer skips the browser phase entirely\n  const ids = matches.map(m => m.replace(/[\\[\\]]/g, ''));   // strip the surrounding [ ] -> bare UUID\n  return [...new Set(ids)]; // de-duplicated: a doc cited 3x is checked once, not 3 times\n}"},{"fn":"launchBrowser()","explain":"The `headed` flag is inverted into Playwright's `headless` (`headless: !headed`) so the visible-window default is *off* — you only pass `--headed` for the first sign-in. Auth is **branch-on-file-existence**: if `AUTH_FILE` is on disk the context is built with `storageState`, restoring the saved cookies/tokens so no login is needed; otherwise a bare context is created and the log warns login will be required. The two `console.log` lines aren't decoration — they make it obvious at run time *which* path was taken, so a run that unexpectedly stalls on a login screen is immediately explained by the 'No cached auth' line above it. This function only builds the context; it doesn't perform the interactive login itself.","code":"async function launchBrowser(headed) {\n  const browser = await pw.chromium.launch({ headless: !headed });   // headed default OFF — only --headed for first sign-in\n  let context;\n\n  // Branch on whether a saved session exists on disk.\n  if (fs.existsSync(AUTH_FILE)) {\n    context = await browser.newContext({ storageState: AUTH_FILE });   // restore cookies/tokens -> no login\n    console.log('  Using cached auth state');                         // log the path taken, so a stall is self-explaining\n  } else {\n    context = await browser.newContext();\n    console.log('  No cached auth — will need login');\n  }\n  return { browser, context };\n}"},{"fn":"captureRefsFromUI()","explain":"The core proof: a citation is only counted as **real** if clicking it produces an actual `blob:` URL — a filename in the panel with no blob behind it is exactly the dead reference this agent hunts. The reference-item selector is deliberately **broad** (`.reference-item, [class*=\"reference\"]`) to survive the app's varied class names, then narrowed by **content**: only items whose text mentions `.docx`/`.txt` are clicked, because those are the document types that should resolve to a downloadable blob (a link-type citation wouldn't). `$$eval('a[href^=\"blob:\"]')` scrapes only anchors whose href actually *starts with* `blob:` — the browser mints these object URLs only when a file genuinely loads, so their presence is hard evidence the file resolved, not just a claim. Each finding records its **1-based `position`** so a resolved/unresolved result maps back to the exact panel entry, and `refCount` reports the total items seen so 'checked 0 of 3' is distinguishable from 'all 3 resolved'.","code":"async function captureRefsFromUI(page, baseUrl, conversationId) {\n  const blobRefs = [];\n  await page.goto(`${baseUrl}/#/conversations/${conversationId}`, { waitUntil: 'networkidle' });\n\n  // Broad selector to survive varied class names across the app's markup.\n  // The references panel lists numbered items like \"1. Best Practice Guide...\"\n  const refElements = await page.$$('.reference-item, [class*=\"reference\"]');\n\n  for (let i = 0; i \u003c refElements.length; i++) {\n    const text = (await refElements[i].textContent()) || '';\n    // Narrow by CONTENT: only document-type citations should resolve to a blob;\n    // skip anything that isn't a .docx/.txt (e.g. a plain link citation).\n    if (!text.toLowerCase().includes('.docx') && !text.toLowerCase().includes('.txt')) continue;\n\n    await refElements[i].click(); // open the preview\n    // Scrape only anchors whose href STARTS WITH blob: — the browser mints these\n    // object URLs only when a file truly loads, so their presence == real proof.\n    const links = await page.$$eval('a[href^=\"blob:\"]', els => els.map(e => e.href));\n    for (const href of links) {\n      blobRefs.push({ position: i + 1, refName: text.trim(), blobUrl: href });   // 1-based position maps back to the panel entry\n    }\n  }\n  return { refCount: refElements.length, blobRefs };   // total seen vs. resolved: 'checked 0 of 3' != 'all 3 resolved'\n}"},{"fn":"writeExcel()","explain":"The report is layered from **coarse to fine** on purpose: the Summary tab answers 'is there a problem?' with three counts, and the crucial distinction it encodes is **cited vs. actually-resolved** — `citationCount > 0` (the answer *claimed* a source) is tallied separately from `hasBlobRef` (a source that *opened*), and the gap between those two numbers is precisely the dead-reference rate. The All Results tab then lets a reader drill into any single prompt, joining `citationCount` against `refCount` (items seen in the UI) and a `Y/N` blob flag. Blob URLs are joined with `\\n` so **multiple resolved files stack within one cell** rather than sprawling across columns. `addWorksheet` order fixes the tab order in the file, so Summary always opens first.","code":"async function writeExcel(results, outPath) {\n  const wb = new ExcelJS.Workbook();\n\n  // Summary tab (opens first): the key gap is cited vs. resolved.\n  const ws1 = wb.addWorksheet('Summary');\n  ws1.addRow(['Total prompts', results.length]);\n  ws1.addRow(['Prompts with citations', results.filter(r => r.citationCount > 0).length]);       // answer CLAIMED a source\n  ws1.addRow(['Prompts with blob refs (.docx/.txt)', results.filter(r => r.hasBlobRef).length]); // source actually OPENED\n\n  // All Results tab: per-prompt drill-down.\n  const ws2 = wb.addWorksheet('All Results');\n  ws2.addRow(['Prompt ID', 'Citations', 'Refs in UI', 'Has Blob', 'Blob URLs']);\n  for (const r of results) {\n    ws2.addRow([r.promptId, r.citationCount, r.refCount, r.hasBlobRef ? 'Y' : 'N',\n                r.blobRefs.map(b => b.blobUrl).join('\\n')]);   // \\n stacks multiple URLs within one cell\n  }\n\n  await wb.xlsx.writeFile(outPath);\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A policy question with two cited documents</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>&#39;What is our travel reimbursement limit?&#39; — the assistant answers and cites &#39;Travel_Policy_2024.docx&#39; and &#39;Expense_FAQ.txt&#39;.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Both resolve to real blob: URLs. The row reads: 2 citations, 2 refs checked, both resolve — each file&#39;s name and URL recorded.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A citation that never resolves</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>&#39;What are the office holiday dates?&#39; — the assistant cites &#39;Holiday_Schedule.docx&#39;.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The agent clicks the entry but no blob: URL appears. The row flags 1 citation, 0 resolved — a dead reference for the tester to chase.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A question with no citations</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>The general-knowledge question &#39;Who wrote Hamlet?&#39; — answered with no cited documents.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>The agent skips the browser phase entirely and records 0 citations, so time is spent only on answers that actually claim a source.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>An app login with permission to open conversations and view the References panel.</li><li>A golden question list — a JSON file with an id, question text, and category per entry.</li><li>A one-time interactive sign-in on first run (so the agent can persist the storage-state and reuse it after).</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime the agent runs on.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is a TypeScript program; Node executes it. One-time setup per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Only needed on a fresh machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Install the agent&#39;s dependencies, then Playwright in its sibling folder.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install
+
+# the browser-clicking library lives in its own sibling folder:
+cd Playwright
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the API client and the ExcelJS writer. The second install pulls in Playwright, which the agent drives to open the References panel.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Downloads everything (a minute or two, longer the first time Playwright fetches its Chromium binary).</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the target environment (environment variables).</div>
+        <pre class="rb__cmd"><code>export APP_API_URL_DEV=https://dev.example-app.internal
+export APP_API_TOKEN_DEV=your-api-token
+export APP_MODEL=gpt5   # optional — which model to ask</code></pre>
+        <div class="rb__why"><span>Why</span> Phase 1 hits the chat API directly (fast, no browser). These variables select the environment and the token that authorizes the questions.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">First run: <code>--headed</code> so you can complete sign-in once.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/blob-reference-capture-agent.ts \
+  --env dev --golden ./questions/my-question-list.json \
+  --limit 1 --headed</code></pre>
+        <div class="rb__why"><span>Why</span> With no cached storage-state, a visible Chromium window opens and waits for you to sign in (including any MFA step), then persists the session so future runs skip it.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> A browser window opens; sign in when prompted, then the run continues on its own.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Real run: point it at your full question list.</div>
+        <pre class="rb__cmd"><code>npx ts-node agents/blob-reference-capture-agent.ts \
+  --env dev --golden ./questions/my-question-list.json \
+  --limit 10</code></pre>
+        <div class="rb__why"><span>Why</span> The actual check. Phase 1 asks every question via the API and extracts citation markers; phase 2 opens only the cited answers in Chromium, clicks each reference, and records whether a blob: URL appears.</div>
+        
+        <div class="rb__run rb__run--again"><span>Re-run</span> Reuses the saved login from the first run — no browser sign-in unless the session expired.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the report.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/blob-refs/BlobRefs_dev_&lt;timestamp&gt;.xlsx</code></pre>
+        <div class="rb__why"><span>Why</span> A three-tab workbook — Summary, All Results, and just the resolved citations — plus a matching JSON file with the same data.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--env &lt;dev|qa&gt;</dt><dd>Which environment to run the questions against.</dd><dt>--golden &lt;path&gt;</dt><dd>The golden question list (id, text, category) to run.</dd><dt>--limit &lt;n&gt;</dt><dd>Run only the first N questions — handy for a quick check.</dd><dt>--prompts &lt;ids&gt;</dt><dd>Run only specific question ids, comma-separated.</dd><dt>--headed</dt><dd>Show the Chromium window — needed for the first sign-in.</dd><dt>environment variables</dt><dd>The API URL and token for the chosen environment.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>BlobRefs_&lt;env&gt;_&lt;timestamp&gt;.json</dt><dd>Every question&#39;s citations, reference count, and which ones resolved to a real file.</dd><dt>BlobRefs_&lt;env&gt;_&lt;timestamp&gt;.xlsx</dt><dd>A three-tab workbook: Summary totals, All Results, and a Blob References tab of just the resolved citations.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> No fingerprinting — each run re-asks every selected question fresh. What gets reused is the login: once the storage-state is saved, later runs (even <code>--headless</code>) skip signing in unless it expired.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Point it at the same question list on a schedule (nightly, or post-deploy) so a citation quietly going dead gets caught automatically instead of during a live demo. The JSON output diffs cleanly run-over-run to spot a source that used to resolve and stopped.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 3-4 minute screen recording: watch the agent ask questions, then click through their cited sources to prove they&#39;re real.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 4</div>
+        <h3 class="display">Sends the questions (phase 1)</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Phase 1, first thing.</dd>
+          <dt>Takes in</dt><dd>The golden question list.</dd>
+          <dt>Shows out</dt><dd>Each answer plus any citation IDs extracted from its text — via direct API call, no browser, so this phase is quick.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 4</div>
+        <h3 class="display">Launches the browser only where needed</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Phase 2, right after phase 1 finishes.</dd>
+          <dt>Takes in</dt><dd>Only the conversations whose answer had at least one citation.</dd>
+          <dt>Shows out</dt><dd>A logged-in Chromium context, reusing cached storage-state if present — so most runs skip login entirely.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 4</div>
+        <h3 class="display">Clicks into the References panel</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per cited conversation.</dd>
+          <dt>Takes in</dt><dd>That conversation&#39;s list of cited files.</dd>
+          <dt>Shows out</dt><dd>A record of which <code>.docx</code>/<code>.txt</code> entries resolve to a real <code>blob:</code> URL and which lead nowhere.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 4</div>
+        <h3 class="display">Writes the results</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every conversation has been checked.</dd>
+          <dt>Takes in</dt><dd>Every citation and blob-URL finding, together.</dd>
+          <dt>Shows out</dt><dd>A JSON file plus a three-tab ExcelJS workbook — Summary, All Results, and Blob References.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-feature-trace-checker.html">← The Feature-Trace Checker</a>
+      <a href="the-wait-time-verifier.html">The Wait-Time Verifier →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

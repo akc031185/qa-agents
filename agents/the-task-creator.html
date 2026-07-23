@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Task Creator — Agent 15</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s3">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">15<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Keeping the project tracker up to date</span></div>
+        <h1>The Task Creator</h1>
+        <p class="lead">Batch-creates ADO Task work items from an in-file plan — each fully populated and parented under its user story via a Hierarchy link.</p>
+        <p class="kicker">Source file: create-ado-tasks.ts</p>
+      </div>
+    </div>
+
+    <p>When a batch of work is planned — each item with title, description, owner, and acceptance criteria — someone still has to key it into ADO. This agent does that data entry: it POSTs each Task fully populated and parents it under the correct user story via a <code>Hierarchy-Reverse</code> link, so nothing is orphaned.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Creating a dozen tasks by hand is repetitive and error-prone. Per task: open a blank form, paste title, description, and acceptance criteria, set priority, add tags, then link the parent — sometimes two parents. Twelve times over, it&#39;s easy to drop a link, mistype a tag, or skip the acceptance criteria entirely.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>The agent holds the plan and creates each Task in one run — title, description, acceptance criteria, priority, and tags all set. It links each to its first parent during creation, and PATCHes extra <code>Hierarchy-Reverse</code> links for any task with multiple parents. It closes with a summary table of what got created and where it landed.</p></div>
+    </div>
+    <p>Consistent, fully-linked tasks mean the agreed plan lands in ADO exactly as intended, with nothing dropped.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">For each task it builds the full field set — title, description, acceptance criteria, priority, tags — and POSTs it as a Task in one request, with the first parent&#39;s <code>Hierarchy-Reverse</code> link attached inline.</span>
+          <span class="fc-node__fn">createTask()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">When a task has multiple parents, it PATCHes each extra <code>Hierarchy-Reverse</code> link with its own follow-up request.</span>
+          <span class="fc-node__fn">linkToParent()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">It prints a summary table — task, new work item ID, parent(s), and Created/Failed — plus each item&#39;s URL.</span>
+          <span class="fc-node__fn">main()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"createTask()","explain":"A Task is created with a **JSON-Patch document** — an array of `add` ops keyed by ADO **reference name** (`System.Title`, `Microsoft.VSTS.Common.AcceptanceCriteria`, etc.), not UI labels. Two ADO quirks are handled inline: description and acceptance-criteria fields render **HTML**, so literal newlines are converted to `\u003cbr>` or they'd collapse to one line; and priority is stored numerically, so `priorityMap` translates a `High`/`Medium` label to ADO's 1–4, defaulting to `2` for anything unmapped. The first parent is linked **during creation** by appending a `Hierarchy-Reverse` relation (from the child's side, *Reverse* points up to the parent — Forward would nest the story under the task instead), so the Task is never momentarily orphaned. Note the endpoint `wit/workitems/$Task` — the literal `$` prefix on the type name is required by the create API — and the content type must be `application/json-patch+json`, not plain JSON.","code":"async function createTask(task: TaskDefinition): Promise\u003c{ id: number; url: string } | null> {\n  // JSON-Patch: one 'add' op per field, keyed by ADO reference name (not the UI label).\n  const patchDocument = [\n    { op: 'add', path: '/fields/System.Title', value: task.title },\n    // Description/AcceptanceCriteria render as HTML in ADO -> convert newlines to \u003cbr> or they collapse to one line.\n    { op: 'add', path: '/fields/System.Description', value: task.description.replace(/\\n/g, '\u003cbr>') },\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.AcceptanceCriteria', value: task.acceptanceCriteria.replace(/\\n/g, '\u003cbr>') },\n    // Priority is numeric in ADO; map the label to 1-4, default 2 for anything unmapped.\n    { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: priorityMap[task.priority] || 2 },\n    { op: 'add', path: '/fields/System.Tags', value: task.tags },\n  ];\n\n  if (task.parentUS.length > 0) {\n    patchDocument.push({\n      op: 'add',\n      path: '/relations/-', // '-' appends to the relations array\n      value: {\n        // Hierarchy-REVERSE = child -> parent (nests THIS task under the story); Forward would invert it.\n        rel: 'System.LinkTypes.Hierarchy-Reverse',\n        url: `https://dev.azure.com/my-org/_apis/wit/workItems/${task.parentUS[0]}`,\n        attributes: { comment: `Child of US ${task.parentUS[0]}` },\n      },\n    });\n  }\n\n  // $Task: the literal '$' prefix on the type is required by the create endpoint;\n  // content type MUST be application/json-patch+json, not plain application/json.\n  const response = await fetch(`${BASE_URL}/wit/workitems/$Task?api-version=7.0`, {\n    method: 'POST',\n    headers: { Authorization: authHeader, 'Content-Type': 'application/json-patch+json' },\n    body: JSON.stringify(patchDocument),\n  });\n  const result = await response.json();\n  return { id: result.id, url: result._links?.html?.href };\n}"},{"fn":"linkToParent()","explain":"A work item's create call attaches only the *first* parent link, so additional parents are added afterward one at a time. This is why it's a **PATCH** to `wit/workitems/{taskId}` (updating an existing item) rather than the `POST .../$Task` create — but the body is the same single `add` op on `/relations/-`, appending another `Hierarchy-Reverse` relation to the parent. It returns the bare `response.ok` boolean rather than throwing, so the caller can record one bad parent link as a per-task failure and keep going instead of aborting the whole batch. Same `application/json-patch+json` content type the create call needs.","code":"async function linkToParent(taskId: number, parentId: string): Promise\u003cboolean> {\n  // Same single 'add' op on /relations/- as creation, just applied afterward for parents 2..N.\n  const patchDocument = [{\n    op: 'add',\n    path: '/relations/-',\n    value: {\n      rel: 'System.LinkTypes.Hierarchy-Reverse', // child -> parent, same as the inline first link\n      url: `https://dev.azure.com/my-org/_apis/wit/workItems/${parentId}`,\n      attributes: { comment: `Child of US ${parentId}` },\n    },\n  }];\n\n  // PATCH the EXISTING task (not $Task create); json-patch content type still required.\n  const response = await fetch(`${BASE_URL}/wit/workitems/${taskId}?api-version=7.0`, {\n    method: 'PATCH',\n    headers: { Authorization: authHeader, 'Content-Type': 'application/json-patch+json' },\n    body: JSON.stringify(patchDocument),\n  });\n  return response.ok; // return the boolean, don't throw - lets the caller flag one bad link and continue\n}"},{"fn":"main()","explain":"The driver loop encodes the two-phase linking: `createTask` attaches parent `[0]` inline, so the follow-up loop starts at **index 1** to PATCH only the *extra* parents, and `linked` seeds with `parentUS[0]` because that first link already succeeded as part of creation. Link tracking is granular — a parent ID is pushed into `linked` only when `linkToParent` returns `ok`, so a task can end up created-but-partially-linked, and that shows up honestly in the summary rather than being reported as fully done. A failed `createTask` records a null-ID row instead of crashing the batch, so one bad task never stops the rest. The final pass prints a Markdown table where `status` is derived purely from whether an `adoId` exists (`Created` vs `Failed`) and `N/A`/`-` stand in for the missing ID and empty parent list.","code":"for (const task of tasks) {\n  const created = await createTask(task);\n  if (created) {\n    // parentUS[0] was linked inline during creation, so seed 'linked' with it and start the loop at 1.\n    const linked: string[] = [task.parentUS[0]];\n    for (let i = 1; i \u003c task.parentUS.length; i++) {\n      const ok = await linkToParent(created.id, task.parentUS[i]);\n      // Only record a parent as linked if its PATCH actually succeeded -> partial links show honestly.\n      if (ok) linked.push(task.parentUS[i]);\n    }\n    results.push({ task, adoId: created.id, url: created.url, linked });\n  } else {\n    // Failed create -> null-ID row, so one bad task doesn't crash the whole batch.\n    results.push({ task, adoId: null, url: null, linked: [] });\n  }\n}\n\n// Print summary table - status is derived purely from whether an adoId came back.\nconsole.log('| Task | ADO ID | Parent US | Status |');\nfor (const r of results) {\n  const status = r.adoId ? 'Created' : 'Failed';\n  // N/A / '-' stand in for a missing ID and an empty parent list respectively.\n  console.log(`| ${r.task.id} | ${r.adoId || 'N/A'} | ${r.linked.join(', ') || '-'} | ${status} |`);\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Create a planned batch of tasks</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>An in-file plan of 6 tasks, each with description, acceptance criteria, owner, and parent story.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Created all 6 Tasks (#701–#706), each `Hierarchy-Reverse`-linked to its parent story. Printed a summary table with each URL.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">A task with two parents</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A task parented under both story #204 and story #207.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Created the task with the #204 link inline, then PATCHed the second link to #207. Both `Hierarchy-Reverse` links confirmed.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">One link PATCH fails</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>Create the batch; one parent ID is invalid.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>5 of 6 tasks fully linked. One task created but its link PATCH to the bad parent returned non-OK — flagged in the summary for manual fix.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>Azure DevOps access and a <strong>PAT</strong> scoped to create work items.</li><li>The planned batch written out — title, description, acceptance criteria, priority, tags, and parent story ID(s) per item.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the engine that runs the agent.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript run under Node — a one-time per-machine install.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> One-time setup per machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone the agent and install its dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the one dependency this script needs to talk to the ADO REST API.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Cold install — a minute or two.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op unless <code>package.json</code> changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Set the write PAT (env var).</div>
+        <pre class="rb__cmd"><code>export ADO_PAT_WRITE=your-access-token</code></pre>
+        <div class="rb__why"><span>Why</span> The one secret the script needs. Unlike the other agents, this one hard-codes its target org/project and the task plan in the source file rather than taking flags — see the next step.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Edit the source and fill in your batch.</div>
+        <pre class="rb__cmd"><code># in agents/create-ado-tasks.ts, near the top:
+const ADO_ORGANIZATION = &#39;my-org&#39;;
+const ADO_PROJECT = &#39;My Project&#39;;
+
+// further down, replace the `tasks` array with your own planned batch:
+const tasks: TaskDefinition[] = [
+  { id: &#39;T1&#39;, title: &#39;...&#39;, assignedTo: &#39;...&#39;, parentUS: [&#39;4001&#39;], description: &#39;...&#39;, acceptanceCriteria: &#39;...&#39;, tags: &#39;...&#39;, priority: &#39;High&#39; },
+  // ...
+];</code></pre>
+        <div class="rb__why"><span>Why</span> This script targets one specific batch, not a generic importer — the org/project and the <code>tasks</code> array are constants in the file. Editing them here is this agent&#39;s &#39;input&#39; step.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Run it and read the printed summary table.</div>
+        <pre class="rb__cmd"><code>npm run ado:tasks</code></pre>
+        <div class="rb__why"><span>Why</span> Creates every task in your <code>tasks</code> array, links each to its parent(s), and prints a table of what was created and where it landed — plus each new item&#39;s URL.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Creates the whole batch from scratch.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> Non-idempotent — re-running creates a duplicate batch. Re-run only after clearing or editing the <code>tasks</code> array.</div>
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>the `tasks` array (in-file)</dt><dd>Each planned item&#39;s title, description, acceptance criteria, priority, tags, and one or more parent story IDs.</dd><dt>ADO_ORGANIZATION / ADO_PROJECT (in-file constants)</dt><dd>Which ADO org/project to create the tasks in.</dd><dt>ADO_PAT_WRITE (environment variable)</dt><dd>The PAT authorizing the script to create work items.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>new Tasks in ADO</dt><dd>Each fully populated and nested under its parent story (or stories) via <code>Hierarchy-Reverse</code>.</dd><dt>console summary table</dt><dd>Task, new work item ID, parent, and status (Created/Failed) for every item, plus each URL.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Non-idempotent — each run creates brand-new tasks with no memory of prior runs, so re-running the same <code>tasks</code> array duplicates the whole batch. Clear the array (or comment out already-created items) before re-running.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Treat this as a one-off migration script per planning batch, not a scheduled service — copy it, swap in the next batch&#39;s <code>tasks</code>, run once, then set it aside until the next planning round.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 2-3 minute screen recording: fill in a planned batch and create it in ADO.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 4</div>
+        <h3 class="display">Populating the Task fields</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Once per planned task, first.</dd>
+          <dt>Takes in</dt><dd>A task&#39;s title, description, acceptance criteria, priority, and tags.</dd>
+          <dt>Shows out</dt><dd>A single POST that creates the Task, fully populated.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 4</div>
+        <h3 class="display">Linking the first parent</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Inline in the same POST that creates the task.</dd>
+          <dt>Takes in</dt><dd>The task&#39;s primary parent story ID.</dd>
+          <dt>Shows out</dt><dd>The new Task appears nested under that story in ADO.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 4</div>
+        <h3 class="display">PATCHing extra parents</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Right after creation, only for tasks with more than one parent.</dd>
+          <dt>Takes in</dt><dd>The new task&#39;s ID and each additional parent ID.</dd>
+          <dt>Shows out</dt><dd>One more <code>Hierarchy-Reverse</code> link per extra parent, each confirmed independently.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 4</div>
+        <h3 class="display">Printing the summary</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After every task in the batch has been attempted.</dd>
+          <dt>Takes in</dt><dd>Each task&#39;s outcome — created or failed — and its links.</dd>
+          <dt>Shows out</dt><dd>A markdown summary table (task, new work item ID, parent, status) plus each item&#39;s URL.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-test-case-importer.html">← The Test-Case Importer</a>
+      <a href="the-tracker-sync.html">The Tracker Sync →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

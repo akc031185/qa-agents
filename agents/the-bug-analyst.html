@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Bug Analyst — Agent 02</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body class="plate-shell s1">
+
+<header class="masthead"><div class="wrap masthead__inner">
+  <div class="masthead__title"><b>◑</b> Field Guide to Software QA Agents</div>
+  <nav class="masthead__nav">
+    <a href="../index.html">Contents</a>
+    <a href="../toolkit.html">Toolkit</a>
+    <a href="../guides.html">Guides</a>
+    <a href="../deck.html">Slides</a>
+  </nav>
+</div></header>
+<main class="wrap wrap--article">
+  <article class="plate">
+    <div class="plate__top">
+      <div class="plate__no">02<small>Agent</small></div>
+      <div class="plate__title">
+        <div class="plate__cat"><span class="chip ">Finding &amp; reporting problems</span></div>
+        <h1>The Bug Analyst</h1>
+        <p class="lead">Rolls every bug under a feature into a computed status report — fix rate, time-to-fix, hotspots, per-assignee load — with zero manual tallying.</p>
+        <p class="kicker">Source file: bug-intelligence-agent.ts</p>
+      </div>
+    </div>
+
+    <p>Walks a feature (or an explicit story list) down to its child Bug work items, enriches each with a computed days-to-fix, aggregates the whole set in memory, and emits a shareable report set: JSON, Markdown, a multi-sheet Excel workbook, and optionally Word. Replaces the afternoon-in-spreadsheets with a single deterministic pass.</p>
+
+    <h2 class="display">Why this exists</h2>
+    <div class="beforeafter">
+      <div class="ba ba--before"><div class="ba__label">The chore it removes</div><p>Briefing a lead means opening the tracker and hand-tallying: open vs fixed, severity mix, which area has the most, who&#39;s carrying the load, mean time-to-fix — then pasting it into a doc. Hours of work, stale the next day, and arithmetic errors creep in by hand.</p></div>
+      <div class="ba__arrow">→</div>
+      <div class="ba ba--after"><div class="ba__label">What you get instead</div><p>An instant, reproducible report — totals by severity/state, fix rate, average days-to-fix, the hotspot story, per-assignee workload, plus generated insights and recommendations — as Markdown, Excel, JSON, and optionally Word. Every number is computed from live tracker data, so it&#39;s right every run.</p></div>
+    </div>
+    <p>Go/no-go calls ride on these numbers. Getting them fast and correct is the difference between a confident ship and a nasty surprise — and computed beats hand-tallied every time.</p>
+
+    <h2 class="display">How it works</h2>
+    <p class="flow-lead">Follow the flow — <strong>click any step to see the exact code behind it.</strong></p>
+    <div class="flowchart">
+      <button class="fc-node fc-node--live" data-fc="0" type="button">
+        <span class="fc-node__n">01</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Given a feature or story list, walks each story&#39;s hierarchy and collects its child Bug work items.</span>
+          <span class="fc-node__fn">gatherBugs()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="1" type="button">
+        <span class="fc-node__n">02</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Normalizes each raw work item into a typed <code>EnrichedBug</code> with a computed days-to-fix.</span>
+          <span class="fc-node__fn">enrichBug()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="2" type="button">
+        <span class="fc-node__n">03</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Single-pass aggregation: totals by severity/state, fix rate, mean days-to-fix, per-assignee workload.</span>
+          <span class="fc-node__fn">buildReport()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="3" type="button">
+        <span class="fc-node__n">04</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Emits threshold-triggered insight strings — hotspot story, sub-50% fix rate, an assignee with ≥ 3 open bugs.</span>
+          <span class="fc-node__fn">generateInsights()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="4" type="button">
+        <span class="fc-node__n">05</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Derives actionable recommendations from the same stats — prioritize Critical/High, triage backlog, flag untested stories.</span>
+          <span class="fc-node__fn">generateRecommendations()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+      <div class="fc-arrow" aria-hidden="true">↓</div>
+      <button class="fc-node fc-node--live" data-fc="5" type="button">
+        <span class="fc-node__n">06</span>
+        <span class="fc-node__body">
+          <span class="fc-node__t">Serializes the report to a multi-sheet Excel workbook (plus JSON/Markdown/Word alongside).</span>
+          <span class="fc-node__fn">generateExcel()</span>
+        </span>
+        <span class="fc-node__peek">view code →</span>
+      </button>
+    </div>
+    <div class="code-modal" id="codeModal" hidden>
+      <div class="code-modal__backdrop" data-close></div>
+      <div class="code-modal__panel" role="dialog" aria-modal="true" aria-labelledby="cmFn">
+        <button class="code-modal__x" data-close aria-label="Close">✕</button>
+        <div class="code-modal__grid">
+          <div class="code-modal__codecol">
+            <div class="code-modal__cap"><code id="cmFn"></code></div>
+            <pre class="code-modal__code"><code id="cmCode"></code></pre>
+          </div>
+          <aside class="code-modal__explain">
+            <h4>What this step does</h4>
+            <p id="cmExplain"></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="fcData">[{"fn":"gatherBugs()","explain":"The hierarchy walk that feeds everything downstream. For each `storyId` it fetches the work item **with its relations** (a normal fetch omits them), captions it (falling back to `Story #\u003cid>` when the title is blank), then pulls only the **outbound** `Hierarchy-Forward` links via `extractRelationIds` — that direction means *children*, so a bug's own parent link is never mistaken for a child. Empty child sets `continue` early to skip a pointless batch call, and `getWorkItemsBatch` requests a **fixed field projection** (not the whole work item) in one round-trip per story, keeping ADO calls down. The `child.fields?.['System.WorkItemType'] === 'Bug'` guard drops sibling Tasks/Test-Cases so only Bugs are enriched.","code":"private async gatherBugs(parentIds: number[]) {\n  const allBugs: EnrichedBug[] = [];\n  const storyTitles = new Map\u003cnumber, string>();\n\n  for (const storyId of parentIds) {\n    // Fetch WITH relations — a plain getWorkItem omits the link graph we need\n    const wi = await this.client.getWorkItemWithRelations(storyId);\n    // Blank titles happen on partially-created items; keep a usable caption\n    const storyTitle = wi.fields?.['System.Title'] || `Story #${storyId}`;\n    storyTitles.set(storyId, storyTitle);\n\n    // Hierarchy-Forward = OUTBOUND links = children (Reverse would be the parent)\n    const childIds = this.client.extractRelationIds(wi.relations || [], 'System.LinkTypes.Hierarchy-Forward');\n    if (childIds.length === 0) continue; // no children — skip the batch round-trip\n\n    // One batched call per story, projecting ONLY the fields the report reads\n    const children = await this.client.getWorkItemsBatch(childIds, [\n      'System.Id', 'System.Title', 'System.WorkItemType', 'System.State',\n      'Microsoft.VSTS.Common.Severity', 'Microsoft.VSTS.Common.Priority',\n      'System.AssignedTo', 'System.CreatedDate', 'Microsoft.VSTS.Common.ResolvedDate',\n    ]);\n\n    for (const child of children) {\n      // Children include Tasks/Test-Cases too — keep only Bugs\n      if (child.fields?.['System.WorkItemType'] === 'Bug') {\n        allBugs.push(this.enrichBug(child, storyId, storyTitle));\n      }\n    }\n  }\n  return { bugs: allBugs, storyTitles };\n}"},{"fn":"enrichBug()","explain":"The normalization boundary — every downstream aggregate reads `EnrichedBug`, never raw ADO JSON. `daysToFix` is derived only when **both** `resolvedDate` and `createdDate` are present; the ms delta is converted to days (`1000*60*60*24`), `Math.round(x*10)/10` snaps it to **0.1-day** resolution, and `Math.max(0, …)` clamps negatives — a real defense, since ADO's `ResolvedDate` can predate `CreatedDate` after a bug is edited or re-imported, which would otherwise poison the mean. Unresolved bugs deliberately keep `daysToFix = null` (not `0`) so the aggregator can **exclude** them rather than average in a fake zero. The `raw.id ?? f['System.Id'] ?? 0` chain and every `|| ''` / `|| 'Unspecified'` fallback guarantee a fully-populated typed record even when ADO omits a field, and `extractDisplayName` collapses the `AssignedTo` identity object down to a plain name string.","code":"private enrichBug(raw: any, parentStoryId: number, parentStoryTitle: string): EnrichedBug {\n  const f = raw.fields || {};\n  const createdDate = f['System.CreatedDate'] || '';\n  const resolvedDate = f['Microsoft.VSTS.Common.ResolvedDate'] || null; // null while still open\n\n  let daysToFix: number | null = null; // stays null for unresolved bugs — NOT 0\n  if (resolvedDate && createdDate) {   // need both endpoints to compute a span\n    const diff = new Date(resolvedDate).getTime() - new Date(createdDate).getTime();\n    // ms -> days, rounded to 0.1; clamp >= 0 because ADO dates can go backwards after edits\n    daysToFix = Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24) * 10) / 10);\n  }\n\n  return {\n    id: raw.id ?? f['System.Id'] ?? 0, // id lives at top level OR in fields depending on the API\n    title: f['System.Title'] || '',\n    state: f['System.State'] || 'Unknown',\n    severity: f['Microsoft.VSTS.Common.Severity'] || 'Unspecified',\n    assignedTo: this.client.extractDisplayName(f['System.AssignedTo']), // identity object -> plain name\n    createdDate, resolvedDate, daysToFix,\n    parentStoryId, parentStoryTitle,\n    // ... plus description, repro steps and tags\n  } as EnrichedBug;\n}"},{"fn":"buildReport()","explain":"The single-pass aggregator — one `for` loop over `bugs` buckets everyone into `assigneeMap`, with `bug.assignedTo || 'Unassigned'` so null-assignee bugs still count somewhere instead of vanishing. Note that `FIXED_STATES` (`Resolved`/`Closed`) and `OPEN_STATES` (`New`/`Active`) are **not** exhaustive — a bug in a custom state like `Removed` increments neither counter, which is why `open + fixed` can be less than `total` and the numbers stay honest rather than force-fitting every state. `fixRate` divides `fixedBugs` by the **full** `bugs.length` (with a `> 0` guard against divide-by-zero on an empty feature), while `avgDaysToFix` first filters to `daysToFix !== null` so unresolved bugs never drag the mean toward zero — an all-open feature yields `null`, not `0`, again snapped to 0.1-day precision. Every metric comes from this one in-memory sweep — no second ADO query.","code":"private buildReport(bugs: EnrichedBug[], storyTitles: Map\u003cnumber, string>, input: BugIntelInput) {\n  const FIXED_STATES = ['Resolved', 'Closed'];\n  const OPEN_STATES = ['New', 'Active']; // note: not exhaustive — custom states count as neither\n  const assigneeMap = new Map\u003cstring, { total: number; open: number; fixed: number }>();\n\n  for (const bug of bugs) {\n    const aName = bug.assignedTo || 'Unassigned'; // keep null-assignee bugs in the tally\n    if (!assigneeMap.has(aName)) assigneeMap.set(aName, { total: 0, open: 0, fixed: 0 });\n    const a = assigneeMap.get(aName)!;\n    a.total++;\n    if (FIXED_STATES.includes(bug.state)) a.fixed++;\n    if (OPEN_STATES.includes(bug.state)) a.open++;\n  }\n\n  const fixedBugs = bugs.filter(b => FIXED_STATES.includes(b.state)).length;\n  const fixRate = bugs.length > 0 ? fixedBugs / bugs.length : 0; // guard empty feature\n\n  // Only resolved bugs have a daysToFix — exclude nulls so open bugs don't skew the mean to 0\n  const daysArr = bugs.filter(b => b.daysToFix !== null).map(b => b.daysToFix!);\n  const avgDaysToFix = daysArr.length > 0\n    ? Math.round((daysArr.reduce((a, b) => a + b, 0) / daysArr.length) * 10) / 10 // 0.1-day precision\n    : null; // no resolved bugs yet -> null, not 0\n\n  // ... plus counts by severity, priority, and per-story breakdowns\n}"},{"fn":"generateInsights()","explain":"Deterministic, threshold-fired commentary — no LLM, so the same stats always produce the same lines. It relies on `perStory` already being **sorted descending by bug count**, so `perStory[0]` is by definition the hotspot; the `hotspot.bugCount > 0` guard suppresses the line on a clean feature. The fix-rate warning is gated on `\u003c 0.5` **and** `totalBugs >= 3` together — the minimum-sample guard stops a single unfixed bug (a 0% rate over one item) from reading as a systemic problem. For load, `perAssignee.find(a => a.openBugs > 0)` takes the **first** entry with open work (the list is pre-sorted, so that's the most-loaded person), and the `>= 3` cutoff means only a genuine pile-up surfaces. Each line is pushed conditionally, so `insights` can legitimately come back empty — silence means nothing crossed a threshold.","code":"private generateInsights(summary, perStory, perAssignee): string[] {\n  const insights: string[] = [];\n\n  // Hotspot story — perStory is pre-sorted desc by bug count, so [0] is the worst offender\n  const hotspot = perStory[0];\n  if (hotspot && hotspot.bugCount > 0) { // suppress on a clean feature\n    insights.push(\n      `Story #${hotspot.storyId} (${hotspot.storyTitle}) is a hotspot with ${hotspot.bugCount} bugs (${hotspot.openCount} still open)`,\n    );\n  }\n\n  // Fix rate commentary — require >=3 bugs so a lone unfixed bug (0%) isn't flagged as systemic\n  const pct = Math.round(summary.fixRate * 100);\n  if (summary.fixRate \u003c 0.5 && summary.totalBugs >= 3) {\n    insights.push(`Bug resolution is behind — only ${pct}% resolved. Consider allocating more dev time`);\n  }\n\n  // Assignee with the most open bugs — first with open work = most-loaded (list is pre-sorted)\n  const topAssignee = perAssignee.find(a => a.openBugs > 0);\n  if (topAssignee && topAssignee.openBugs >= 3) { // only a real pile-up trips the warning\n    insights.push(`${topAssignee.name} has ${topAssignee.openBugs} open bugs — check if support is needed`);\n  }\n\n  return insights; // may be empty — nothing crossed a threshold\n}"},{"fn":"generateRecommendations()","explain":"The action-oriented sibling of `generateInsights` — same deterministic threshold style, but each line is a *thing to do*. `critHigh` sums the `1 - Critical` and `2 - High` buckets off `bySeverity` with `|| 0` fallbacks so a missing severity key reads as zero instead of `NaN`, and any non-zero total recommends prioritizing before sprint end. The zero-bug filter inverts the usual hotspot logic — a story with `bugCount === 0` is treated as **suspicious**, likely *untested* rather than genuinely clean, so it nudges you to confirm test execution actually started; the offending IDs are joined into one readable line. Finally `openBugs >= 5` recommends a formal triage session — a higher bar than the per-assignee `>= 3` insight because this is about the whole feature's backlog. Like insights, `recs` can return empty when nothing qualifies.","code":"private generateRecommendations(summary, perStory): string[] {\n  const recs: string[] = [];\n\n  // || 0 so a missing severity bucket reads as 0, not NaN, in the sum\n  const critHigh = (summary.bySeverity['1 - Critical'] || 0) + (summary.bySeverity['2 - High'] || 0);\n  if (critHigh > 0) {\n    recs.push(`Prioritize fixing ${critHigh} Critical/High severity bugs before sprint end`);\n  }\n\n  // Zero bugs is treated as SUSPICIOUS (untested), not clean — the inverse of a hotspot\n  const zeroBugStories = perStory.filter(s => s.bugCount === 0);\n  if (zeroBugStories.length > 0) {\n    const ids = zeroBugStories.map(s => `#${s.storyId}`).join(', ');\n    recs.push(`Stories ${ids} have no bugs — verify test execution has started`);\n  }\n\n  // Feature-wide backlog threshold — higher than the per-assignee >=3 cutoff\n  if (summary.openBugs >= 5) {\n    recs.push(`Schedule a bug triage session to review ${summary.openBugs} open bugs`);\n  }\n\n  return recs; // empty when nothing qualifies\n}"},{"fn":"generateExcel()","explain":"The serialization step — `xlsx` is `require`d lazily inside the function, not imported at module top, so a `--dry-run` that never writes files pays nothing for the dependency. It builds the workbook as an **array-of-arrays** (`aoa_to_sheet`): each inner array is one row, an empty `[]` renders a blank spacer row, and the `['Metric','Value']` row acts as a header. Two presentation choices matter — `s.fixRate` (a 0–1 float) is multiplied by 100 and suffixed `%` for a human-readable cell, and `s.avgDaysToFix ?? 'N/A'` uses `??` (not `||`) so a legitimate **zero** average survives while only `null`/`undefined` become `'N/A'`. Each sheet is appended by name via `book_append_sheet`, and `writeFile` flushes the whole `.xlsx` to `outputPath` in one call.","code":"private generateExcel(report: BugIntelReport, outputPath: string): void {\n  const XLSX = require('xlsx'); // lazy require — dry-run never loads the writer\n  const wb = XLSX.utils.book_new();\n  const s = report.summary;\n\n  // Array-of-arrays: each row is an array; [] is a blank spacer row\n  const summaryRows: any[][] = [\n    ['Bug Intelligence Summary'],\n    [],\n    ['Metric', 'Value'],\n    ['Total Bugs', s.totalBugs],\n    ['Open Bugs', s.openBugs],\n    ['Fixed Bugs', s.fixedBugs],\n    ['Fix Rate', `${Math.round(s.fixRate * 100)}%`], // 0..1 float -> \"81%\"\n    ['Avg Days to Fix', s.avgDaysToFix ?? 'N/A'],    // ?? keeps a real 0; only null/undefined -> N/A\n  ];\n  const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);\n  XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary'); // sheet tab name\n\n  // ... plus 'All Bugs', 'Per-Story', and 'Severity x State Pivot' sheets\n\n  XLSX.writeFile(wb, outputPath); // flush the whole workbook to disk in one call\n}"}]</script>
+
+    <h2 class="display">See it in action</h2>
+    
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Weekly readiness roll-up on a feature</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>`--feature-id` covering eight stories, `--word`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Report: 47 bugs, 38 fixed / 9 open, 81% fix rate, avg 3.2 days-to-fix; hotspot insight on the one story with 12 bugs; recommendation to schedule regression on the fixed set. Emitted as Markdown, Excel, JSON, Word.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Pre-standup sanity check</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A handful of story IDs with `--dry-run`.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>On-screen tally only — `Total bugs: 14, mostly Medium, 4 open` — no files written. Glance and go.</pre></div>
+      </div>
+    </figure>
+
+    <figure class="specimen">
+      <figcaption class="specimen__cap">Load imbalance across the team</figcaption>
+      <div class="specimen__body">
+        <div class="specimen__io"><h4>What goes in</h4><pre>A feature whose bugs skew to one assignee.</pre></div>
+        <div class="specimen__io"><h4>What comes out</h4><pre>Per-assignee workload table plus a threshold-fired insight — `Alex has 6 open bugs — check if support is needed` — and a triage-session recommendation.</pre></div>
+      </div>
+    </figure>
+
+    <h2 class="display">Run it &amp; wire it in</h2>
+    <section class="runbook">
+    <div class="rb__banner rb__banner--ref">
+      This was an internal tool: the steps are real, but running it needs access to the system it targets (your tracker, the app’s API, the designs). Treat it as a faithful how-it-ran guide.
+    </div>
+    <h3 class="display">Before you start</h3>
+    <ul class="rb__prereqs"><li>Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).</li><li>An <a class="doclink" href="https://learn.microsoft.com/en-us/azure/devops/boards/get-started/what-is-azure-boards" target="_blank" rel="noopener">Azure DevOps</a> org/project and a <strong>PAT</strong> with work-item read scope.</li><li>A feature ID (top-down discovery) or a list of story IDs to roll up from.</li><li>No LLM key — metrics, insights, and recommendations are all rule-computed, not model-generated.</li></ul>
+
+    <h3 class="display">Step by step</h3>
+    <ol class="rb__steps">
+      <li class="rb__step">
+        <div class="rb__label">Install Node.js — the runtime.</div>
+        <pre class="rb__cmd"><code># macOS (with Homebrew):
+brew install node
+
+# or download the LTS installer from nodejs.org, then check it worked:
+node -v   # should print v18 or higher</code></pre>
+        <div class="rb__why"><span>Why</span> The agent is TypeScript on Node. One-time per machine.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> First time only, on a new machine.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Clone and install dependencies.</div>
+        <pre class="rb__cmd"><code>cd path/to/the-agents
+npm install</code></pre>
+        <div class="rb__why"><span>Why</span> <code>npm install</code> pulls the ADO client and the <code>xlsx</code>/report writers into <code>node_modules</code>.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Full install, a minute or two.</div>
+        <div class="rb__run rb__run--again"><span>Re-run</span> No-op once installed, unless the dependency list changed.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Export the ADO target (environment variables).</div>
+        <pre class="rb__cmd"><code>export ADO_ORGANIZATION=my-org
+export ADO_PROJECT=&quot;My Project&quot;
+export ADO_PAT=your-access-token</code></pre>
+        <div class="rb__why"><span>Why</span> Read at startup to resolve the org/project and authenticate the read queries.</div>
+        
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Dry-run to tally bug counts on-screen.</div>
+        <pre class="rb__cmd"><code>npm run bug:intel -- --feature-id 4001 --dry-run
+# or a targeted list of stories:
+npm run bug:intel -- --parent-ids &quot;4010,4013,4060&quot; --dry-run</code></pre>
+        <div class="rb__why"><span>Why</span> <code>--dry-run</code> walks the hierarchy and aggregates on-screen without writing files — a fast check before the full serialization.</div>
+        <div class="rb__run rb__run--first"><span>First run</span> Reads every story and bug under the feature fresh.</div>
+        
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Generate the full report set.</div>
+        <pre class="rb__cmd"><code>npm run bug:intel -- --feature-id 4001
+# add a Word document too:
+npm run bug:intel:word -- --feature-id 4001</code></pre>
+        <div class="rb__why"><span>Why</span> Drops <code>--dry-run</code> and serializes the report files to disk.</div>
+        
+        <div class="rb__run rb__run--again"><span>Re-run</span> No caching — every run re-queries live ADO data, so it always reflects current counts and picks up bugs filed since last run.</div>
+      </li>
+      <li class="rb__step">
+        <div class="rb__label">Open the report.</div>
+        <pre class="rb__cmd"><code>open ./outputs/reports/bug-intel/BugIntel_&lt;timestamp&gt;.md</code></pre>
+        <div class="rb__why"><span>Why</span> The <code>.md</code> is the at-a-glance summary; the <code>.xlsx</code> holds the sortable bug list and severity-by-state pivot for a deeper cut.</div>
+        
+        
+      </li>
+    </ol>
+
+    <div class="rb__io grid cols-2">
+      <div><h3 class="display">What you give it</h3><dl class="rb__list"><dt>--feature-id &lt;id&gt;</dt><dd>Feature ID — auto-discovers child stories and their bugs, top-down.</dd><dt>--parent-ids &lt;ids&gt;</dt><dd>Comma-separated story IDs to target instead of (or alongside) a feature.</dd><dt>--feature-name &lt;name&gt;</dt><dd>Optional report-header label, if you don&#39;t want it auto-fetched.</dd><dt>--word</dt><dd>Also serialize a <code>.docx</code> version.</dd><dt>--dry-run</dt><dd>On-screen tally only — no files written.</dd><dt>environment variables</dt><dd>Org/project target and the PAT.</dd></dl></div>
+      <div><h3 class="display">What comes back</h3><dl class="rb__list"><dt>BugIntel_&lt;timestamp&gt;.json</dt><dd>Full structured report — totals, fix rate, per-story and per-assignee breakdowns, insights, recommendations.</dd><dt>BugIntel_&lt;timestamp&gt;.md</dt><dd>The same report rendered for at-a-glance reading.</dd><dt>BugIntel_&lt;timestamp&gt;.xlsx</dt><dd>Multi-sheet workbook: Summary, All Bugs, Per-Story, severity-by-state pivot.</dd><dt>BugIntel_&lt;timestamp&gt;.docx</dt><dd>Shareable Word version, only with <code>--word</code>.</dd></dl></div>
+    </div>
+
+    <div class="rb__note"><strong>Running it again.</strong> Nothing to warm — every run queries ADO fresh, so a second run reflects whatever changed since (newly filed, newly fixed). Schedule it to keep the report current with zero manual tallying.</div>
+    <div class="rb__note rb__note--wire"><strong>Plug it into your stack.</strong> Point it at a fixed <code>--feature-id</code> in a nightly/weekly CI or cron job; pipe the <code>.xlsx</code>/<code>.json</code> into a dashboard, or drop the <code>.md</code> straight into a status channel — it&#39;s authored to be posted as-is.</div>
+    <h3 class="display">Watch it run</h3>
+    <figure class="rb__video">
+      <div class="rb__video-empty"><span>▶</span><p>Walkthrough video coming. Recording script is written and ready.</p></div>
+      <figcaption>A 2-3 minute screen recording: point it at a feature ID and watch the computed status report serialize.</figcaption>
+    </figure>
+    <p class="rb__script-moved">The shot-by-shot recording script is kept internally (in <code>_internal/recording-scripts.md</code>), not on this page.</p></section>
+
+    <h2 class="display">Under the hood — for the curious</h2>
+    <p class="flow-lead">A slide for each moving part. Slide back and forth.</p>
+    <section class="uh-deck" data-uh-deck>
+      <div class="uh-viewport"><div class="uh-track">
+      <article class="uh-slide" data-uh="0">
+        <div class="uh-slide__no">1 / 5</div>
+        <h3 class="display">Hierarchy walk to child bugs</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>First, from a feature or story list.</dd>
+          <dt>Takes in</dt><dd>A feature ID or story IDs.</dd>
+          <dt>Shows out</dt><dd>Every child Bug work item, batch-fetched from ADO.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="1">
+        <div class="uh-slide__no">2 / 5</div>
+        <h3 class="display">Field normalization + days-to-fix</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Per bug found.</dd>
+          <dt>Takes in</dt><dd>The raw ADO fields.</dd>
+          <dt>Shows out</dt><dd>A typed <code>EnrichedBug</code> with computed <code>daysToFix</code>, ready to aggregate.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="2">
+        <div class="uh-slide__no">3 / 5</div>
+        <h3 class="display">In-memory aggregation</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After enrichment.</dd>
+          <dt>Takes in</dt><dd>The full <code>EnrichedBug[]</code>.</dd>
+          <dt>Shows out</dt><dd>Totals by severity/state, fix rate, avg days-to-fix, per-assignee load — one pass, no extra queries.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="3">
+        <div class="uh-slide__no">4 / 5</div>
+        <h3 class="display">Threshold insights + recommendations</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>After aggregation.</dd>
+          <dt>Takes in</dt><dd>The summary statistics.</dd>
+          <dt>Shows out</dt><dd>Rule-fired lines flagging hotspots, sub-50% fix rate, and overloaded assignees, plus recommended actions.</dd>
+        </dl>
+      </article>
+      <article class="uh-slide" data-uh="4">
+        <div class="uh-slide__no">5 / 5</div>
+        <h3 class="display">Multi-format serialization</h3>
+        <dl class="uh-io">
+          <dt>When it runs</dt><dd>Last, unless <code>--dry-run</code>.</dd>
+          <dt>Takes in</dt><dd>The finished report object.</dd>
+          <dt>Shows out</dt><dd>JSON, Markdown, an <code>xlsx</code> workbook, and — with <code>--word</code> — a <code>.docx</code> with embedded bug screenshots.</dd>
+        </dl>
+      </article></div></div>
+      <div class="uh-nav">
+        <button class="uh-btn" data-uh-prev aria-label="Previous">‹ Back</button>
+        <span class="uh-dots"><button class="uh-dot is-on" data-uh-dot="0" aria-label="Slide 1"></button><button class="uh-dot" data-uh-dot="1" aria-label="Slide 2"></button><button class="uh-dot" data-uh-dot="2" aria-label="Slide 3"></button><button class="uh-dot" data-uh-dot="3" aria-label="Slide 4"></button><button class="uh-dot" data-uh-dot="4" aria-label="Slide 5"></button></span>
+        <button class="uh-btn" data-uh-next aria-label="Next">Next ›</button>
+      </div>
+    </section>
+
+    <nav class="platenav">
+      <a href="the-bug-filer.html">← The Bug Filer</a>
+      <a href="the-release-readiness-inspector.html">The Release-Readiness Inspector →</a>
+    </nav>
+  </article>
+</main>
+<script>
+(function(){
+  // --- code preview modal (flowchart) ---
+  var modal = document.getElementById('codeModal');
+  var dataEl = document.getElementById('fcData');
+  if (modal && dataEl) {
+    var data = JSON.parse(dataEl.textContent);
+    var cmFn = document.getElementById('cmFn'), cmCode = document.getElementById('cmCode'), cmExplain = document.getElementById('cmExplain');
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function open(i){ var d = data[i]; if(!d) return; cmFn.textContent = d.fn || 'code'; cmCode.textContent = d.code || ''; cmExplain.innerHTML = esc(d.explain || '').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>'); modal.hidden = false; document.body.style.overflow='hidden'; }
+    function close(){ modal.hidden = true; document.body.style.overflow=''; }
+    document.querySelectorAll('.fc-node--live').forEach(function(n){ n.addEventListener('click', function(){ open(+n.getAttribute('data-fc')); }); });
+    modal.querySelectorAll('[data-close]').forEach(function(b){ b.addEventListener('click', close); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !modal.hidden) close(); });
+  }
+  // --- under-the-hood carousel ---
+  var deck = document.querySelector('[data-uh-deck]');
+  if (deck) {
+    var track = deck.querySelector('.uh-track');
+    var slides = deck.querySelectorAll('.uh-slide');
+    var dots = deck.querySelectorAll('.uh-dot');
+    var i = 0;
+    function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); track.style.transform = 'translateX(' + (-i*100) + '%)'; dots.forEach(function(d,j){ d.classList.toggle('is-on', j===i); }); }
+    deck.querySelector('[data-uh-prev]').addEventListener('click', function(){ go(i-1); });
+    deck.querySelector('[data-uh-next]').addEventListener('click', function(){ go(i+1); });
+    dots.forEach(function(d,j){ d.addEventListener('click', function(){ go(j); }); });
+  }
+})();
+</script>
+</body></html>

@@ -1,0 +1,174 @@
+{
+  "slug": "the-build-watcher",
+  "plate": 11,
+  "name": "The Build Watcher",
+  "techName": "ado-pipeline-agent.ts",
+  "category": "tracker",
+  "oneLiner": "Triggers an ADO pipeline run and polls it to completion, returning a pass/fail verdict — no tab-refreshing to catch the result.",
+  "lead": "Fire-and-forget CI/CD. This agent POSTs a pipeline run to the ADO REST API, polls its `state` on a fixed interval, and reports succeeded/failed the moment the run terminates. Build, test, or deploy pipelines — same flow.",
+  "chore": "Kick off a pipeline, then keep flipping to a browser tab every few minutes to check if it's done. A run can take 30 minutes. Focus drifts, failures go unnoticed for an hour, and cancelling a hung run means hunting through the ADO UI for the stop button.",
+  "instead": "The agent triggers the run, then polls `getRunStatus` every 30s until `state === 'completed'`, then prints the result, elapsed time, and run URL. On request it fetches published artifacts or PATCHes a stuck run to `canceling` — all headless.",
+  "whyItMatters": "A failed build caught in seconds instead of an hour keeps the team from stacking work on a broken base.",
+  "howItWorks": [
+    {
+      "step": "Give it a pipeline ID and optionally a branch. It POSTs to `/pipelines/{id}/runs` on the ADO REST API (api-version 7.0), defaulting `refName` to `refs/heads/main`, and gets back a run ID to track.",
+      "fn": "triggerPipeline()",
+      "explain": "Triggering a run is a single **POST** to `/pipelines/{id}/runs` — ADO creates *and* queues the run in one call, so there is no separate 'start' step. The branch is pinned through `resources.repositories.self.refName` (the `self` repo is the pipeline's own YAML repo), which must be a **full git ref** — `refs/heads/main`, never a bare `main`; passing a bare name silently falls back to the pipeline's default branch. The returned `run.id` is the handle every later poll and cancel needs, and `run._links.web.href` is the browser URL ADO hands back so a human can open the run.",
+      "code": "async triggerPipeline(pipelineId: number, options: TriggerOptions = {}): Promise<AgentResponse> {\n  // ADO pins a run to a branch via resources.repositories.self.refName;\n  // 'self' is the pipeline's own YAML repo.\n  const body: Record<string, unknown> = {\n    resources: {\n      repositories: {\n        // Must be a FULL git ref (refs/heads/...), not a bare branch name, or ADO runs the default branch.\n        self: { refName: options.branch ? `refs/heads/${options.branch}` : 'refs/heads/main' },\n      },\n    },\n  };\n\n  // POST to /runs both creates AND queues the run in one call - there is no separate 'start'.\n  const response = await fetch(\n    `${this.baseUrl}/pipelines/${pipelineId}/runs?api-version=7.0`,\n    {\n      method: 'POST',\n      headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n      body: JSON.stringify(body),\n    }\n  );\n\n  const run = await response.json();\n  return {\n    success: true,\n    // run.id is the handle every later poll/cancel needs; _links.web.href is the browser URL ADO returns.\n    data: { runId: run.id, state: run.state, url: run._links.web.href },\n    message: `Pipeline run #${run.id} triggered successfully`,\n  };\n}"
+    },
+    {
+      "step": "Polls `getRunStatus` on a fixed interval — 30s by default — until `state` reads `completed`, then reports the outcome: succeeded or failed, elapsed time, and the run URL.",
+      "fn": "waitForCompletion()",
+      "explain": "This is a bounded poll: it re-reads `getRunStatus` every `pollInterval` (30s default) and only stops when `run.state === 'completed'` — ADO's terminal state. Crucially, `state` and `result` are **separate fields**: `state` says *whether* the run finished, `result` says *how* — so a completed run maps to success only when `run.result === 'succeeded'` (it could equally be `failed` or `canceled`). The `while (Date.now() - startTime < timeout)` guard caps the wait at 30 min so a hung run can't block forever, and a null status from a transient API hiccup bails out immediately rather than looping on a dead handle.",
+      "code": "async waitForCompletion(\n  pipelineId: number,\n  runId: number,\n  options: { timeout?: number; pollInterval?: number } = {}\n): Promise<AgentResponse> {\n  const timeout = options.timeout || 30 * 60 * 1000;      // 30 minutes default\n  const pollInterval = options.pollInterval || 30 * 1000; // 30 seconds default\n  const startTime = Date.now();\n\n  // Bound the total wait so a hung run can't block forever.\n  while (Date.now() - startTime < timeout) {\n    const run = await this.getRunStatus(pipelineId, runId);\n    // Null = transient API failure; bail rather than loop on a dead handle.\n    if (!run) return { success: false, data: {}, errors: ['Failed to get pipeline status'] };\n\n    // 'completed' is ADO's only terminal state; run.result then tells us HOW it ended.\n    if (run.state === 'completed') {\n      // state says it finished; result (succeeded|failed|canceled) says the outcome.\n      const success = run.result === 'succeeded';\n      return {\n        success,\n        data: { runId: run.id, result: run.result, url: run.webUrl },\n        message: `Pipeline ${success ? 'succeeded' : 'failed'}`,\n      };\n    }\n    await this.sleep(pollInterval);\n  }\n  // Fell out of the loop = never reached 'completed' within the timeout window.\n  return { success: false, data: {}, errors: [`Timeout waiting for pipeline after ${timeout / 1000}s`] };\n}"
+    },
+    {
+      "step": "On request, fetches the artifacts the run published.",
+      "fn": "getArtifacts()",
+      "explain": "A `GET` on `/runs/{runId}/artifacts` lists what the run published. A non-OK response returns `[]` rather than throwing, so a run with no artifacts — or a permissions gap — degrades to an empty list instead of breaking the caller. Each entry is flattened to `name`/`size`/`downloadUrl`, where the URL comes from `artifact.signedContent.url`: a **short-lived signed link** ADO mints on demand, so it must be used promptly and never cached or stored.",
+      "code": "async getArtifacts(pipelineId: number, runId: number): Promise<PipelineArtifact[]> {\n  const response = await fetch(\n    `${this.baseUrl}/pipelines/${pipelineId}/runs/${runId}/artifacts?api-version=7.0`,\n    { headers: { Authorization: this.authHeader } }\n  );\n\n  // No artifacts or no access -> return empty rather than throw, so the caller degrades gracefully.\n  if (!response.ok) return [];\n\n  const data = await response.json();\n  return data.value.map((artifact: any) => ({\n    name: artifact.name,\n    // signedContent.url is a short-lived signed link ADO mints on demand - use promptly, don't cache.\n    downloadUrl: artifact.signedContent.url,\n    size: artifact.size,\n  }));\n}"
+    },
+    {
+      "step": "PATCHes a still-running run to `canceling`, on request.",
+      "fn": "cancelRun()",
+      "explain": "Cancelling is a **PATCH** (a partial update of the existing run), not a POST — the URL targets the run itself, and the body sets only `{ state: 'canceling' }`. You are declaring **intent**: ADO tears the run down asynchronously, so it moves to `canceling` first and only later to a terminal `completed`/`canceled` — it does not stop instantly. The function reports success once the request is accepted, not once the run has actually wound down, so a follow-up poll is what confirms the teardown finished.",
+      "code": "async cancelRun(pipelineId: number, runId: number): Promise<AgentResponse> {\n  const response = await fetch(\n    // Target the run itself; PATCH = partial update of the existing run, not a new POST.\n    `${this.baseUrl}/pipelines/${pipelineId}/runs/${runId}?api-version=7.0`,\n    {\n      method: 'PATCH',\n      headers: { Authorization: this.authHeader, 'Content-Type': 'application/json' },\n      // Sets intent only; ADO tears the run down async, so it won't stop instantly.\n      body: JSON.stringify({ state: 'canceling' }),\n    }\n  );\n\n  return { success: true, data: { runId }, message: `Pipeline run ${runId} cancelled` };\n}"
+    }
+  ],
+  "examples": [
+    {
+      "caption": "Trigger a build and wait for the verdict",
+      "input": "Trigger the build pipeline on `main` and wait for completion.",
+      "output": "Triggered run #4821. Polled every 30s. Verdict after 12 min: SUCCEEDED, with the run URL."
+    },
+    {
+      "caption": "A deploy run fails",
+      "input": "Trigger the deploy pipeline and watch it.",
+      "output": "Triggered run #4822. Verdict after 3 min: FAILED. Flagged immediately, before anyone stacks work on it."
+    },
+    {
+      "caption": "Cancel a hung run",
+      "input": "Cancel run #4822 on the deploy pipeline — it's hung.",
+      "output": "PATCHed the run to `canceling`; run #4822 is winding down."
+    }
+  ],
+  "underHood": [
+    {
+      "heading": "Triggering the run",
+      "whenRuns": "When you trigger a build, test, or deploy pipeline.",
+      "input": "A pipeline ID and optional branch.",
+      "output": "A POST to the ADO pipelines endpoint, returning a run ID."
+    },
+    {
+      "heading": "Polling for completion",
+      "whenRuns": "Every 30s (or your chosen interval) while the run is in progress.",
+      "input": "The run ID.",
+      "output": "The run's current `state` — in progress, or completed with a `result`."
+    },
+    {
+      "heading": "Reporting the verdict",
+      "whenRuns": "As soon as `state` reads `completed`.",
+      "input": "The run's `result` field.",
+      "output": "Succeeded or failed, elapsed time, and the run URL."
+    },
+    {
+      "heading": "Fetching artifacts",
+      "whenRuns": "Only on request, after a successful run.",
+      "input": "The run ID.",
+      "output": "A list of published artifacts with names, sizes, and signed download URLs."
+    },
+    {
+      "heading": "Cancelling a run",
+      "whenRuns": "Only on request.",
+      "input": "The run ID.",
+      "output": "A PATCH to the ADO REST API; the run moves to `canceling`."
+    }
+  ],
+  "status": "reference",
+  "runbook": {
+    "runnable": false,
+    "prerequisites": [
+      "Node ≥ 18 and a terminal (macOS/Linux shell or Windows PowerShell).",
+      "Azure DevOps access and a **PAT** with pipeline read/execute scope.",
+      "The pipeline IDs you want to run — build, test, and/or deploy — from whoever owns your CI setup."
+    ],
+    "steps": [
+      {
+        "label": "Install Node.js — the engine that runs the agent.",
+        "cmd": "# macOS (with Homebrew):\nbrew install node\n\n# or download the LTS installer from nodejs.org, then check it worked:\nnode -v   # should print v18 or higher",
+        "why": "The agent is TypeScript run under Node — a one-time per-machine install.",
+        "firstRun": "One-time setup per machine."
+      },
+      {
+        "label": "Clone the agent and install its dependencies.",
+        "cmd": "cd path/to/the-agents\nnpm install",
+        "why": "`npm install` pulls the agent's dependencies into `node_modules`.",
+        "firstRun": "Cold install — a minute or two.",
+        "rerun": "No-op unless `package.json` changed."
+      },
+      {
+        "label": "Set the target org, project, PAT, and pipeline IDs (env vars).",
+        "cmd": "export ADO_ORGANIZATION=my-org\nexport ADO_PROJECT=\"My Project\"\nexport ADO_PAT=your-access-token\nexport ADO_BUILD_PIPELINE_ID=123\nexport ADO_TEST_PIPELINE_ID=124\nexport ADO_DEPLOY_PIPELINE_ID=125",
+        "why": "Read at startup: which ADO org/project to hit, the PAT that authorizes it, and which pipeline ID maps to build/test/deploy. Nothing is hard-coded — swap these to point at another project."
+      },
+      {
+        "label": "Trigger a run and poll it.",
+        "cmd": "npm run ado:pipeline -- trigger 123 --branch main\n# note the run number it prints, e.g. \"Run #4821\", then:\nnpm run ado:pipeline -- wait 123 4821",
+        "why": "`trigger` starts the run and returns its ID; `wait` polls that run every 30s until it reports succeeded or failed.",
+        "firstRun": "Triggers a fresh run and polls it end to end.",
+        "rerun": "Each `trigger` starts a new run with its own ID — never reused."
+      },
+      {
+        "label": "Read the printed verdict.",
+        "cmd": "# no file to open — the result prints straight to the terminal, e.g.:\n# { \"success\": true, \"data\": { \"runId\": 4821, \"result\": \"succeeded\", \"url\": \"...\" } }",
+        "why": "No report file is written — the output is the immediate succeeded/failed verdict plus the run URL, printed straight to stdout."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "trigger <pipeline-id> [--branch <name>]",
+        "desc": "Triggers a run of the pipeline on the given branch (defaults to `main`)."
+      },
+      {
+        "name": "wait <pipeline-id> <run-id>",
+        "desc": "Polls a run every 30s until `completed`, then reports succeeded/failed."
+      },
+      {
+        "name": "cancel <pipeline-id> <run-id>",
+        "desc": "PATCHes a stuck run to `canceling`."
+      },
+      {
+        "name": "environment variables",
+        "desc": "Target ADO org/project, the PAT, and the pipeline IDs for build/test/deploy."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "console verdict",
+        "desc": "Succeeded or failed, run duration, and the run URL — printed to stdout, not persisted."
+      },
+      {
+        "name": "artifact list (on request)",
+        "desc": "Names, sizes, and signed download URLs of the artifacts a successful run published."
+      }
+    ],
+    "rerun": "No stored state — every `trigger` is a fresh run with its own ID. Re-running on the same branch just starts the pipeline over, which is exactly what you want after pushing a fix.",
+    "integrate": "Wire the `trigger` + `wait` pair into whatever kicks off your CI/CD flow (a pre-merge gate, a nightly build) so no one refreshes a status page — the agent reports back the moment there's a verdict."
+  },
+  "video": {
+    "url": "",
+    "caption": "A 2-3 minute screen recording: trigger a pipeline run and watch the agent report the verdict.",
+    "script": [
+      "Open a terminal beside the team's shared to-do board in a browser, so viewers can compare.",
+      "Say: 'Normally you'd keep refreshing this page. Watch what this agent does instead.'",
+      "Run `node -v` to confirm Node is installed; one line on what Node is.",
+      "Run `npm install` (or note it's already done).",
+      "Show the `export ADO_...` lines; say 'this is the only place project-specific details live.'",
+      "Run `npm run ado:pipeline -- trigger 123 --branch main`; point out the run number it prints.",
+      "Run `npm run ado:pipeline -- wait 123 <run-id>`; narrate the 'state: inProgress... waiting' lines.",
+      "When it completes, read the printed verdict out loud — succeeded/failed, duration, link.",
+      "Briefly show `cancel` on a hypothetical stuck run — say when you'd use it.",
+      "Close: 'No one had to sit and watch a screen for that.'"
+    ]
+  }
+}
